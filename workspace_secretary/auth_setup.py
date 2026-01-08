@@ -10,9 +10,9 @@ from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
-from imap_mcp.config import OAuth2Config
-from imap_mcp.browser_auth import load_client_credentials
-from imap_mcp.oauth2 import get_authorization_url, exchange_code_for_tokens
+from workspace_secretary.config import OAuth2Config
+from workspace_secretary.browser_auth import load_client_credentials
+from workspace_secretary.oauth2 import get_authorization_url, exchange_code_for_tokens
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

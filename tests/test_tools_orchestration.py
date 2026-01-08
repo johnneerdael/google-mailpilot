@@ -7,10 +7,10 @@ from email.message import EmailMessage
 
 from mcp.server.fastmcp import Context
 
-from imap_mcp.models import Email, EmailAddress, EmailContent
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.config import ImapConfig
-from imap_mcp.tools import register_tools
+from workspace_secretary.models import Email, EmailAddress, EmailContent
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.config import ImapConfig
+from workspace_secretary.tools import register_tools
 
 
 class TestMeetingInviteOrchestration:
@@ -88,10 +88,10 @@ class TestMeetingInviteOrchestration:
         mcp._tools = tools
         return mcp
 
-    @patch("imap_mcp.workflows.invite_parser.identify_meeting_invite_details")
-    @patch("imap_mcp.workflows.calendar_mock.check_mock_availability")
-    @patch("imap_mcp.workflows.meeting_reply.generate_meeting_reply_content")
-    @patch("imap_mcp.smtp_client.create_reply_mime")
+    @patch("workspace_secretary.workflows.invite_parser.identify_meeting_invite_details")
+    @patch("workspace_secretary.workflows.calendar_mock.check_mock_availability")
+    @patch("workspace_secretary.workflows.meeting_reply.generate_meeting_reply_content")
+    @patch("workspace_secretary.smtp_client.create_reply_mime")
     @pytest.mark.asyncio
     async def test_process_meeting_invite_success(
         self,
@@ -163,7 +163,7 @@ class TestMeetingInviteOrchestration:
         mock_imap_client.fetch_email.assert_called_once_with(456, "INBOX")
         mock_identify_invite.assert_called_once_with(mock_invite_email)
 
-    @patch("imap_mcp.workflows.invite_parser.identify_meeting_invite_details")
+    @patch("workspace_secretary.workflows.invite_parser.identify_meeting_invite_details")
     @pytest.mark.asyncio
     async def test_process_non_invite_email(
         self,
@@ -217,10 +217,10 @@ class TestMeetingInviteOrchestration:
         # Verify the mock calls
         mock_imap_client.fetch_email.assert_called_once_with(456, "INBOX")
 
-    @patch("imap_mcp.workflows.invite_parser.identify_meeting_invite_details")
-    @patch("imap_mcp.workflows.calendar_mock.check_mock_availability")
-    @patch("imap_mcp.workflows.meeting_reply.generate_meeting_reply_content")
-    @patch("imap_mcp.smtp_client.create_reply_mime")
+    @patch("workspace_secretary.workflows.invite_parser.identify_meeting_invite_details")
+    @patch("workspace_secretary.workflows.calendar_mock.check_mock_availability")
+    @patch("workspace_secretary.workflows.meeting_reply.generate_meeting_reply_content")
+    @patch("workspace_secretary.smtp_client.create_reply_mime")
     @pytest.mark.asyncio
     async def test_process_meeting_invite_save_draft_failure(
         self,

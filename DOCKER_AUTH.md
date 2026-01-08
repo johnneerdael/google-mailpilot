@@ -24,7 +24,7 @@ The `config.sample.yaml` file includes the public Client ID and Secret for Mozil
     You need to run the authentication command *inside* the running container.
 
     ```bash
-    docker exec -it imap-mcp uv run python -m imap_mcp.auth_setup --config /app/config/config.yaml
+    docker exec -it workspace-secretary uv run python -m workspace_secretary.auth_setup --config /app/config/config.yaml
     ```
     *(Note: We use the path `/app/config/config.yaml` because that is where the volume is mounted inside the container).*
 

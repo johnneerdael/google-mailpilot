@@ -2,116 +2,86 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 from datetime import datetime
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.tools import register_tools
+from workspace_secretary.gmail_client import GmailClient
+from workspace_secretary.models import EmailAddress
+from mcp.server.fastmcp import FastMCP, Context
 
 
 @pytest.fixture
-def mock_imap_client():
-    client = MagicMock(spec=ImapClient)
+def mock_gmail_client():
+    client = MagicMock(spec=GmailClient)
     # Mock search results
-    client.search.return_value = [1, 2, 3]
-    # Mock fetch_emails results
+    client.search_messages.return_value = [{"id": "msg123", "threadId": "thread123"}]
+
+    # Mock get_message results
     mock_email = MagicMock()
-    mock_email.uid = 1
-    mock_email.from_ = "sender@example.com"
+    mock_email.message_id = "msg123"
+    mock_email.gmail_thread_id = "thread123"
+    mock_email.from_ = EmailAddress(name="Sender", address="sender@example.com")
     mock_email.subject = "Test Subject"
     mock_email.date = datetime(2024, 1, 1)
-    mock_email.flags = ["\\Seen"]
-    client.fetch_emails.return_value = {1: mock_email}
+    mock_email.gmail_labels = ["INBOX", "UNREAD"]
+
+    client.get_message.return_value = mock_email
     return client
 
 
 @pytest.fixture
-def context(mock_imap_client):
-    ctx = MagicMock()
-    ctx.request_context.lifespan_context = {"imap_client": mock_imap_client}
+def context(mock_gmail_client):
+    ctx = MagicMock(spec=Context)
+    # Mock the lifespan context structure used by get_gmail_client_from_context
+    ctx.request_context.lifespan_context = {"gmail_client": mock_gmail_client}
     return ctx
 
 
 @pytest.fixture
-def search_tool():
+def gmail_search_tool():
+    # Tools are inner functions in register_tools, but we can access them
+    # by mocking FastMCP and capturing the decorated functions
     tools = {}
+    mcp = MagicMock(spec=FastMCP)
 
-    class MockMCP:
-        def tool(self, **kwargs):
-            def decorator(func):
-                tools[func.__name__] = func
-                return func
+    def tool_decorator(**kwargs):
+        def wrapper(func):
+            tools[func.__name__] = func
+            return func
 
-            return decorator
+        return wrapper
 
-    mcp = MockMCP()
+    mcp.tool.side_effect = tool_decorator
+
+    from workspace_secretary.tools import register_tools
+
     register_tools(mcp, MagicMock())
-    return tools.get("search_emails")
+
+    return tools.get("gmail_search")
 
 
 @pytest.mark.asyncio
-async def test_advanced_search_and_logic(search_tool, mock_imap_client, context):
-    """Test that dictionary criteria are correctly mapped to AND-style IMAP search list."""
-    criteria = {
-        "from": "boss@company.com",
-        "since": "2024-01-01",
-        "unread": True,
-        "subject": "Urgent",
-    }
+async def test_gmail_search_syntax(gmail_search_tool, mock_gmail_client, context):
+    """Test searching with Gmail's native query syntax."""
+    query = "has:attachment from:boss"
 
-    await search_tool(criteria=criteria, folder="INBOX", ctx=context)
+    result_json = await gmail_search_tool(query=query, max_results=10, ctx=context)
+    result = json.loads(result_json)
 
-    # Note: In our current implementation, we are mocking the search_tool to call
-    # imap_client.search with the dictionary directly, because ImapClient.search
-    # handles the conversion.
-    # We need to verify that ImapClient.search would produce the right list.
-    # Since we're mocking ImapClient, we can only verify it received the dict.
-    args, kwargs = mock_imap_client.search.call_args
-    assert args[0] == criteria
+    # Verify client was called with correct query
+    mock_gmail_client.search_messages.assert_called_with(query, 10)
+
+    # Verify response structure
+    assert len(result) == 1
+    assert result[0]["id"] == "msg123"
+    assert result[0]["subject"] == "Test Subject"
 
 
 @pytest.mark.asyncio
-async def test_advanced_search_mapping_logic():
-    """Test that ImapClient.search correctly maps dictionary to IMAP list."""
-    from imap_mcp.config import ImapConfig
+async def test_gmail_search_empty_results(
+    gmail_search_tool, mock_gmail_client, context
+):
+    """Test handling of no search results."""
+    mock_gmail_client.search_messages.return_value = []
 
-    config = ImapConfig(
-        host="imap.gmail.com", port=993, username="test@gmail.com", password="password"
-    )
-    client = ImapClient(config)
+    result_json = await gmail_search_tool(query="nonexistent", ctx=context)
+    result = json.loads(result_json)
 
-    # Mock the internal client to avoid connection
-    client.client = MagicMock()
-    client.connected = True
-
-    criteria = {
-        "from": "boss@company.com",
-        "since": "2024-01-01",
-        "unread": True,
-        "subject": "Urgent",
-    }
-
-    with patch.object(client, "select_folder"):
-        client.search(criteria, folder="INBOX")
-
-        args, kwargs = client.client.search.call_args
-        search_list = args[0]
-
-        assert "FROM" in search_list
-        assert "boss@company.com" in search_list
-        assert "SINCE" in search_list
-        # Note: SINCE value in ImapClient.search is converted to date object
-        from datetime import date
-
-        assert date(2024, 1, 1) in search_list
-        assert "UNSEEN" in search_list
-        assert "SUBJECT" in search_list
-        assert "Urgent" in search_list
-
-
-@pytest.mark.asyncio
-async def test_wildcard_identity_search(search_tool, mock_imap_client, context):
-    """Test searching with wildcard-style domain strings."""
-    criteria = {"from": "@important.org"}
-
-    await search_tool(criteria=criteria, folder="INBOX", ctx=context)
-
-    args, kwargs = mock_imap_client.search.call_args
-    assert args[0] == criteria
+    assert result == []

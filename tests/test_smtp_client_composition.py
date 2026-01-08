@@ -4,8 +4,8 @@ import re
 import pytest
 from datetime import datetime
 
-from imap_mcp.models import Email, EmailAddress, EmailContent
-from imap_mcp.smtp_client import create_reply_mime
+from workspace_secretary.models import Email, EmailAddress, EmailContent
+from workspace_secretary.smtp_client import create_reply_mime
 
 
 class TestCreateReplyMime:

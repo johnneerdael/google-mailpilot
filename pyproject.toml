@@ -3,14 +3,14 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "imap-mcp"
+name = "workspace-secretary"
 version = "0.1.0"
-description = "IMAP Model Context Protocol server for interactive email processing"
+description = "Google Workspace Secretary MCP server for interactive email and calendar processing"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "GitHub user", email = "example@example.com"}
+    {name = "John Neerdael", email = "example@example.com"}
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -56,11 +56,11 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/non-dirty/imap-mcp"
-Issues = "https://github.com/non-dirty/imap-mcp/issues"
+Homepage = "https://github.com/johnneerdael/Google-Workspace-Secretary-MCP"
+Issues = "https://github.com/johnneerdael/Google-Workspace-Secretary-MCP/issues"
 
 [tool.setuptools]
-packages = ["imap_mcp"]
+packages = ["workspace_secretary"]
 
 [tool.black]
 line-length = 88

@@ -6,7 +6,7 @@ from datetime import datetime
 from email.message import EmailMessage
 from typing import List, Optional
 
-from imap_mcp.models import Email, EmailAddress
+from workspace_secretary.models import Email, EmailAddress
 
 logger = logging.getLogger(__name__)
 

@@ -2,15 +2,15 @@
 
 import logging
 import base64
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 from datetime import datetime
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 
-from imap_mcp.config import ServerConfig
-from imap_mcp.models import Email, EmailAddress, EmailContent, EmailAttachment
+from workspace_secretary.config import ServerConfig
+from workspace_secretary.models import Email, EmailAddress, EmailContent, EmailAttachment
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,9 @@ class GmailClient:
         if not self.service:
             self.connect()
 
+        service = cast(Any, self.service)
         results = (
-            self.service.users()
+            service.users()
             .messages()
             .list(userId="me", q=query, maxResults=max_results)
             .execute()
@@ -82,14 +83,55 @@ class GmailClient:
         if not self.service:
             self.connect()
 
+        # Added for type safety
+        service = cast(Any, self.service)
         msg_raw = (
-            self.service.users()
+            service.users()
             .messages()
             .get(userId="me", id=message_id, format="full")
             .execute()
         )
 
         return self._parse_gmail_message(msg_raw)
+
+    def get_attachment_data(self, message_id: str, attachment_id: str) -> bytes:
+        """Fetch raw attachment data from Gmail."""
+        if not self.service:
+            self.connect()
+
+        service = cast(Any, self.service)
+        attachment = (
+            service.users()
+            .messages()
+            .attachments()
+            .get(userId="me", messageId=message_id, id=attachment_id)
+            .execute()
+        )
+
+        data = attachment.get("data", "")
+        if not data:
+            return b""
+
+        return base64.urlsafe_b64decode(data)
+
+    def get_attachment_data(self, message_id: str, attachment_id: str) -> bytes:
+        """Fetch raw attachment data from Gmail."""
+        if not self.service:
+            self.connect()
+
+        attachment = (
+            self.service.users()
+            .messages()
+            .attachments()
+            .get(userId="me", messageId=message_id, id=attachment_id)
+            .execute()
+        )
+
+        data = attachment.get("data", "")
+        if not data:
+            return b""
+
+        return base64.urlsafe_b64decode(data)
 
     def _parse_gmail_message(self, msg_raw: Dict[str, Any]) -> Email:
         """Parse Gmail API message resource into our Email model."""
@@ -146,7 +188,10 @@ class GmailClient:
                             )[0]
                             .get("value", "")
                             .strip("<>"),
-                            content=None,  # We'll fetch on demand or if needed
+                            content=None,  # We'll fetch on demand
+                            attachment_id=body.get(
+                                "attachmentId"
+                            ),  # Store attachmentId
                         )
                     )
 
@@ -190,9 +235,10 @@ class GmailClient:
         if not self.service:
             self.connect()
 
+        service = cast(Any, self.service)
         body = {"addLabelIds": add_labels, "removeLabelIds": remove_labels}
         return (
-            self.service.users()
+            service.users()
             .messages()
             .batchModify(userId="me", ids=[message_id], body=body)
             .execute()
@@ -203,6 +249,7 @@ class GmailClient:
         if not self.service:
             self.connect()
 
-        thread = self.service.users().threads().get(userId="me", id=thread_id).execute()
+        service = cast(Any, self.service)
+        thread = service.users().threads().get(userId="me", id=thread_id).execute()
 
         return [self._parse_gmail_message(m) for m in thread.get("messages", [])]

@@ -7,15 +7,15 @@ from datetime import datetime
 
 from mcp.server.fastmcp import FastMCP, Context
 
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.models import Email, EmailAddress, EmailContent
-from imap_mcp.tools import register_tools
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.models import Email, EmailAddress, EmailContent
+from workspace_secretary.tools import register_tools
 
 
 # Patch the get_client_from_context function to use our mock client
 @pytest.fixture(autouse=True)
 def patch_get_client():
-    with patch("imap_mcp.tools.get_client_from_context") as mock_get_client:
+    with patch("workspace_secretary.tools.get_client_from_context") as mock_get_client:
         yield mock_get_client
 
 

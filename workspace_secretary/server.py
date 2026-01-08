@@ -14,20 +14,20 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 
-from imap_mcp.config import ServerConfig, load_config
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.calendar_client import CalendarClient
-from imap_mcp.gmail_client import GmailClient
-from imap_mcp.resources import register_resources
-from imap_mcp.tools import register_tools
-from imap_mcp.mcp_protocol import extend_server
+from workspace_secretary.config import ServerConfig, load_config
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.calendar_client import CalendarClient
+from workspace_secretary.gmail_client import GmailClient
+from workspace_secretary.resources import register_resources
+from workspace_secretary.tools import register_tools
+from workspace_secretary.mcp_protocol import extend_server
 
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger("imap_mcp")
+logger = logging.getLogger("workspace_secretary")
 
 
 class StaticTokenVerifier:
@@ -200,7 +200,7 @@ def create_server(
     @server.custom_route("/health", methods=["GET"])
     async def health_check(request: Request) -> JSONResponse:
         """Health check endpoint."""
-        return JSONResponse({"status": "healthy", "service": "imap-mcp"})
+        return JSONResponse({"status": "healthy", "service": "workspace-secretary"})
 
     return server
 
@@ -209,7 +209,7 @@ def create_app() -> "Starlette":  # type: ignore
     """Create the Starlette app for the server.
 
     This factory function is intended to be used by uvicorn:
-    uvicorn --factory imap_mcp.server:create_app
+    uvicorn --factory workspace_secretary.server:create_app
     """
     config_path = os.environ.get("IMAP_MCP_CONFIG")
     debug = os.environ.get("IMAP_MCP_DEBUG", "").lower() == "true"
@@ -298,7 +298,7 @@ def main() -> None:
                 os.environ["IMAP_MCP_CONFIG"] = args.config
 
             uvicorn.run(
-                "imap_mcp.server:create_app",
+                "workspace_secretary.server:create_app",
                 host=args.host,
                 port=args.port,
                 reload=True,

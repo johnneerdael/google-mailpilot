@@ -24,7 +24,7 @@ pytestmark = pytest.mark.integration
 
 # Define paths and variables
 PROJECT_ROOT = Path.cwd()
-WRAPPER_SCRIPT = PROJECT_ROOT / "scripts" / "run_imap_mcp_server.sh"
+WRAPPER_SCRIPT = PROJECT_ROOT / "scripts" / "run_workspace_secretary_server.sh"
 
 
 class TestImapMcpServerConfig:

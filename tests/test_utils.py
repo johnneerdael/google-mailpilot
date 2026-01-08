@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from email.message import Message
 from typing import Dict, List, Optional, Tuple
 
-from imap_mcp.models import Email, EmailAddress, EmailContent, EmailAttachment
+from workspace_secretary.models import Email, EmailAddress, EmailContent, EmailAttachment
 
 
 def random_string(length: int = 10) -> str:

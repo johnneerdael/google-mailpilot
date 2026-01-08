@@ -53,7 +53,7 @@ When connecting via HTTP (port 8000), authentication is **mandatory**.
 
 ## Monitoring
 
-*   **Health Check**: A health check endpoint is available at `http://localhost:8000/health`. It returns `{"status": "healthy", "service": "imap-mcp"}` if the server is running. This does not require authentication.
+*   **Health Check**: A health check endpoint is available at `http://localhost:8000/health`. It returns `{"status": "healthy", "service": "workspace-secretary"}` if the server is running. This does not require authentication.
 
 ## Connection
 
@@ -76,7 +76,7 @@ Example Claude Desktop config:
 ```json
 {
   "mcpServers": {
-    "imap-mcp": {
+    "workspace-secretary": {
       "command": "docker",
       "args": [
         "run",
@@ -86,10 +86,10 @@ Example Claude Desktop config:
         "${PWD}/config.yaml:/app/config/config.yaml",
         "-v",
         "${PWD}/tasks.json:/app/tasks.json",
-        "imap-mcp"
+        "workspace-secretary"
       ]
     }
   }
 }
 ```
-If using this method, ensure you build the image first: `docker build -t imap-mcp .`
+If using this method, ensure you build the image first: `docker build -t workspace-secretary .`

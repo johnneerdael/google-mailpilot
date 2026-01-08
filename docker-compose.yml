@@ -1,7 +1,7 @@
 services:
-  imap-mcp:
-    image: ghcr.io/jneerdaekl/imap-mcp:latest
-    container_name: imap-mcp
+  workspace-secretary:
+    image: ghcr.io/jneerdaekl/workspace-secretary:latest
+    container_name: workspace-secretary
     restart: always
     ports:
       - "8080:8080"
@@ -12,7 +12,7 @@ services:
       - ./config:/app/config
       # Persist tasks if needed (optional if using external storage)
       - ./tasks.json:/app/tasks.json
-    command: uv run python -m imap_mcp.server --transport http --host 0.0.0.0 --port 8000
+    command: uv run python -m workspace_secretary.server --transport http --host 0.0.0.0 --port 8000
     environment:
       # Optional environment variables to override config
       - IMAP_HOST=${IMAP_HOST}

@@ -8,7 +8,7 @@ from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 
-from imap_mcp.config import ServerConfig
+from workspace_secretary.config import ServerConfig
 
 logger = logging.getLogger(__name__)
 

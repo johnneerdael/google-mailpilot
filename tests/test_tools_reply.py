@@ -8,8 +8,8 @@ from typing import Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP, Context
 
-from imap_mcp.models import Email, EmailAddress, EmailContent
-from imap_mcp.tools import register_tools
+from workspace_secretary.models import Email, EmailAddress, EmailContent
+from workspace_secretary.tools import register_tools
 
 
 class TestToolsReply:
@@ -57,9 +57,9 @@ class TestToolsReply:
         smtp_client = MagicMock()
 
         # Register tools with our mocks
-        with patch("imap_mcp.tools.get_client_from_context") as mock_get_client:
+        with patch("workspace_secretary.tools.get_client_from_context") as mock_get_client:
             mock_get_client.return_value = imap_client
-            with patch("imap_mcp.tools.get_smtp_client_from_context") as mock_get_smtp:
+            with patch("workspace_secretary.tools.get_smtp_client_from_context") as mock_get_smtp:
                 mock_get_smtp.return_value = smtp_client
                 register_tools(mcp, imap_client)
 
@@ -81,13 +81,13 @@ class TestToolsReply:
         create_draft_reply = tools_dict["create_draft_reply"]
 
         # Mock successful email fetching
-        with patch("imap_mcp.tools.get_client_from_context") as mock_get_client:
+        with patch("workspace_secretary.tools.get_client_from_context") as mock_get_client:
             mock_get_client.return_value = imap_client
             imap_client.fetch_email.return_value = mock_email
             imap_client.config.username = "me@example.com"
 
             # Mock successful MIME message creation and draft saving
-            with patch("imap_mcp.smtp_client.create_reply_mime") as mock_create_reply:
+            with patch("workspace_secretary.smtp_client.create_reply_mime") as mock_create_reply:
                 # Set up mock for create_reply_mime
                 mime_message = MagicMock()
                 mock_create_reply.return_value = mime_message
@@ -123,13 +123,13 @@ class TestToolsReply:
         create_draft_reply = tools_dict["create_draft_reply"]
 
         # Mock successful email fetching
-        with patch("imap_mcp.tools.get_client_from_context") as mock_get_client:
+        with patch("workspace_secretary.tools.get_client_from_context") as mock_get_client:
             mock_get_client.return_value = imap_client
             imap_client.fetch_email.return_value = mock_email
             imap_client.config.username = "me@example.com"
 
             # Mock successful MIME message creation and draft saving
-            with patch("imap_mcp.smtp_client.create_reply_mime") as mock_create_reply:
+            with patch("workspace_secretary.smtp_client.create_reply_mime") as mock_create_reply:
                 # Set up mocks
                 mime_message = MagicMock()
                 mock_create_reply.return_value = mime_message
@@ -166,7 +166,7 @@ class TestToolsReply:
         create_draft_reply = tools_dict["create_draft_reply"]
 
         # Mock failed email fetching
-        with patch("imap_mcp.tools.get_client_from_context") as mock_get_client:
+        with patch("workspace_secretary.tools.get_client_from_context") as mock_get_client:
             mock_get_client.return_value = imap_client
             imap_client.fetch_email.return_value = None
 
@@ -195,13 +195,13 @@ class TestToolsReply:
         create_draft_reply = tools_dict["create_draft_reply"]
 
         # Mock successful email fetching but failed draft saving
-        with patch("imap_mcp.tools.get_client_from_context") as mock_get_client:
+        with patch("workspace_secretary.tools.get_client_from_context") as mock_get_client:
             mock_get_client.return_value = imap_client
             imap_client.fetch_email.return_value = mock_email
             imap_client.config.username = "me@example.com"
 
             # Mock successful MIME message creation but failed draft saving
-            with patch("imap_mcp.smtp_client.create_reply_mime") as mock_create_reply:
+            with patch("workspace_secretary.smtp_client.create_reply_mime") as mock_create_reply:
                 # Set up mocks
                 mime_message = MagicMock()
                 mock_create_reply.return_value = mime_message

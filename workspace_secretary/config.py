@@ -156,8 +156,8 @@ def load_config(config_path: Optional[str] = None) -> ServerConfig:
     default_locations = [
         Path("config.yaml"),
         Path("config.yml"),
-        Path("~/.config/imap-mcp/config.yaml"),
-        Path("/etc/imap-mcp/config.yaml"),
+        Path("~/.config/workspace-secretary/config.yaml"),
+        Path("/etc/workspace-secretary/config.yaml"),
     ]
 
     # Load from specified path or try default locations

@@ -10,8 +10,8 @@ from unittest.mock import patch, MagicMock, mock_open
 import pytest
 from mcp.server.fastmcp import FastMCP, Context
 
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.tools import register_tools
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.tools import register_tools
 
 
 class TestTaskTools:
@@ -195,7 +195,7 @@ class TestTaskTools:
         # Test the create_task tool with logging mock
         with (
             patch("os.getcwd", return_value=str(tmp_path)),
-            patch("imap_mcp.tools.logger") as mock_logger,
+            patch("workspace_secretary.tools.logger") as mock_logger,
         ):
             result = await create_task(
                 description="Test task for logging", ctx=mock_context

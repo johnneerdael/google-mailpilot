@@ -18,7 +18,7 @@ This method connects to the container already running via `docker-compose`.
 
 **Command Structure:**
 ```bash
-docker exec -i imap-mcp uv run python -m imap_mcp.server
+docker exec -i workspace-secretary uv run python -m workspace_secretary.server
 ```
 
 ### Method 2: Ephemeral Container
@@ -34,7 +34,7 @@ This method spins up a new, temporary container for every session.
 ```bash
 docker run -i --rm \
   -v /path/to/your/config.yaml:/app/config/config.yaml \
-  ghcr.io/jneerdaekl/imap-mcp:latest
+  ghcr.io/jneerdaekl/workspace-secretary:latest
 ```
 
 ### Method 3: Streamable HTTP Connection (Recommended for Remote/Docker)
@@ -81,7 +81,7 @@ Add this to your `mcpServers` block. Note that you must include the `headers` fi
 ```json
 {
   "mcpServers": {
-    "imap-mcp": {
+    "workspace-secretary": {
       "url": "http://localhost:8000/mcp",
       "headers": {
         "Authorization": "Bearer <YOUR_TOKEN>"
@@ -98,17 +98,17 @@ Add this to your `mcpServers` block:
 ```json
 {
   "mcpServers": {
-    "imap-mcp": {
+    "workspace-secretary": {
       "command": "docker",
       "args": [
         "exec",
         "-i",
-        "imap-mcp",
+        "workspace-secretary",
         "uv",
         "run",
         "python",
         "-m",
-        "imap_mcp.server"
+        "workspace_secretary.server"
       ]
     }
   }
@@ -122,7 +122,7 @@ Add this to your `mcpServers` block:
 ```json
 {
   "mcpServers": {
-    "imap-mcp": {
+    "workspace-secretary": {
       "command": "docker",
       "args": [
         "run",
@@ -130,7 +130,7 @@ Add this to your `mcpServers` block:
         "--rm",
         "-v",
         "/absolute/path/to/config.yaml:/app/config/config.yaml",
-        "ghcr.io/jneerdaekl/imap-mcp:latest"
+        "ghcr.io/jneerdaekl/workspace-secretary:latest"
       ]
     }
   }
@@ -151,21 +151,21 @@ These VS Code extensions act as autonomous coding agents. They can read from the
 
 **For Persistent Service (Method 1):**
 
-*   **Name**: `imap-mcp`
+*   **Name**: `workspace-secretary`
 *   **Command**: `docker`
 *   **Args**:
     *   `exec`
     *   `-i`
-    *   `imap-mcp`
+    *   `workspace-secretary`
     *   `uv`
     *   `run`
     *   `python`
     *   `-m`
-    *   `imap_mcp.server`
+    *   `workspace_secretary.server`
 
 **For Ephemeral Container (Method 2):**
 
-*   **Name**: `imap-mcp`
+*   **Name**: `workspace-secretary`
 *   **Command**: `docker`
 *   **Args**:
     *   `run`
@@ -173,7 +173,7 @@ These VS Code extensions act as autonomous coding agents. They can read from the
     *   `--rm`
     *   `-v`
     *   `/absolute/path/to/config.yaml:/app/config/config.yaml`
-    *   `ghcr.io/jneerdaekl/imap-mcp:latest`
+    *   `ghcr.io/jneerdaekl/workspace-secretary:latest`
 
 **For Streamable HTTP Connection (Method 3):**
 
@@ -186,7 +186,7 @@ Otherwise, use the "Edit MCP Settings" button to open the configuration file and
 ```json
 {
   "mcpServers": {
-    "imap-mcp": {
+    "workspace-secretary": {
       "url": "http://localhost:8000/mcp",
       "headers": {
         "Authorization": "Bearer <YOUR_TOKEN>"
@@ -207,11 +207,11 @@ If modifying a JSON configuration file:
 ### Persistent Service (Method 1)
 
 ```json
-"imap-mcp": {
+"workspace-secretary": {
   "command": "docker",
   "args": [
-    "exec", "-i", "imap-mcp", 
-    "uv", "run", "python", "-m", "imap_mcp.server"
+    "exec", "-i", "workspace-secretary", 
+    "uv", "run", "python", "-m", "workspace_secretary.server"
   ]
 }
 ```
@@ -219,7 +219,7 @@ If modifying a JSON configuration file:
 ### Streamable HTTP Connection (Method 3)
 
 ```json
-"imap-mcp": {
+"workspace-secretary": {
   "url": "http://localhost:8000/mcp",
   "headers": {
     "Authorization": "Bearer <YOUR_TOKEN>"

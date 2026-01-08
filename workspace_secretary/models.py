@@ -86,6 +86,7 @@ class EmailAttachment:
     size: int
     content_id: Optional[str] = None
     content: Optional[bytes] = None
+    attachment_id: Optional[str] = None  # Added for Gmail API
 
     @classmethod
     def from_part(cls, part: Message) -> "EmailAttachment":

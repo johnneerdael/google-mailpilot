@@ -6,13 +6,13 @@ from unittest import mock
 
 from mcp.server.fastmcp import Context, FastMCP
 
-from imap_mcp.resources import register_resources, get_client_from_context
+from workspace_secretary.resources import register_resources, get_client_from_context
 
 # Directly patch the Context class
 original_get_current = getattr(Context, 'get_current', None)
 
 class TestResources:
-    """Tests for imap_mcp.resources."""
+    """Tests for workspace_secretary.resources."""
     
     def test_get_client_from_context(self):
         """Test getting IMAP client from context."""
@@ -266,7 +266,7 @@ class TestResources:
         
         try:
             # This should succeed if all resources have correct parameter definitions
-            from imap_mcp.resources import register_resources
+            from workspace_secretary.resources import register_resources
             register_resources(real_mcp, mock.MagicMock())
             
             # If we get here, all resources passed validation

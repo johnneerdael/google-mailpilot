@@ -6,11 +6,11 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP, Context
 
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.calendar_client import CalendarClient
-from imap_mcp.gmail_client import GmailClient
-from imap_mcp.models import Email
-import imap_mcp.smtp_client as smtp_client
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.calendar_client import CalendarClient
+from workspace_secretary.gmail_client import GmailClient
+from workspace_secretary.models import Email
+import workspace_secretary.smtp_client as smtp_client
 
 logger = logging.getLogger(__name__)
 

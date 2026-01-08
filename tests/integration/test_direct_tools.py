@@ -21,10 +21,10 @@ logger = logging.getLogger(__name__)
 pytestmark = pytest.mark.integration
 
 # Import the IMAP client and tools
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.config import ImapConfig as Config
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.config import ImapConfig as Config
 from mcp.server.fastmcp import Context
-from imap_mcp.tools import register_tools
+from workspace_secretary.tools import register_tools
 
 
 # Helper to get search tool
@@ -51,7 +51,7 @@ class TestDirectToolsIntegration:
     async def imap_client(self):
         """Create and yield an IMAP client connected to Gmail."""
         # Load config from the default location
-        from imap_mcp.config import load_config
+        from workspace_secretary.config import load_config
 
         server_config = load_config()
 

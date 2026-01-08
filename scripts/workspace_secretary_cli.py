@@ -14,16 +14,16 @@ import argparse
 import logging
 from pathlib import Path
 
-# Add project root to path so we can import imap_mcp
+# Add project root to path so we can import workspace_secretary
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from imap_mcp.config import load_config
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.workflows.invite_parser import identify_meeting_invite_details
-from imap_mcp.workflows.calendar_mock import check_mock_availability
-from imap_mcp.workflows.meeting_reply import generate_meeting_reply_content
-from imap_mcp.smtp_client import create_reply_mime
-from imap_mcp.models import EmailAddress
+from workspace_secretary.config import load_config
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.workflows.invite_parser import identify_meeting_invite_details
+from workspace_secretary.workflows.calendar_mock import check_mock_availability
+from workspace_secretary.workflows.meeting_reply import generate_meeting_reply_content
+from workspace_secretary.smtp_client import create_reply_mime
+from workspace_secretary.models import EmailAddress
 
 
 def setup_logging(verbose=False):

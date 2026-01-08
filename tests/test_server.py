@@ -8,8 +8,8 @@ import logging
 
 from mcp.server.fastmcp import FastMCP
 
-from imap_mcp.server import create_server, server_lifespan, main
-from imap_mcp.config import ServerConfig, ImapConfig
+from workspace_secretary.server import create_server, server_lifespan, main
+from workspace_secretary.config import ServerConfig, ImapConfig
 
 
 class TestServer:
@@ -29,7 +29,7 @@ class TestServer:
             allowed_folders=["INBOX", "Sent"],
         )
 
-        with mock.patch("imap_mcp.server.load_config", return_value=mock_config):
+        with mock.patch("workspace_secretary.server.load_config", return_value=mock_config):
             # Create the server
             server = create_server()
 
@@ -43,10 +43,10 @@ class TestServer:
 
             # Verify resources and tools were registered
             with mock.patch(
-                "imap_mcp.server.register_resources"
+                "workspace_secretary.server.register_resources"
             ) as mock_register_resources:
                 with mock.patch(
-                    "imap_mcp.server.register_tools"
+                    "workspace_secretary.server.register_tools"
                 ) as mock_register_tools:
                     create_server()
                     assert mock_register_resources.called
@@ -54,7 +54,7 @@ class TestServer:
 
     def test_create_server_with_debug(self):
         """Test server creation with debug mode enabled."""
-        with mock.patch("imap_mcp.server.logger") as mock_logger:
+        with mock.patch("workspace_secretary.server.logger") as mock_logger:
             create_server(debug=True)
             mock_logger.setLevel.assert_called_with(logging.DEBUG)
 
@@ -62,7 +62,7 @@ class TestServer:
         """Test server creation with a specific config path."""
         config_path = "test_config.yaml"
 
-        with mock.patch("imap_mcp.server.load_config") as mock_load_config:
+        with mock.patch("workspace_secretary.server.load_config") as mock_load_config:
             create_server(config_path=config_path)
             mock_load_config.assert_called_with(config_path)
 
@@ -83,7 +83,7 @@ class TestServer:
         mock_server._config = mock_config
 
         # Mock ImapClient
-        with mock.patch("imap_mcp.server.ImapClient") as MockImapClient:
+        with mock.patch("workspace_secretary.server.ImapClient") as MockImapClient:
             mock_client = MockImapClient.return_value
 
             # Use AsyncExitStack to manage multiple context managers
@@ -124,9 +124,9 @@ class TestServer:
 
         # Mock config loading and ImapClient
         with mock.patch(
-            "imap_mcp.server.load_config", return_value=mock_config
+            "workspace_secretary.server.load_config", return_value=mock_config
         ) as mock_load_config:
-            with mock.patch("imap_mcp.server.ImapClient"):
+            with mock.patch("workspace_secretary.server.ImapClient"):
                 async with AsyncExitStack() as stack:
                     await stack.enter_async_context(server_lifespan(mock_server))
 
@@ -177,7 +177,7 @@ class TestServer:
 
         try:
             # Apply our mock
-            with mock.patch("imap_mcp.server.load_config", return_value=mock_config):
+            with mock.patch("workspace_secretary.server.load_config", return_value=mock_config):
                 with mock.patch.object(FastMCP, "tool", mock_tool):
                     # Create the server, which should register our tool
                     server = create_server()
@@ -222,9 +222,9 @@ class TestServer:
         test_args = ["--config", "test_config.yaml", "--debug", "--dev"]
 
         with mock.patch("sys.argv", ["server.py"] + test_args):
-            with mock.patch("imap_mcp.server.create_server") as mock_create_server:
+            with mock.patch("workspace_secretary.server.create_server") as mock_create_server:
                 with mock.patch(
-                    "imap_mcp.server.argparse.ArgumentParser.parse_args"
+                    "workspace_secretary.server.argparse.ArgumentParser.parse_args"
                 ) as mock_parse_args:
                     # Mock the parsed arguments
                     mock_args = argparse.Namespace(
@@ -243,7 +243,7 @@ class TestServer:
                     mock_create_server.return_value = mock_server
 
                     # Call main
-                    with mock.patch("imap_mcp.server.logger") as mock_logger:
+                    with mock.patch("workspace_secretary.server.logger") as mock_logger:
                         main()
 
                         # Verify create_server was called with correct args
@@ -268,9 +268,9 @@ class TestServer:
         monkeypatch.setenv("IMAP_MCP_CONFIG", "env_config.yaml")
 
         with mock.patch("sys.argv", ["server.py"]):
-            with mock.patch("imap_mcp.server.create_server") as mock_create_server:
+            with mock.patch("workspace_secretary.server.create_server") as mock_create_server:
                 with mock.patch(
-                    "imap_mcp.server.argparse.ArgumentParser.parse_args"
+                    "workspace_secretary.server.argparse.ArgumentParser.parse_args"
                 ) as mock_parse_args:
                     # Mock the parsed arguments
                     mock_args = argparse.Namespace(

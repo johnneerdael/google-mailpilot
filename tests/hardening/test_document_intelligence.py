@@ -1,32 +1,40 @@
 import pytest
 import io
+import json
 from unittest.mock import MagicMock, patch
-from imap_mcp.models import Email, EmailAttachment, EmailContent, EmailAddress
-from imap_mcp.tools import register_tools
+from workspace_secretary.models import Email, EmailAttachment, EmailContent, EmailAddress
+from mcp.server.fastmcp import FastMCP, Context
 
 
 @pytest.fixture
 def get_attachment_tool():
     tools = {}
+    mcp = MagicMock(spec=FastMCP)
 
-    class MockMCP:
-        def tool(self, **kwargs):
-            def decorator(func):
-                tools[func.__name__] = func
-                return func
+    def tool_decorator(**kwargs):
+        def wrapper(func):
+            tools[func.__name__] = func
+            return func
 
-            return decorator
+        return wrapper
 
-    mcp = MockMCP()
+    mcp.tool.side_effect = tool_decorator
+
+    from workspace_secretary.tools import register_tools
+
     register_tools(mcp, MagicMock())
     return tools.get("get_attachment_content")
 
 
 @pytest.fixture
 def mock_context():
-    ctx = MagicMock()
+    ctx = MagicMock(spec=Context)
     client = MagicMock()
-    ctx.request_context.lifespan_context = {"imap_client": client}
+    # Support both imap_client and gmail_client for transition
+    ctx.request_context.lifespan_context = {
+        "imap_client": client,
+        "gmail_client": client,
+    }
     return ctx, client
 
 
@@ -40,6 +48,8 @@ async def test_extract_text_from_txt_file(get_attachment_tool, mock_context):
     )
     email_obj = MagicMock(spec=Email)
     email_obj.attachments = [att]
+
+    # Tool currently uses get_client_from_context which tries imap_client first
     client.fetch_email.return_value = email_obj
 
     result = await get_attachment_tool(

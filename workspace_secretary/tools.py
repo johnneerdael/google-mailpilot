@@ -7,16 +7,16 @@ from typing import List, Optional, Union, Dict, Any
 
 from mcp.server.fastmcp import FastMCP, Context
 
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.calendar_client import CalendarClient
-from imap_mcp.gmail_client import GmailClient
-from imap_mcp.resources import (
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.calendar_client import CalendarClient
+from workspace_secretary.gmail_client import GmailClient
+from workspace_secretary.resources import (
     get_client_from_context,
     get_smtp_client_from_context,
     get_calendar_client_from_context,
     get_gmail_client_from_context,
 )
-from imap_mcp.models import EmailAddress
+from workspace_secretary.models import EmailAddress
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
         Returns:
             Processing result
         """
-        from imap_mcp.smtp_client import create_reply_mime
+        from workspace_secretary.smtp_client import create_reply_mime
 
         client = get_client_from_context(ctx)
 
@@ -419,6 +419,20 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
             if not attachment:
                 available = [a.filename for a in email_obj.attachments]
                 return f"Error: Attachment '{filename}' not found. Available: {', '.join(available)}"
+
+            # If using Gmail and attachment data is missing, fetch it
+            if (
+                not attachment.content
+                and hasattr(client, "get_attachment_data")
+                and hasattr(attachment, "attachment_id")
+                and attachment.attachment_id
+            ):
+                try:
+                    attachment.content = client.get_attachment_data(
+                        email_obj.message_id, attachment.attachment_id
+                    )
+                except Exception as e:
+                    return f"Error fetching Gmail attachment: {e}"
 
             if not attachment.content:
                 return "Error: Attachment has no content"
@@ -775,11 +789,11 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
               - draft_folder: Folder where the draft was saved (if successful)
               - availability: Whether the time slot was available
         """
-        from imap_mcp.workflows.invite_parser import identify_meeting_invite_details
-        from imap_mcp.workflows.calendar_mock import check_mock_availability
-        from imap_mcp.workflows.meeting_reply import generate_meeting_reply_content
-        from imap_mcp.smtp_client import create_reply_mime
-        from imap_mcp.models import EmailAddress
+        from workspace_secretary.workflows.invite_parser import identify_meeting_invite_details
+        from workspace_secretary.workflows.calendar_mock import check_mock_availability
+        from workspace_secretary.workflows.meeting_reply import generate_meeting_reply_content
+        from workspace_secretary.smtp_client import create_reply_mime
+        from workspace_secretary.models import EmailAddress
 
         client = get_client_from_context(ctx)
         result = {

@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import MagicMock
 from mcp.server.fastmcp import Context
-from imap_mcp.tools import register_tools
+from workspace_secretary.tools import register_tools
 
 
 class TestDraftMeetingReply:

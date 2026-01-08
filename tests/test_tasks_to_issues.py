@@ -96,21 +96,21 @@ class TestCoverageReporter(unittest.TestCase):
         """Set up test fixtures."""
         self.sample_coverage_data = {
             "files": {
-                "imap_mcp/server.py": {
+                "workspace_secretary/server.py": {
                     "summary": {
                         "num_statements": 100,
                         "missing_lines": 15,
                         "excluded_lines": 0
                     }
                 },
-                "imap_mcp/client.py": {
+                "workspace_secretary/client.py": {
                     "summary": {
                         "num_statements": 80,
                         "missing_lines": 5,
                         "excluded_lines": 0
                     }
                 },
-                "imap_mcp/low_coverage.py": {
+                "workspace_secretary/low_coverage.py": {
                     "summary": {
                         "num_statements": 50,
                         "missing_lines": 20,

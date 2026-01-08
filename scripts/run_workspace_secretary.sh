@@ -11,7 +11,7 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_ROOT" || exit 1
 
 VENV_PATH="$PROJECT_ROOT/.venv"
-SERVER_SCRIPT="$PROJECT_ROOT/imap_mcp/server.py"
+SERVER_SCRIPT="$PROJECT_ROOT/workspace_secretary/server.py"
 
 echo "Wrapper: Starting IMAP MCP Server..."
 echo "Wrapper: Project Root: $PROJECT_ROOT"

@@ -31,7 +31,7 @@ RUN uv sync --frozen --no-dev
 
 # Set the entrypoint to run the MCP server
 # We use the virtual environment created by uv
-ENTRYPOINT ["uv", "run", "python", "-m", "imap_mcp.server"]
+ENTRYPOINT ["uv", "run", "python", "-m", "workspace_secretary.server"]
 
 # Default command if none provided (can be overridden)
 CMD ["--config", "/app/config/config.yaml"]

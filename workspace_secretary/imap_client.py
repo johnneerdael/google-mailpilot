@@ -8,9 +8,9 @@ from typing import Dict, List, Optional, Tuple, Union, Any, cast
 
 import imapclient
 
-from imap_mcp.config import ImapConfig
-from imap_mcp.models import Email
-from imap_mcp.oauth2 import get_access_token
+from workspace_secretary.config import ImapConfig
+from workspace_secretary.models import Email
+from workspace_secretary.oauth2 import get_access_token
 
 logger = logging.getLogger(__name__)
 

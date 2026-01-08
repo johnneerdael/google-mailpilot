@@ -2,8 +2,8 @@ import pytest
 import json
 from unittest.mock import MagicMock, patch
 from datetime import datetime
-from imap_mcp.imap_client import ImapClient
-from imap_mcp.models import Email, EmailAddress
+from workspace_secretary.imap_client import ImapClient
+from workspace_secretary.models import Email, EmailAddress
 
 
 @pytest.fixture
@@ -20,7 +20,7 @@ def test_fetch_emails_with_gmail_extensions(mock_imap_client):
     # but we're mocking the ImapClient. Let's use a real ImapClient instance
     # but mock its internal imapclient.IMAPClient.
 
-    from imap_mcp.config import ImapConfig
+    from workspace_secretary.config import ImapConfig
 
     config = ImapConfig(
         host="imap.gmail.com", port=993, username="test@gmail.com", password="password"
@@ -58,7 +58,7 @@ def test_fetch_emails_with_gmail_extensions(mock_imap_client):
 
 def test_fetch_thread_with_gmail_optimization():
     """Test that fetch_thread uses X-GM-THRID when available."""
-    from imap_mcp.config import ImapConfig
+    from workspace_secretary.config import ImapConfig
 
     config = ImapConfig(
         host="imap.gmail.com", port=993, username="test@gmail.com", password="password"
@@ -104,7 +104,7 @@ def test_fetch_thread_with_gmail_optimization():
 
 def test_modify_gmail_labels():
     """Test adding/removing Gmail labels."""
-    from imap_mcp.config import ImapConfig
+    from workspace_secretary.config import ImapConfig
 
     config = ImapConfig(
         host="imap.gmail.com", port=993, username="test@gmail.com", password="password"
