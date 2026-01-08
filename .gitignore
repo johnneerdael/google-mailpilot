@@ -29,7 +29,7 @@ htmlcov/
 .nox/
 .hypothesis/
 .pytest_cache/
-
+.opencode/
 # Virtual environment
 venv/
 env/

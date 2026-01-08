@@ -169,10 +169,17 @@ class Email:
     uid: Optional[int] = None
     in_reply_to: Optional[str] = None
     references: List[str] = field(default_factory=list)
+    gmail_thread_id: Optional[str] = None
+    gmail_labels: List[str] = field(default_factory=list)
 
     @classmethod
     def from_message(
-        cls, message: Message, uid: Optional[int] = None, folder: Optional[str] = None
+        cls,
+        message: Message,
+        uid: Optional[int] = None,
+        folder: Optional[str] = None,
+        gmail_thread_id: Optional[str] = None,
+        gmail_labels: Optional[List[str]] = None,
     ) -> "Email":
         """Create email from email.message.Message.
 
@@ -180,6 +187,8 @@ class Email:
             message: Email message
             uid: IMAP UID
             folder: IMAP folder
+            gmail_thread_id: Gmail thread ID
+            gmail_labels: Gmail labels
 
         Returns:
             Email object
@@ -334,6 +343,8 @@ class Email:
             uid=uid,
             in_reply_to=in_reply_to,
             references=references,
+            gmail_thread_id=gmail_thread_id,
+            gmail_labels=gmail_labels or [],
         )
 
     def summary(self) -> str:

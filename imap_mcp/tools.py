@@ -413,6 +413,417 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
             logger.error(f"Error deleting email: {e}")
             return f"Error: {e}"
 
+    # Get chronological thread of emails
+    @mcp.tool()
+    async def get_email_thread(
+        folder: str,
+        uid: int,
+        ctx: Context,
+    ) -> str:
+        """Fetch all emails in a conversation thread.
+
+        Args:
+            folder: Folder containing the email
+            uid: UID of an email in the thread
+            ctx: MCP context
+
+        Returns:
+            Concatenated string of all emails in the thread
+        """
+        client = get_client_from_context(ctx)
+        try:
+            thread = client.fetch_thread(uid, folder)
+            if not thread:
+                return f"No thread found for email with UID {uid}"
+
+            output = []
+            for email_obj in thread:
+                recipients_to = ", ".join(str(a) for a in email_obj.to)
+                recipients_cc = ", ".join(str(a) for a in email_obj.cc)
+
+                email_str = [
+                    f"--- THREAD EMAIL [UID: {email_obj.uid}] ---",
+                    f"From: {email_obj.from_}",
+                    f"To: {recipients_to}",
+                ]
+                if recipients_cc:
+                    email_str.append(f"CC: {recipients_cc}")
+
+                email_str.extend(
+                    [
+                        f"Date: {email_obj.date.isoformat() if email_obj.date else 'Unknown'}",
+                        f"Subject: {email_obj.subject}",
+                        f"Body:\n{email_obj.content.get_best_content()}",
+                        "------------------------",
+                    ]
+                )
+                output.append("\n".join(email_str))
+
+            return "\n\n".join(output)
+        except Exception as e:
+            logger.error(f"Error fetching thread: {e}")
+            return f"Error: {e}"
+
+    # Get bulk unseen emails for analysis
+    @mcp.tool()
+    async def get_unseen_emails(
+        ctx: Context,
+        folder: str = "INBOX",
+        limit: int = 20,
+        body_limit: int = 700,
+    ) -> str:
+        """Fetches the most recent unseen emails for bulk analysis.
+
+        Args:
+            ctx: MCP context
+            folder: Folder to search in (default: INBOX)
+            limit: Maximum number of emails to fetch (default: 20)
+            body_limit: Characters to include from the body (default: 700)
+
+        Returns:
+            Concatenated string of unseen emails with critical headers
+        """
+        client = get_client_from_context(ctx)
+        try:
+            # Search for unseen emails
+            uids = client.search("unseen", folder=folder)
+
+            # Sort by newest first and apply limit
+            uids = sorted(uids, reverse=True)[:limit]
+
+            if not uids:
+                return f"No unseen emails found in {folder}."
+
+            # Fetch emails
+            emails = client.fetch_emails(uids, folder=folder)
+
+            output = []
+            # Iterate through UIDs to maintain order
+            for uid in sorted(emails.keys(), reverse=True):
+                email_obj = emails[uid]
+
+                recipients_to = ", ".join(str(a) for a in email_obj.to)
+                recipients_cc = ", ".join(str(a) for a in email_obj.cc)
+                recipients_bcc = ", ".join(str(a) for a in email_obj.bcc)
+
+                body = email_obj.content.get_best_content()
+                if len(body) > body_limit:
+                    body = body[:body_limit] + "... [TRUNCATED]"
+
+                email_str = [
+                    f"--- EMAIL [UID: {uid}] ---",
+                    f"From: {email_obj.from_}",
+                    f"To: {recipients_to}",
+                ]
+
+                if recipients_cc:
+                    email_str.append(f"CC: {recipients_cc}")
+                if recipients_bcc:
+                    email_str.append(f"BCC: {recipients_bcc}")
+
+                email_str.extend(
+                    [
+                        f"Date: {email_obj.date.isoformat() if email_obj.date else 'Unknown'}",
+                        f"Subject: {email_obj.subject}",
+                        f"Body: {body}",
+                        "------------------------",
+                    ]
+                )
+                output.append("\n".join(email_str))
+
+            return f"Found {len(output)} unseen emails in {folder}:\n\n" + "\n\n".join(
+                output
+            )
+
+        except Exception as e:
+            logger.error(f"Error fetching unseen emails: {e}")
+            return f"Error: {e}"
+
+    @mcp.tool()
+    async def get_attachment_content(
+        folder: str,
+        uid: int,
+        filename: str,
+        ctx: Context,
+        char_limit: int = 10000,
+    ) -> str:
+        """Extracts text content from an email attachment.
+        Supports .txt, .log, .pdf, and .docx files.
+
+        Args:
+            folder: Folder containing the email
+            uid: Email UID
+            filename: Name of the attachment file
+            ctx: MCP context
+            char_limit: Maximum characters to extract (default: 10000)
+
+        Returns:
+            Extracted text content or error message
+        """
+        import io
+        from pypdf import PdfReader
+        from docx import Document
+
+        client = get_client_from_context(ctx)
+        try:
+            email_obj = client.fetch_email(uid, folder)
+            if not email_obj:
+                return f"Email with UID {uid} not found"
+
+            attachment = next(
+                (a for a in email_obj.attachments if a.filename == filename), None
+            )
+            if not attachment:
+                available = ", ".join(a.filename for a in email_obj.attachments)
+                return f"Attachment '{filename}' not found. Available: {available}"
+
+            if not attachment.content:
+                return f"Attachment '{filename}' has no content"
+
+            content_bytes = attachment.content
+            extracted_text = ""
+
+            # Determine file type and extract text
+            ext = os.path.splitext(filename.lower())[1]
+
+            if ext in [".txt", ".log", ".md", ".py", ".js", ".json", ".yaml", ".yml"]:
+                try:
+                    extracted_text = content_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    extracted_text = content_bytes.decode("latin-1")
+
+            elif ext == ".pdf":
+                pdf_file = io.BytesIO(content_bytes)
+                reader = PdfReader(pdf_file)
+                pages = []
+                for page in reader.pages:
+                    text = page.extract_text()
+                    if text:
+                        pages.append(text)
+                extracted_text = "\n\n".join(pages)
+
+            elif ext == ".docx":
+                docx_file = io.BytesIO(content_bytes)
+                doc = Document(docx_file)
+                paragraphs = [p.text for p in doc.paragraphs]
+                extracted_text = "\n".join(paragraphs)
+
+            else:
+                return f"Unsupported file type '{ext}' for text extraction"
+
+            if not extracted_text.strip():
+                return f"No text could be extracted from '{filename}'"
+
+            if len(extracted_text) > char_limit:
+                extracted_text = (
+                    extracted_text[:char_limit] + "\n\n... [TRUNCATED DUE TO SIZE]"
+                )
+
+            return f"--- Content of '{filename}' ---\n\n{extracted_text}"
+
+        except Exception as e:
+            logger.error(f"Error extracting attachment content: {e}")
+            return f"Error: {e}"
+
+    @mcp.tool()
+    async def modify_gmail_labels(
+        folder: str,
+        uid: int,
+        ctx: Context,
+        labels: List[str],
+        action: str = "add",
+    ) -> str:
+        """Modify Gmail labels for an email.
+
+        Args:
+            folder: Folder containing the email
+            uid: Email UID
+            ctx: MCP context
+            labels: List of labels to modify
+            action: Action to take ('add', 'remove', or 'set')
+
+        Returns:
+            Success or error message
+        """
+        client = get_client_from_context(ctx)
+        try:
+            if action.lower() == "add":
+                success = client.add_gmail_labels(uid, folder, labels)
+            elif action.lower() == "remove":
+                success = client.remove_gmail_labels(uid, folder, labels)
+            elif action.lower() == "set":
+                success = client.set_gmail_labels(uid, folder, labels)
+            else:
+                return f"Invalid action: {action}. Use 'add', 'remove', or 'set'."
+
+            if success:
+                return f"Successfully {action}ed labels: {', '.join(labels)}"
+            else:
+                return f"Failed to modify labels. Ensure the server supports Gmail extensions."
+        except Exception as e:
+            logger.error(f"Error modifying Gmail labels: {e}")
+            return f"Error: {e}"
+
+    @mcp.tool()
+    async def get_gmail_thread(
+        thread_id: str,
+        ctx: Context,
+        folder: str = "INBOX",
+    ) -> str:
+        """Fetches all emails in a Gmail conversation thread using the thread ID.
+
+        Args:
+            thread_id: Gmail thread ID (X-GM-THRID)
+            ctx: MCP context
+            folder: Folder to search in (default: INBOX)
+
+        Returns:
+            Concatenated string of all emails in the thread
+        """
+        client = get_client_from_context(ctx)
+        try:
+            uids = client.search_by_thread_id(thread_id, folder)
+            if not uids:
+                return f"No emails found for thread ID: {thread_id}"
+
+            emails = client.fetch_emails(uids, folder)
+
+            output = []
+            for uid in sorted(emails.keys()):
+                email_obj = emails[uid]
+                recipients_to = ", ".join(str(a) for a in email_obj.to)
+                recipients_cc = ", ".join(str(a) for a in email_obj.cc)
+
+                email_str = [
+                    f"--- GMAIL THREAD EMAIL [UID: {uid}, ThreadID: {thread_id}] ---",
+                    f"Labels: {', '.join(email_obj.gmail_labels)}",
+                    f"From: {email_obj.from_}",
+                    f"To: {recipients_to}",
+                ]
+                if recipients_cc:
+                    email_str.append(f"CC: {recipients_cc}")
+
+                email_str.extend(
+                    [
+                        f"Date: {email_obj.date.isoformat() if email_obj.date else 'Unknown'}",
+                        f"Subject: {email_obj.subject}",
+                        f"Body:\n{email_obj.content.get_best_content()}",
+                        "------------------------",
+                    ]
+                )
+                output.append("\n".join(email_str))
+
+            return "\n\n".join(output)
+        except Exception as e:
+            logger.error(f"Error fetching Gmail thread: {e}")
+            return f"Error: {e}"
+
+    @mcp.tool()
+    async def advanced_search(
+        ctx: Context,
+        folder: str = "INBOX",
+        subject: Optional[str] = None,
+        from_address: Optional[str] = None,
+        to_address: Optional[str] = None,
+        body_text: Optional[str] = None,
+        unseen_only: bool = False,
+        since_date: Optional[str] = None,
+        before_date: Optional[str] = None,
+        limit: int = 10,
+    ) -> str:
+        """Advanced search for emails using multiple combined criteria.
+
+        Args:
+            ctx: MCP context
+            folder: Folder to search in (default: INBOX)
+            subject: Search in subject
+            from_address: Search in sender address
+            to_address: Search in recipient address
+            body_text: Search in email body text
+            unseen_only: Only return unread emails
+            since_date: Search emails after this date (YYYY-MM-DD)
+            before_date: Search emails before this date (YYYY-MM-DD)
+            limit: Maximum number of results
+
+        Returns:
+            JSON-formatted list of search results
+        """
+        client = get_client_from_context(ctx)
+
+        # Build search criteria list
+        search_criteria = []
+
+        if unseen_only:
+            search_criteria.append("UNSEEN")
+
+        if subject:
+            search_criteria.extend(["SUBJECT", subject])
+
+        if from_address:
+            search_criteria.extend(["FROM", from_address])
+
+        if to_address:
+            search_criteria.extend(["TO", to_address])
+
+        if body_text:
+            search_criteria.extend(["TEXT", body_text])
+
+        if since_date:
+            try:
+                date_obj = datetime.strptime(since_date, "%Y-%m-%d").date()
+                search_criteria.extend(["SINCE", date_obj])
+            except ValueError:
+                return f"Invalid since_date format: {since_date}. Use YYYY-MM-DD."
+
+        if before_date:
+            try:
+                date_obj = datetime.strptime(before_date, "%Y-%m-%d").date()
+                search_criteria.extend(["BEFORE", date_obj])
+            except ValueError:
+                return f"Invalid before_date format: {before_date}. Use YYYY-MM-DD."
+
+        # If no criteria provided, search for everything
+        if not search_criteria:
+            search_criteria = "ALL"
+
+        try:
+            # Search for emails
+            uids = client.search(search_criteria, folder=folder)
+
+            # Sort by newest first and apply limit
+            uids = sorted(uids, reverse=True)[:limit]
+
+            if not uids:
+                return json.dumps([], indent=2)
+
+            # Fetch emails
+            emails = client.fetch_emails(uids, folder=folder)
+
+            results = []
+            # Iterate through UIDs to maintain order
+            for uid in sorted(emails.keys(), reverse=True):
+                email_obj = emails[uid]
+                results.append(
+                    {
+                        "uid": uid,
+                        "folder": folder,
+                        "from": str(email_obj.from_),
+                        "to": [str(to) for to in email_obj.to],
+                        "subject": email_obj.subject,
+                        "date": email_obj.date.isoformat() if email_obj.date else None,
+                        "flags": email_obj.flags,
+                        "has_attachments": len(email_obj.attachments) > 0,
+                        "gmail_thread_id": email_obj.gmail_thread_id,
+                        "gmail_labels": email_obj.gmail_labels,
+                    }
+                )
+
+            return json.dumps(results, indent=2)
+
+        except Exception as e:
+            logger.error(f"Error in advanced search: {e}")
+            return f"Error: {e}"
+
     # Search for emails
     @mcp.tool()
     async def search_emails(

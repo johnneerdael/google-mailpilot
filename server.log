@@ -1,0 +1,15 @@
+2026-01-08 03:48:16,138 - imap_mcp - INFO - Starting server with uvicorn...
+2026-01-08 03:48:16,138 - imap_mcp.config - INFO - Loaded configuration from config.yaml
+2026-01-08 03:48:16,149 - mcp.server.fastmcp.resources.resource_manager - WARNING - Resource already exists: email://folders
+INFO:     Started server process [41563]
+INFO:     Waiting for application startup.
+2026-01-08 03:48:16,160 - mcp.server.streamable_http_manager - INFO - StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8124 (Press CTRL+C to quit)
+INFO:     127.0.0.1:55033 - "GET /sse HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:55035 - "GET /messages HTTP/1.1" 404 Not Found
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-01-08 03:48:20,820 - mcp.server.streamable_http_manager - INFO - StreamableHTTP session manager shutting down
+INFO:     Application shutdown complete.
+INFO:     Finished server process [41563]

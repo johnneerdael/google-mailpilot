@@ -1,0 +1,14 @@
+2026-01-08 04:01:41,483 - imap_mcp - INFO - Starting server with uvicorn...
+2026-01-08 04:01:41,484 - imap_mcp.config - INFO - Loaded configuration from config.yaml
+2026-01-08 04:01:41,484 - imap_mcp - WARNING - No IMAP_MCP_TOKEN found in environment. Generated temporary token: 5xMW5_dsjIh9Mdd-2fjfK3K35fZIxV77E2SUfOuT3Lk
+2026-01-08 04:01:41,494 - mcp.server.fastmcp.resources.resource_manager - WARNING - Resource already exists: email://folders
+INFO:     Started server process [44573]
+INFO:     Waiting for application startup.
+2026-01-08 04:01:41,518 - mcp.server.streamable_http_manager - INFO - StreamableHTTP session manager started
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8125 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-01-08 04:01:46,273 - mcp.server.streamable_http_manager - INFO - StreamableHTTP session manager shutting down
+INFO:     Application shutdown complete.
+INFO:     Finished server process [44573]
