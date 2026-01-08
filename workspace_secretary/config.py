@@ -213,6 +213,40 @@ class WorkingHoursConfig:
 
 
 @dataclass
+class UserIdentityConfig:
+    """User identity for email ownership detection."""
+
+    email: str
+    full_name: Optional[str] = None
+    aliases: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        self.email = self.email.lower()
+        self.aliases = [alias.lower() for alias in self.aliases]
+
+    def matches_email(self, address: str) -> bool:
+        """Check if an email address belongs to this user."""
+        addr_lower = address.lower()
+        if addr_lower == self.email:
+            return True
+        return addr_lower in self.aliases
+
+    def matches_name(self, text: str) -> bool:
+        """Check if text contains the user's name."""
+        if not self.full_name:
+            return False
+        return self.full_name.lower() in text.lower()
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UserIdentityConfig":
+        return cls(
+            email=data["email"],
+            full_name=data.get("full_name"),
+            aliases=data.get("aliases", []),
+        )
+
+
+@dataclass
 class ServerConfig:
     """MCP server configuration."""
 
@@ -220,6 +254,7 @@ class ServerConfig:
     timezone: str
     working_hours: WorkingHoursConfig
     oauth_mode: OAuthMode
+    identity: UserIdentityConfig
     allowed_folders: Optional[List[str]] = None
     calendar: Optional[CalendarConfig] = None
     vip_senders: List[str] = field(default_factory=list)
@@ -263,11 +298,16 @@ class ServerConfig:
             )
         oauth_mode = OAuthMode.from_string(oauth_mode_str)
 
+        identity_data = data.get("identity", {})
+        if not identity_data.get("email"):
+            identity_data["email"] = data.get("imap", {}).get("username", "")
+
         return cls(
             imap=ImapConfig.from_dict(data.get("imap", {})),
             timezone=data["timezone"],
             working_hours=WorkingHoursConfig.from_dict(data["working_hours"]),
             oauth_mode=oauth_mode,
+            identity=UserIdentityConfig.from_dict(identity_data),
             allowed_folders=data.get("allowed_folders"),
             calendar=CalendarConfig.from_dict(data.get("calendar", {})),
             vip_senders=data.get("vip_senders", []),

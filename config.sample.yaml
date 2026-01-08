@@ -8,6 +8,15 @@
 # Calendar features work in both modes. Can also be set via OAUTH_MODE env var.
 oauth_mode: api
 
+# REQUIRED: User Identity Configuration
+# Used to detect if emails are addressed directly to you
+identity:
+  email: your-email@gmail.com
+  full_name: "Your Full Name"
+  aliases:
+    - alternate@gmail.com
+    - work@company.com
+
 # REQUIRED: IMAP/Gmail Configuration
 imap:
   host: imap.gmail.com

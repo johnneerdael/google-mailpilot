@@ -1,6 +1,6 @@
 # OAuth Workaround (Unsupported)
 
-> **WARNING**: This configuration is **unsupported** and may break at any time. It relies on reusing public Client IDs from popular open-source applications (Thunderbird, GNOME) which are trusted by Google. We strongly recommend creating your own [GCP Project](configuration.md#step-2-google-cloud-project-setup) if possible.
+> **WARNING**: This configuration is **unsupported** and may break at any time. It relies on reusing public Client IDs from popular open-source applications (Thunderbird, GNOME, Mailspring) which are trusted by Google. We strongly recommend creating your own [GCP Project](configuration.md#step-2-google-cloud-project-setup) if possible.
 
 If you are unable to create a Google Cloud Platform project (e.g., due to organizational restrictions or verification issues), you can attempt to use the public credentials of known open-source email clients.
 
@@ -36,15 +36,108 @@ This means **Gmail REST API calls will fail** with these credentials. The `oauth
 
 These credentials belong to widely used open-source projects. They are generally whitelisted by Google for broad use.
 
+### Provider Comparison
+
+| Provider | Source | Scopes | Encrypted |
+|----------|--------|--------|-----------|
+| Mozilla Thunderbird | [OAuth2Providers.sys.mjs](https://github.com/mozilla/releases-comm-central/blob/master/mailnews/base/src/OAuth2Providers.sys.mjs) | mail.google.com, calendar, carddav | No |
+| GNOME Online Accounts | [meson_options.txt](https://gitlab.gnome.org/GNOME/gnome-online-accounts/-/blob/master/meson_options.txt) | mail.google.com, calendar, contacts | No |
+| Evolution Data Server | [CMakeLists.txt](https://gitlab.gnome.org/GNOME/evolution-data-server/-/blob/master/CMakeLists.txt) | mail.google.com, calendar | No |
+| Mailspring | [onboarding-constants.ts](https://github.com/Foundry376/Mailspring/blob/master/app/internal_packages/onboarding/lib/onboarding-constants.ts) | mail.google.com, calendar, contacts | **Yes (AES)** |
+
+---
+
 ### Mozilla Thunderbird
-- **Source**: [Thunderbird Source Code](https://hg.mozilla.org/comm-central/file/tip/mailnews/base/src/OAuth2Providers.jsm)
-- **Scopes**: `mail.google.com` (IMAP/SMTP), `calendar` ✅
-- Search for `googlemail.com` in the source to find the Client ID and Secret
+
+**Source**: [OAuth2Providers.sys.mjs](https://github.com/mozilla/releases-comm-central/blob/master/mailnews/base/src/OAuth2Providers.sys.mjs)
+
+```
+Client ID:     406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com
+Client Secret: kSmqreRr0qwBWJgbf5Y-PjSU
+```
+
+**Available Scopes**:
+- `https://mail.google.com/` (IMAP/SMTP)
+- `https://www.googleapis.com/auth/calendar` (CalDAV)
+- `https://www.googleapis.com/auth/carddav` (CardDAV/Contacts)
+
+---
 
 ### GNOME Online Accounts
-- **Source**: [GNOME GOA Source Code](https://gitlab.gnome.org/GNOME/gnome-online-accounts/-/blob/master/src/goabackend/goagoogleprovider.c)
-- **Scopes**: `mail.google.com` (IMAP/SMTP), `calendar` ✅
-- Search for `CLIENT_ID` in the source file
+
+**Source**: [meson_options.txt](https://gitlab.gnome.org/GNOME/gnome-online-accounts/-/blob/master/meson_options.txt)
+
+Search for `google_client_id` and `google_client_secret` in the meson_options.txt file. The values are build-time options.
+
+**Available Scopes**:
+- `https://mail.google.com/` (IMAP/SMTP)
+- `https://www.googleapis.com/auth/calendar`
+- `https://www.google.com/m8/feeds` (Contacts)
+
+---
+
+### Evolution Data Server
+
+**Source**: [CMakeLists.txt](https://gitlab.gnome.org/GNOME/evolution-data-server/-/blob/master/CMakeLists.txt)
+
+Search for `GOOGLE_CLIENT_ID` in the CMakeLists.txt file. Evolution Data Server is the backend for GNOME Evolution mail client.
+
+**Available Scopes**:
+- `https://mail.google.com/` (IMAP/SMTP)
+- `https://www.googleapis.com/auth/calendar`
+
+---
+
+### Mailspring (Encrypted)
+
+**Source**: [onboarding-constants.ts](https://github.com/Foundry376/Mailspring/blob/master/app/internal_packages/onboarding/lib/onboarding-constants.ts)
+
+Mailspring encrypts its OAuth secrets. You'll need to decrypt them:
+
+```
+Client ID: 662287800555-0a5h4ii0e9hil1dims8hn5opk76pce9t.apps.googleusercontent.com
+```
+
+**Encrypted Secret** (AES-256-CTR):
+```
+Ciphertext (base64): 1EyEGYVh3NBNIbYEdpdMvOzCH7+vrSciGeYZ1F+W6W+yShk=
+IV (base64):         wgvAx+N05nHqhFxJ9I07jw==
+Key:                 don't-be-ev1l-thanks--mailspring
+```
+
+**Python Decryption Code**:
+
+```python
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.backends import default_backend
+import base64
+import hashlib
+
+def decrypt_mailspring_secret():
+    key = b"don't-be-ev1l-thanks--mailspring"
+    # Key must be 32 bytes for AES-256
+    key_hash = hashlib.sha256(key).digest()
+    
+    iv = base64.b64decode("wgvAx+N05nHqhFxJ9I07jw==")
+    ciphertext = base64.b64decode("1EyEGYVh3NBNIbYEdpdMvOzCH7+vrSciGeYZ1F+W6W+yShk=")
+    
+    cipher = Cipher(algorithms.AES(key_hash), modes.CTR(iv), backend=default_backend())
+    decryptor = cipher.decryptor()
+    plaintext = decryptor.update(ciphertext) + decryptor.finalize()
+    
+    return plaintext.decode('utf-8')
+
+if __name__ == "__main__":
+    print(f"Client Secret: {decrypt_mailspring_secret()}")
+```
+
+**Available Scopes**:
+- `https://mail.google.com/` (IMAP/SMTP)
+- `https://www.googleapis.com/auth/calendar`
+- `https://www.googleapis.com/auth/contacts`
+- `https://www.googleapis.com/auth/userinfo.email`
+
+---
 
 ## How to Use
 
@@ -54,14 +147,18 @@ These credentials belong to widely used open-source projects. They are generally
 ```yaml
 oauth_mode: imap
 
+identity:
+  email: your-email@gmail.com
+  full_name: "Your Name"
+
 imap:
   host: imap.gmail.com
   port: 993
   username: your-email@gmail.com
   use_ssl: true
   oauth2:
-    client_id: "<client_id_from_thunderbird_or_gnome_source>"
-    client_secret: "<client_secret_from_source>"
+    client_id: "<client_id_from_provider>"
+    client_secret: "<client_secret_from_provider>"
 
 timezone: America/Los_Angeles
 working_hours:
@@ -76,7 +173,7 @@ vip_senders: []
 uv run auth_setup --mode imap
 ```
 
-4. When authenticating, you'll see a consent screen for "Mozilla Thunderbird" or "GNOME". This is expected.
+4. When authenticating, you'll see a consent screen for the provider you chose (e.g., "Mozilla Thunderbird"). This is expected.
 
 ## Limitations
 
@@ -99,3 +196,5 @@ Re-run `uv run auth_setup --mode imap` to refresh your tokens.
 ### Calendar Still Works But Email Doesn't
 This confirms you're using third-party credentials. Set `oauth_mode: imap` to fix email operations.
 
+### "Access blocked: This app's request is invalid"
+The provider's client ID may have been revoked by Google. Try a different provider from the list above.

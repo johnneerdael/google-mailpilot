@@ -9,9 +9,11 @@ import yaml
 
 from workspace_secretary.config import (
     ImapConfig,
-    OAuthMode,
     ServerConfig,
     WorkingHoursConfig,
+    OAuth2Config,
+    OAuthMode,
+    UserIdentityConfig,
     load_config,
 )
 
@@ -162,6 +164,7 @@ class TestServerConfig:
             working_hours=working_hours,
             vip_senders=[],
             oauth_mode=OAuthMode.API,
+            identity=UserIdentityConfig(email="test@example.com"),
         )
         assert server_config.imap == imap_config
         assert server_config.allowed_folders is None
@@ -178,6 +181,7 @@ class TestServerConfig:
             vip_senders=["boss@example.com"],
             allowed_folders=allowed_folders,
             oauth_mode=OAuthMode.API,
+            identity=UserIdentityConfig(email="test@example.com"),
         )
         assert server_config.imap == imap_config
         assert server_config.allowed_folders == allowed_folders
@@ -495,6 +499,7 @@ class TestServerConfigWithNewFields:
             working_hours=working_hours,
             vip_senders=["boss@example.com", "ceo@example.com"],
             oauth_mode=OAuthMode.API,
+            identity=UserIdentityConfig(email="test@gmail.com"),
         )
 
         assert server_config.timezone == "America/Los_Angeles"
@@ -521,6 +526,7 @@ class TestServerConfigWithNewFields:
                 working_hours=working_hours,
                 vip_senders=[],
                 oauth_mode=OAuthMode.API,
+                identity=UserIdentityConfig(email="test@gmail.com"),
             )
         assert "Invalid timezone" in str(excinfo.value)
 
@@ -543,6 +549,7 @@ class TestServerConfigWithNewFields:
             working_hours=working_hours,
             vip_senders=["Boss@Example.com", "CEO@Example.COM"],
             oauth_mode=OAuthMode.API,
+            identity=UserIdentityConfig(email="test@gmail.com"),
         )
 
         assert server_config.vip_senders == ["boss@example.com", "ceo@example.com"]
@@ -559,10 +566,17 @@ class TestServerConfigWithNewFields:
         working_hours = WorkingHoursConfig(
             start="09:00", end="17:00", workdays=[1, 2, 3, 4, 5]
         )
+        identity = UserIdentityConfig(email="test@gmail.com")
 
         # This should raise TypeError because timezone is a required field
         with pytest.raises(TypeError):
-            ServerConfig(imap=imap_config, working_hours=working_hours, vip_senders=[])
+            ServerConfig(
+                imap=imap_config,
+                working_hours=working_hours,
+                vip_senders=[],
+                oauth_mode=OAuthMode.IMAP,
+                identity=identity,
+            )
 
     def test_missing_working_hours(self):
         """Test missing working_hours raises TypeError."""
@@ -572,11 +586,16 @@ class TestServerConfigWithNewFields:
             username="test@gmail.com",
             password="password",
         )
+        identity = UserIdentityConfig(email="test@gmail.com")
 
         # This should raise TypeError because working_hours is a required field
         with pytest.raises(TypeError):
             ServerConfig(
-                imap=imap_config, timezone="America/Los_Angeles", vip_senders=[]
+                imap=imap_config,
+                timezone="America/Los_Angeles",
+                vip_senders=[],
+                oauth_mode=OAuthMode.IMAP,
+                identity=identity,
             )
 
     def test_from_dict_with_new_fields(self, monkeypatch):

@@ -1227,15 +1227,27 @@ def register_tools(
                         if full_msg:
                             candidates.append(full_msg)
 
+                identity = config.identity
+
                 for email in candidates:
                     sender = str(email.from_).lower()
                     subject = email.subject.lower()
                     snippet = email.get_snippet(200).lower()
                     labels = email.gmail_labels or []
 
+                    to_addresses = [str(addr).lower() for addr in email.to]
+                    is_addressed_to_me = any(
+                        identity.matches_email(addr) for addr in to_addresses
+                    )
+
+                    body_text = email.content.get_best_content()
+                    mentions_my_name = identity.matches_name(body_text)
+
                     signals = {
                         "is_important": "IMPORTANT" in labels,
                         "is_from_vip": any(vip in sender for vip in vip_senders),
+                        "is_addressed_to_me": is_addressed_to_me,
+                        "mentions_my_name": mentions_my_name,
                         "has_question": "?" in subject
                         or "?" in snippet
                         or bool(
@@ -1447,14 +1459,26 @@ def register_tools(
                 uids = uids[:50]
                 emails_dict = imap_client.fetch_emails(uids, folder="INBOX")
 
+                identity = server_config.identity
+
                 for uid, email in emails_dict.items():
                     sender = str(email.from_).lower()
                     subject = (email.subject or "").lower()
                     snippet = email.content.get_best_content()[:200].lower()
 
+                    to_addresses = [str(addr).lower() for addr in email.to]
+                    is_addressed_to_me = any(
+                        identity.matches_email(addr) for addr in to_addresses
+                    )
+
+                    body_text = email.content.get_best_content()
+                    mentions_my_name = identity.matches_name(body_text)
+
                     signals = {
                         "is_important": False,
                         "is_from_vip": any(vip in sender for vip in vip_senders),
+                        "is_addressed_to_me": is_addressed_to_me,
+                        "mentions_my_name": mentions_my_name,
                         "has_question": "?" in subject
                         or "?" in snippet
                         or bool(

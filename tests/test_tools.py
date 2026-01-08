@@ -10,6 +10,7 @@ from mcp.server.fastmcp import FastMCP, Context
 from workspace_secretary.imap_client import ImapClient
 from workspace_secretary.models import Email, EmailAddress, EmailContent
 from workspace_secretary.tools import register_tools
+from workspace_secretary.config import OAuthMode
 
 
 # Patch the get_client_from_context function to use our mock client
@@ -80,8 +81,8 @@ class TestTools:
 
         mcp.tool = mock_tool_decorator
 
-        # Register tools with our mock
-        register_tools(mcp, mock_client)
+        # Register tools with our mock (IMAP mode for these tests)
+        register_tools(mcp, mock_client, OAuthMode.IMAP)
 
         # Return the tools dictionary
         return stored_tools

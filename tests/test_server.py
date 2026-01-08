@@ -14,6 +14,7 @@ from workspace_secretary.config import (
     ImapConfig,
     WorkingHoursConfig,
     OAuthMode,
+    UserIdentityConfig,
 )
 
 
@@ -39,6 +40,7 @@ class TestServer:
             vip_senders=[],
             allowed_folders=["INBOX", "Sent"],
             oauth_mode=OAuthMode.API,
+            identity=UserIdentityConfig(email="test@example.com"),
         )
 
         with mock.patch(
@@ -83,6 +85,7 @@ class TestServer:
             working_hours=working_hours,
             vip_senders=[],
             oauth_mode=OAuthMode.API,
+            identity=UserIdentityConfig(email="test@example.com"),
         )
         with mock.patch(
             "workspace_secretary.server.load_config", return_value=mock_config
@@ -119,6 +122,7 @@ class TestServer:
             working_hours=working_hours,
             vip_senders=[],
             oauth_mode=OAuthMode.IMAP,
+            identity=UserIdentityConfig(email="test@example.com"),
         )
         mock_server._config = mock_config
 
@@ -167,6 +171,7 @@ class TestServer:
             working_hours=working_hours,
             vip_senders=[],
             oauth_mode=OAuthMode.IMAP,
+            identity=UserIdentityConfig(email="test@example.com"),
         )
 
         # Mock config loading and ImapClient
@@ -211,6 +216,7 @@ class TestServer:
             vip_senders=[],
             allowed_folders=["INBOX", "Sent"],
             oauth_mode=OAuthMode.API,
+            identity=UserIdentityConfig(email="test@example.com"),
         )
 
         # In the actual server implementation, server_status is defined as an inner function
