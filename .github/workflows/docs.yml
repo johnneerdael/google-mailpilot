@@ -49,6 +49,11 @@ jobs:
 
       - name: Build VitePress
         working-directory: docs
+        env:
+          # Dynamic base path based on deployment target
+          # Main branch -> /Google-Workspace-Secretary-MCP/latest/
+          # Tag -> /Google-Workspace-Secretary-MCP/v1.2.3/
+          VITEPRESS_BASE: /Google-Workspace-Secretary-MCP/${{ steps.version.outputs.version }}/
         run: npm run build
 
       - name: Checkout gh-pages branch
