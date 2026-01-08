@@ -1,8 +1,48 @@
+# Google Workspace Secretary MCP Configuration
+# Complete example with all available options
+
+# REQUIRED: IMAP/Gmail Configuration
 imap:
   host: imap.gmail.com
   port: 993
   username: your-email@gmail.com
   use_ssl: true
+  
+  # OAuth2 authentication (recommended for Gmail)
   oauth2:
-    client_id: 406964657835-aq8lmia8j95dhl1a2bvharmfk3t1hgqj.apps.googleusercontent.com
-    client_secret: kSmqreRr0qwBWJgbf5Y-PjSU
+    client_id: YOUR_CLIENT_ID.apps.googleusercontent.com
+    client_secret: YOUR_CLIENT_SECRET
+    # Tokens will be auto-generated during auth_setup
+
+# REQUIRED: Timezone Configuration
+# Use IANA timezone format (e.g., America/Los_Angeles, Europe/London, Asia/Tokyo)
+# This determines how calendar events and working hours are interpreted
+timezone: America/Los_Angeles
+
+# REQUIRED: Working Hours Configuration
+# Used by scheduling tools to suggest meeting times only within your working hours
+working_hours:
+  start: "09:00"  # Must be in HH:MM format (24-hour)
+  end: "17:00"    # Must be in HH:MM format (24-hour)
+  workdays: [1, 2, 3, 4, 5]  # 1=Monday, 7=Sunday
+
+# REQUIRED: VIP Senders
+# Emails from these addresses will be flagged as high-priority in daily briefings
+# Use exact email addresses (case-insensitive)
+vip_senders:
+  - boss@company.com
+  - ceo@company.com
+  - important-client@example.com
+
+# OPTIONAL: Restrict which email folders the MCP can access
+# If not specified, all folders are accessible
+allowed_folders:
+  - INBOX
+  - Sent
+  - Archive
+  - Important
+
+# OPTIONAL: Calendar Configuration
+calendar:
+  enabled: true
+  verified_client: your-email@gmail.com
