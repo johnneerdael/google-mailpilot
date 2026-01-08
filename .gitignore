@@ -61,7 +61,7 @@ config.yaml*
 resources/
 reference_github/
 mcp-cli/
-
+.opencode/
 
 
 # Exclude any sensitive files that might be in resources even if they match above patterns

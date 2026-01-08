@@ -2,58 +2,23 @@
 
 import json
 import logging
-import os
 from datetime import datetime
-from typing import Dict, List, Optional, Union, Any
+from typing import List, Optional, Union, Dict, Any
 
-
-from mcp.server.fastmcp import FastMCP
-from mcp.server.fastmcp import Context
+from mcp.server.fastmcp import FastMCP, Context
 
 from imap_mcp.imap_client import ImapClient
-from imap_mcp.resources import get_client_from_context, get_smtp_client_from_context
-
-from typing import Dict
-from datetime import datetime
+from imap_mcp.calendar_client import CalendarClient
+from imap_mcp.gmail_client import GmailClient
+from imap_mcp.resources import (
+    get_client_from_context,
+    get_smtp_client_from_context,
+    get_calendar_client_from_context,
+    get_gmail_client_from_context,
+)
+from imap_mcp.models import EmailAddress
 
 logger = logging.getLogger(__name__)
-
-# Define the path for storing tasks
-TASKS_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tasks.json")
-
-
-async def _create_task_impl(
-    description: str,
-    due_date: Optional[str] = None,
-    priority: Optional[int] = None,
-) -> str:
-    """Internal implementation for creating a task."""
-    task = {
-        "id": int(datetime.now().timestamp()),
-        "description": description,
-        "created_at": datetime.now().isoformat(),
-        "status": "pending",
-        "due_date": due_date,
-        "priority": priority,
-    }
-
-    try:
-        tasks = []
-        if os.path.exists(TASKS_FILE):
-            with open(TASKS_FILE, "r") as f:
-                content = f.read()
-                if content:
-                    tasks = json.loads(content)
-
-        tasks.append(task)
-
-        with open(TASKS_FILE, "w") as f:
-            json.dump(tasks, f, indent=2)
-
-        return f"Task created successfully: {description} (ID: {task['id']})"
-    except Exception as e:
-        logger.error(f"Error creating task: {e}")
-        return f"Error creating task: {e}"
 
 
 def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
@@ -64,163 +29,146 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
         imap_client: IMAP client
     """
 
-    # Internal implementations
-    async def _draft_meeting_reply(
-        invite_details: Dict[str, Any], availability_status: bool, ctx: Context
-    ) -> Dict[str, Any]:
-        """Internal implementation for drafting meeting reply."""
-        from imap_mcp.workflows.meeting_reply import generate_meeting_reply_content
+    # List folders tool
+    @mcp.tool()
+    async def list_folders(ctx: Context) -> str:
+        """List available email folders.
 
-        # Create availability status dict required by the helper
-        status = {
-            "available": availability_status,
-            "reason": "Schedule conflict" if not availability_status else "",
-        }
+        Args:
+            ctx: MCP context
 
-        # Generate content
-        return generate_meeting_reply_content(invite_details, status)
-
-    async def _identify_meeting_invite(
-        folder: str, uid: int, ctx: Context
-    ) -> Dict[str, Any]:
-        """Internal implementation for identifying meeting invite."""
-        from imap_mcp.workflows.invite_parser import identify_meeting_invite_details
-
+        Returns:
+            JSON string with folder list
+        """
         client = get_client_from_context(ctx)
+        folders = client.list_folders()
+        return json.dumps(folders, indent=2)
+
+    # Search emails tool
+    @mcp.tool()
+    async def search_emails(
+        criteria: Union[str, List[Any], Dict[str, Any]],
+        folder: str = "INBOX",
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Search for emails.
+
+        Args:
+            criteria: Search criteria (e.g., "ALL", "UNSEEN", or complex criteria)
+            folder: Folder to search in
+            ctx: MCP context
+
+        Returns:
+            JSON string with search results
+        """
+        client = get_client_from_context(ctx)
+
+        try:
+            # imap_client.search handles dictionary criteria natively and maps
+            # them to proper IMAP search lists with AND logic.
+            uids = client.search(criteria, folder=folder)
+
+            if not uids:
+                return json.dumps([], indent=2)
+
+            # Fetch basic info for search results
+            emails = client.fetch_emails(uids, folder=folder, limit=50)
+
+            results = []
+            for uid, email_obj in emails.items():
+                results.append(
+                    {
+                        "uid": uid,
+                        "from": str(email_obj.from_),
+                        "subject": email_obj.subject,
+                        "date": email_obj.date.isoformat() if email_obj.date else None,
+                        "flags": email_obj.flags,
+                    }
+                )
+
+            return json.dumps(results, indent=2)
+        except Exception as e:
+            logger.error(f"Error searching emails: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
+
+    # Get email details tool
+    @mcp.tool()
+    async def get_email_details(
+        folder: str,
+        uid: int,
+        ctx: Context,
+    ) -> str:
+        """Get full details of a specific email.
+
+        Args:
+            folder: Folder name
+            uid: Email UID
+            ctx: MCP context
+
+        Returns:
+            JSON string with email details
+        """
+        client = get_client_from_context(ctx)
+
         try:
             email_obj = client.fetch_email(uid, folder)
             if not email_obj:
-                return {"is_invite": False, "error": "Email not found"}
+                return json.dumps({"error": "Email not found"}, indent=2)
 
-            return identify_meeting_invite_details(email_obj)
+            # Format for JSON
+            details = {
+                "uid": uid,
+                "folder": folder,
+                "message_id": email_obj.message_id,
+                "from": str(email_obj.from_),
+                "to": [str(t) for t in email_obj.to],
+                "cc": [str(c) for c in email_obj.cc],
+                "subject": email_obj.subject,
+                "date": email_obj.date.isoformat() if email_obj.date else None,
+                "content": email_obj.content.get_best_content(),
+                "flags": email_obj.flags,
+                "attachments": [
+                    {
+                        "filename": a.filename,
+                        "content_type": a.content_type,
+                        "size": a.size,
+                    }
+                    for a in email_obj.attachments
+                ],
+                "gmail_thread_id": email_obj.gmail_thread_id,
+                "gmail_labels": email_obj.gmail_labels,
+            }
+
+            return json.dumps(details, indent=2)
         except Exception as e:
-            logger.error(f"Error identifying meeting invite: {e}")
-            return {"is_invite": False, "error": str(e)}
+            logger.error(f"Error getting email details: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
 
-    async def _check_calendar_availability(
-        start_time: str, end_time: str, ctx: Context
-    ) -> Dict[str, Any]:
-        """Internal implementation for checking calendar availability."""
-        from imap_mcp.workflows.calendar_mock import check_mock_availability
-
-        # In a real app, we would use ctx to get calendar credentials
-        # For now, we use the mock implementation
-        return check_mock_availability(start_time, end_time)
-
-    # Using decorator pattern to register tools
+    # Create a draft reply tool
     @mcp.tool()
-    async def draft_meeting_reply_tool(
-        invite_details: Dict[str, Any], availability_status: bool, ctx: Context
-    ) -> Dict[str, Any]:
-        """Drafts a meeting reply (accept/decline) based on calendar invite details and availability.
-
-        Args:
-            invite_details: Dictionary containing invite details (subject, start_time, end_time, organizer, location)
-            availability_status: Whether the user is available for the meeting (True=available/accept, False=unavailable/decline)
-            ctx: MCP context
-
-        Returns:
-            Dictionary with reply text and additional metadata
-        """
-        return await _draft_meeting_reply(invite_details, availability_status, ctx)
-
-    @mcp.tool()
-    async def identify_meeting_invite_tool(
-        folder: str, uid: int, ctx: Context
-    ) -> Dict[str, Any]:
-        """Identifies if an email is a meeting invite and extracts relevant details.
-
-        Args:
-            folder: Email folder name
-            uid: Email UID
-            ctx: MCP context
-
-        Returns:
-            Dictionary with invite details if it's a meeting invite, or status information if not
-        """
-        return await _identify_meeting_invite(folder, uid, ctx)
-
-    @mcp.tool()
-    async def check_calendar_availability_tool(
-        start_time: str, end_time: str, ctx: Context
-    ) -> Dict[str, Any]:
-        """Checks calendar availability for a given time slot.
-
-        Args:
-            start_time: Meeting start time (ISO format)
-            end_time: Meeting end time (ISO format)
-            ctx: MCP context
-
-        Returns:
-            Dictionary with availability status and additional information
-        """
-        return await _check_calendar_availability(start_time, end_time, ctx)
-
-    @mcp.tool()
-    async def process_invite_email_tool(
-        folder: str, uid: int, ctx: Context
-    ) -> Dict[str, Any]:
-        """Processes a meeting invitation email: identifies invite, checks availability, drafts reply, saves draft.
-
-        Args:
-            folder: Email folder name
-            uid: Email UID
-            ctx: MCP context
-
-        Returns:
-            Dictionary with processing results and status information
-        """
-        # We need to defer to the tool that is defined later in this file
-        # Since Python processes decorators at definition time, we can't forward reference
-        # Instead we'll implement the logic directly here or use a shared implementation
-        # For simplicity, we'll just error out saying use the dedicated tool
-        return {"error": "Use process_meeting_invite tool instead"}
-
-    @mcp.tool()
-    async def create_task(
-        description: str,
-        ctx: Context,
-        due_date: Optional[str] = None,
-        priority: Optional[int] = None,
-    ) -> str:
-        """Creates a new task and saves it to a local file.
-
-        Args:
-            description: Task description
-            ctx: MCP context
-            due_date: Optional due date in ISO format
-            priority: Optional priority (1=high, 2=medium, 3=low)
-
-        Returns:
-            Success message or error information
-        """
-        return await _create_task_impl(description, due_date, priority)
-
-    @mcp.tool()
-    async def draft_reply_tool(
+    async def create_draft_reply(
         folder: str,
         uid: int,
         reply_body: str,
-        ctx: Context,
         reply_all: bool = False,
         cc: Optional[List[str]] = None,
         body_html: Optional[str] = None,
+        ctx: Context = None,  # type: ignore
     ) -> Dict[str, Any]:
-        """Creates a draft reply to an email and saves it to the drafts folder.
+        """Create a draft reply to an email.
 
         Args:
-            folder: Email folder name
+            folder: Folder containing the email
             uid: Email UID
-            reply_body: Reply text content
+            reply_body: Content of the reply
+            reply_all: Whether to reply to all
+            cc: Additional CC addresses
+            body_html: Optional HTML content
             ctx: MCP context
-            reply_all: Whether to reply to all recipients
-            cc: Optional CC recipients
-            body_html: Optional HTML version of the reply
 
         Returns:
-            Dictionary with status and the UID of the created draft
+            Processing result
         """
-        from imap_mcp.models import EmailAddress
         from imap_mcp.smtp_client import create_reply_mime
 
         client = get_client_from_context(ctx)
@@ -232,7 +180,6 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
                 return {"status": "error", "message": f"Email with UID {uid} not found"}
 
             # Determine sender (reply_from)
-            # In a real scenario, this would be the user's email address
             reply_from = EmailAddress(name="Me", address=client.config.username)
 
             # Create MIME message
@@ -254,7 +201,7 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
                 return {
                     "status": "success",
                     "message": "Draft created successfully",
-                    "draft_uid": draft_uid,
+                    "draft_uid": str(draft_uid),
                     "draft_folder": drafts_folder,
                 }
             else:
@@ -310,16 +257,12 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
             ctx: MCP context
 
         Returns:
-            Success message or error message
+            Success message
         """
         client = get_client_from_context(ctx)
-
         try:
-            success = client.mark_email(uid, folder, r"\Seen", True)
-            if success:
-                return "Email marked as read"
-            else:
-                return "Failed to mark email as read"
+            client.mark_email(uid, folder, r"\Seen", True)
+            return "Email marked as read"
         except Exception as e:
             logger.error(f"Error marking email as read: {e}")
             return f"Error: {e}"
@@ -339,47 +282,217 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
             ctx: MCP context
 
         Returns:
-            Success message or error message
+            Success message
         """
         client = get_client_from_context(ctx)
-
         try:
-            success = client.mark_email(uid, folder, r"\Seen", False)
-            if success:
-                return "Email marked as unread"
-            else:
-                return "Failed to mark email as unread"
+            client.mark_email(uid, folder, r"\Seen", False)
+            return "Email marked as unread"
         except Exception as e:
             logger.error(f"Error marking email as unread: {e}")
             return f"Error: {e}"
 
-    # Flag email (important/starred)
+    # Get email thread tool
+    @mcp.tool()
+    async def get_email_thread(
+        folder: str,
+        uid: int,
+        ctx: Context,
+    ) -> str:
+        """Get all emails in a conversation thread.
+
+        Args:
+            folder: Folder name
+            uid: UID of an email in the thread
+            ctx: MCP context
+
+        Returns:
+            JSON string with emails in the thread
+        """
+        client = get_client_from_context(ctx)
+
+        try:
+            emails = client.fetch_thread(uid, folder)
+
+            results = []
+            for email_obj in emails:
+                results.append(
+                    {
+                        "uid": email_obj.uid,
+                        "from": str(email_obj.from_),
+                        "to": [str(t) for t in email_obj.to],
+                        "subject": email_obj.subject,
+                        "date": email_obj.date.isoformat() if email_obj.date else None,
+                        "snippet": email_obj.get_snippet(150),
+                        "flags": email_obj.flags,
+                    }
+                )
+
+            return json.dumps(results, indent=2)
+        except Exception as e:
+            logger.error(f"Error getting email thread: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
+
+    # Modify Gmail labels tool
+    @mcp.tool()
+    async def modify_gmail_labels(
+        folder: str,
+        uid: int,
+        add_labels: Optional[List[str]] = None,
+        remove_labels: Optional[List[str]] = None,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Add or remove Gmail labels from an email.
+
+        Args:
+            folder: Folder name
+            uid: Email UID
+            add_labels: List of labels to add
+            remove_labels: List of labels to remove
+            ctx: MCP context
+
+        Returns:
+            Success or error message
+        """
+        client = get_client_from_context(ctx)
+
+        try:
+            results = []
+            if add_labels:
+                success = client.add_gmail_labels(uid, folder, add_labels)
+                if success:
+                    results.append(f"Added labels: {', '.join(add_labels)}")
+                else:
+                    results.append(f"Failed to add labels: {', '.join(add_labels)}")
+
+            if remove_labels:
+                success = client.remove_gmail_labels(uid, folder, remove_labels)
+                if success:
+                    results.append(f"Removed labels: {', '.join(remove_labels)}")
+                else:
+                    results.append(
+                        f"Failed to remove labels: {', '.join(remove_labels)}"
+                    )
+
+            if not results:
+                return "No label changes requested"
+
+            return "; ".join(results)
+        except Exception as e:
+            logger.error(f"Error modifying Gmail labels: {e}")
+            return f"Error: {e}"
+
+    # Get attachment content tool
+    @mcp.tool()
+    async def get_attachment_content(
+        folder: str,
+        uid: int,
+        filename: str,
+        ctx: Context,
+    ) -> str:
+        """Extract text content from an email attachment.
+        Supports PDF, DOCX, and text-based files.
+
+        Args:
+            folder: Folder name
+            uid: Email UID
+            filename: Name of the attachment
+            ctx: MCP context
+
+        Returns:
+            Extracted text content or error message
+        """
+        import io
+
+        client = get_client_from_context(ctx)
+
+        try:
+            email_obj = client.fetch_email(uid, folder)
+            if not email_obj:
+                return "Error: Email not found"
+
+            # Find the attachment
+            attachment = next(
+                (a for a in email_obj.attachments if a.filename == filename), None
+            )
+
+            if not attachment:
+                available = [a.filename for a in email_obj.attachments]
+                return f"Error: Attachment '{filename}' not found. Available: {', '.join(available)}"
+
+            if not attachment.content:
+                return "Error: Attachment has no content"
+
+            content_type = attachment.content_type.lower()
+
+            # Handle different content types
+            if content_type == "application/pdf":
+                try:
+                    import pypdf
+
+                    reader = pypdf.PdfReader(io.BytesIO(attachment.content))
+                    text = ""
+                    for page in reader.pages:
+                        text += page.extract_text() + "\n"
+                    return text.strip() or "[No text could be extracted from PDF]"
+                except ImportError:
+                    return "Error: pypdf library not installed on server"
+                except Exception as e:
+                    return f"Error parsing PDF: {e}"
+
+            elif (
+                content_type
+                == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                or filename.lower().endswith(".docx")
+            ):
+                try:
+                    import docx
+
+                    doc = docx.Document(io.BytesIO(attachment.content))
+                    text = "\n".join([p.text for p in doc.paragraphs])
+                    return text.strip() or "[No text could be extracted from DOCX]"
+                except ImportError:
+                    return "Error: python-docx library not installed on server"
+                except Exception as e:
+                    return f"Error parsing DOCX: {e}"
+
+            elif content_type.startswith("text/") or filename.lower().endswith(
+                (".txt", ".log", ".md", ".json", ".csv")
+            ):
+                try:
+                    # Try to decode as utf-8
+                    return attachment.content.decode("utf-8", errors="replace")
+                except Exception as e:
+                    return f"Error decoding text: {e}"
+
+            else:
+                return f"Error: Unsupported content type '{content_type}' for text extraction"
+
+        except Exception as e:
+            logger.error(f"Error getting attachment content: {e}")
+            return f"Error: {e}"
+
+    # Flag email
     @mcp.tool()
     async def flag_email(
         folder: str,
         uid: int,
         ctx: Context,
-        flag: bool = True,
     ) -> str:
-        """Flag or unflag email.
+        """Flag an email.
 
         Args:
             folder: Folder name
             uid: Email UID
-            flag: True to flag, False to unflag
             ctx: MCP context
 
         Returns:
-            Success message or error message
+            Success message
         """
         client = get_client_from_context(ctx)
-
         try:
-            success = client.mark_email(uid, folder, r"\Flagged", flag)
-            if success:
-                return f"Email {'flagged' if flag else 'unflagged'}"
-            else:
-                return f"Failed to {'flag' if flag else 'unflag'} email"
+            client.mark_email(uid, folder, r"\Flagged", True)
+            return "Email flagged"
         except Exception as e:
             logger.error(f"Error flagging email: {e}")
             return f"Error: {e}"
@@ -391,7 +504,7 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
         uid: int,
         ctx: Context,
     ) -> str:
-        """Delete email.
+        """Delete an email.
 
         Args:
             folder: Folder name
@@ -399,529 +512,27 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
             ctx: MCP context
 
         Returns:
-            Success message or error message
+            Success message
         """
         client = get_client_from_context(ctx)
-
         try:
-            success = client.delete_email(uid, folder)
-            if success:
-                return "Email deleted"
-            else:
-                return "Failed to delete email"
+            client.delete_email(uid, folder)
+            return "Email deleted"
         except Exception as e:
             logger.error(f"Error deleting email: {e}")
             return f"Error: {e}"
 
-    # Get chronological thread of emails
-    @mcp.tool()
-    async def get_email_thread(
-        folder: str,
-        uid: int,
-        ctx: Context,
-    ) -> str:
-        """Fetch all emails in a conversation thread.
-
-        Args:
-            folder: Folder containing the email
-            uid: UID of an email in the thread
-            ctx: MCP context
-
-        Returns:
-            Concatenated string of all emails in the thread
-        """
-        client = get_client_from_context(ctx)
-        try:
-            thread = client.fetch_thread(uid, folder)
-            if not thread:
-                return f"No thread found for email with UID {uid}"
-
-            output = []
-            for email_obj in thread:
-                recipients_to = ", ".join(str(a) for a in email_obj.to)
-                recipients_cc = ", ".join(str(a) for a in email_obj.cc)
-
-                email_str = [
-                    f"--- THREAD EMAIL [UID: {email_obj.uid}] ---",
-                    f"From: {email_obj.from_}",
-                    f"To: {recipients_to}",
-                ]
-                if recipients_cc:
-                    email_str.append(f"CC: {recipients_cc}")
-
-                email_str.extend(
-                    [
-                        f"Date: {email_obj.date.isoformat() if email_obj.date else 'Unknown'}",
-                        f"Subject: {email_obj.subject}",
-                        f"Body:\n{email_obj.content.get_best_content()}",
-                        "------------------------",
-                    ]
-                )
-                output.append("\n".join(email_str))
-
-            return "\n\n".join(output)
-        except Exception as e:
-            logger.error(f"Error fetching thread: {e}")
-            return f"Error: {e}"
-
-    # Get bulk unseen emails for analysis
-    @mcp.tool()
-    async def get_unseen_emails(
-        ctx: Context,
-        folder: str = "INBOX",
-        limit: int = 20,
-        body_limit: int = 700,
-    ) -> str:
-        """Fetches the most recent unseen emails for bulk analysis.
-
-        Args:
-            ctx: MCP context
-            folder: Folder to search in (default: INBOX)
-            limit: Maximum number of emails to fetch (default: 20)
-            body_limit: Characters to include from the body (default: 700)
-
-        Returns:
-            Concatenated string of unseen emails with critical headers
-        """
-        client = get_client_from_context(ctx)
-        try:
-            # Search for unseen emails
-            uids = client.search("unseen", folder=folder)
-
-            # Sort by newest first and apply limit
-            uids = sorted(uids, reverse=True)[:limit]
-
-            if not uids:
-                return f"No unseen emails found in {folder}."
-
-            # Fetch emails
-            emails = client.fetch_emails(uids, folder=folder)
-
-            output = []
-            # Iterate through UIDs to maintain order
-            for uid in sorted(emails.keys(), reverse=True):
-                email_obj = emails[uid]
-
-                recipients_to = ", ".join(str(a) for a in email_obj.to)
-                recipients_cc = ", ".join(str(a) for a in email_obj.cc)
-                recipients_bcc = ", ".join(str(a) for a in email_obj.bcc)
-
-                body = email_obj.content.get_best_content()
-                if len(body) > body_limit:
-                    body = body[:body_limit] + "... [TRUNCATED]"
-
-                email_str = [
-                    f"--- EMAIL [UID: {uid}] ---",
-                    f"From: {email_obj.from_}",
-                    f"To: {recipients_to}",
-                ]
-
-                if recipients_cc:
-                    email_str.append(f"CC: {recipients_cc}")
-                if recipients_bcc:
-                    email_str.append(f"BCC: {recipients_bcc}")
-
-                email_str.extend(
-                    [
-                        f"Date: {email_obj.date.isoformat() if email_obj.date else 'Unknown'}",
-                        f"Subject: {email_obj.subject}",
-                        f"Body: {body}",
-                        "------------------------",
-                    ]
-                )
-                output.append("\n".join(email_str))
-
-            return f"Found {len(output)} unseen emails in {folder}:\n\n" + "\n\n".join(
-                output
-            )
-
-        except Exception as e:
-            logger.error(f"Error fetching unseen emails: {e}")
-            return f"Error: {e}"
-
-    @mcp.tool()
-    async def get_attachment_content(
-        folder: str,
-        uid: int,
-        filename: str,
-        ctx: Context,
-        char_limit: int = 10000,
-    ) -> str:
-        """Extracts text content from an email attachment.
-        Supports .txt, .log, .pdf, and .docx files.
-
-        Args:
-            folder: Folder containing the email
-            uid: Email UID
-            filename: Name of the attachment file
-            ctx: MCP context
-            char_limit: Maximum characters to extract (default: 10000)
-
-        Returns:
-            Extracted text content or error message
-        """
-        import io
-        from pypdf import PdfReader
-        from docx import Document
-
-        client = get_client_from_context(ctx)
-        try:
-            email_obj = client.fetch_email(uid, folder)
-            if not email_obj:
-                return f"Email with UID {uid} not found"
-
-            attachment = next(
-                (a for a in email_obj.attachments if a.filename == filename), None
-            )
-            if not attachment:
-                available = ", ".join(a.filename for a in email_obj.attachments)
-                return f"Attachment '{filename}' not found. Available: {available}"
-
-            if not attachment.content:
-                return f"Attachment '{filename}' has no content"
-
-            content_bytes = attachment.content
-            extracted_text = ""
-
-            # Determine file type and extract text
-            ext = os.path.splitext(filename.lower())[1]
-
-            if ext in [".txt", ".log", ".md", ".py", ".js", ".json", ".yaml", ".yml"]:
-                try:
-                    extracted_text = content_bytes.decode("utf-8")
-                except UnicodeDecodeError:
-                    extracted_text = content_bytes.decode("latin-1")
-
-            elif ext == ".pdf":
-                pdf_file = io.BytesIO(content_bytes)
-                reader = PdfReader(pdf_file)
-                pages = []
-                for page in reader.pages:
-                    text = page.extract_text()
-                    if text:
-                        pages.append(text)
-                extracted_text = "\n\n".join(pages)
-
-            elif ext == ".docx":
-                docx_file = io.BytesIO(content_bytes)
-                doc = Document(docx_file)
-                paragraphs = [p.text for p in doc.paragraphs]
-                extracted_text = "\n".join(paragraphs)
-
-            else:
-                return f"Unsupported file type '{ext}' for text extraction"
-
-            if not extracted_text.strip():
-                return f"No text could be extracted from '{filename}'"
-
-            if len(extracted_text) > char_limit:
-                extracted_text = (
-                    extracted_text[:char_limit] + "\n\n... [TRUNCATED DUE TO SIZE]"
-                )
-
-            return f"--- Content of '{filename}' ---\n\n{extracted_text}"
-
-        except Exception as e:
-            logger.error(f"Error extracting attachment content: {e}")
-            return f"Error: {e}"
-
-    @mcp.tool()
-    async def modify_gmail_labels(
-        folder: str,
-        uid: int,
-        ctx: Context,
-        labels: List[str],
-        action: str = "add",
-    ) -> str:
-        """Modify Gmail labels for an email.
-
-        Args:
-            folder: Folder containing the email
-            uid: Email UID
-            ctx: MCP context
-            labels: List of labels to modify
-            action: Action to take ('add', 'remove', or 'set')
-
-        Returns:
-            Success or error message
-        """
-        client = get_client_from_context(ctx)
-        try:
-            if action.lower() == "add":
-                success = client.add_gmail_labels(uid, folder, labels)
-            elif action.lower() == "remove":
-                success = client.remove_gmail_labels(uid, folder, labels)
-            elif action.lower() == "set":
-                success = client.set_gmail_labels(uid, folder, labels)
-            else:
-                return f"Invalid action: {action}. Use 'add', 'remove', or 'set'."
-
-            if success:
-                return f"Successfully {action}ed labels: {', '.join(labels)}"
-            else:
-                return f"Failed to modify labels. Ensure the server supports Gmail extensions."
-        except Exception as e:
-            logger.error(f"Error modifying Gmail labels: {e}")
-            return f"Error: {e}"
-
-    @mcp.tool()
-    async def get_gmail_thread(
-        thread_id: str,
-        ctx: Context,
-        folder: str = "INBOX",
-    ) -> str:
-        """Fetches all emails in a Gmail conversation thread using the thread ID.
-
-        Args:
-            thread_id: Gmail thread ID (X-GM-THRID)
-            ctx: MCP context
-            folder: Folder to search in (default: INBOX)
-
-        Returns:
-            Concatenated string of all emails in the thread
-        """
-        client = get_client_from_context(ctx)
-        try:
-            uids = client.search_by_thread_id(thread_id, folder)
-            if not uids:
-                return f"No emails found for thread ID: {thread_id}"
-
-            emails = client.fetch_emails(uids, folder)
-
-            output = []
-            for uid in sorted(emails.keys()):
-                email_obj = emails[uid]
-                recipients_to = ", ".join(str(a) for a in email_obj.to)
-                recipients_cc = ", ".join(str(a) for a in email_obj.cc)
-
-                email_str = [
-                    f"--- GMAIL THREAD EMAIL [UID: {uid}, ThreadID: {thread_id}] ---",
-                    f"Labels: {', '.join(email_obj.gmail_labels)}",
-                    f"From: {email_obj.from_}",
-                    f"To: {recipients_to}",
-                ]
-                if recipients_cc:
-                    email_str.append(f"CC: {recipients_cc}")
-
-                email_str.extend(
-                    [
-                        f"Date: {email_obj.date.isoformat() if email_obj.date else 'Unknown'}",
-                        f"Subject: {email_obj.subject}",
-                        f"Body:\n{email_obj.content.get_best_content()}",
-                        "------------------------",
-                    ]
-                )
-                output.append("\n".join(email_str))
-
-            return "\n\n".join(output)
-        except Exception as e:
-            logger.error(f"Error fetching Gmail thread: {e}")
-            return f"Error: {e}"
-
-    @mcp.tool()
-    async def advanced_search(
-        ctx: Context,
-        folder: str = "INBOX",
-        subject: Optional[str] = None,
-        from_address: Optional[str] = None,
-        to_address: Optional[str] = None,
-        body_text: Optional[str] = None,
-        unseen_only: bool = False,
-        since_date: Optional[str] = None,
-        before_date: Optional[str] = None,
-        limit: int = 10,
-    ) -> str:
-        """Advanced search for emails using multiple combined criteria.
-
-        Args:
-            ctx: MCP context
-            folder: Folder to search in (default: INBOX)
-            subject: Search in subject
-            from_address: Search in sender address
-            to_address: Search in recipient address
-            body_text: Search in email body text
-            unseen_only: Only return unread emails
-            since_date: Search emails after this date (YYYY-MM-DD)
-            before_date: Search emails before this date (YYYY-MM-DD)
-            limit: Maximum number of results
-
-        Returns:
-            JSON-formatted list of search results
-        """
-        client = get_client_from_context(ctx)
-
-        # Build search criteria list
-        search_criteria = []
-
-        if unseen_only:
-            search_criteria.append("UNSEEN")
-
-        if subject:
-            search_criteria.extend(["SUBJECT", subject])
-
-        if from_address:
-            search_criteria.extend(["FROM", from_address])
-
-        if to_address:
-            search_criteria.extend(["TO", to_address])
-
-        if body_text:
-            search_criteria.extend(["TEXT", body_text])
-
-        if since_date:
-            try:
-                date_obj = datetime.strptime(since_date, "%Y-%m-%d").date()
-                search_criteria.extend(["SINCE", date_obj])
-            except ValueError:
-                return f"Invalid since_date format: {since_date}. Use YYYY-MM-DD."
-
-        if before_date:
-            try:
-                date_obj = datetime.strptime(before_date, "%Y-%m-%d").date()
-                search_criteria.extend(["BEFORE", date_obj])
-            except ValueError:
-                return f"Invalid before_date format: {before_date}. Use YYYY-MM-DD."
-
-        # If no criteria provided, search for everything
-        if not search_criteria:
-            search_criteria = "ALL"
-
-        try:
-            # Search for emails
-            uids = client.search(search_criteria, folder=folder)
-
-            # Sort by newest first and apply limit
-            uids = sorted(uids, reverse=True)[:limit]
-
-            if not uids:
-                return json.dumps([], indent=2)
-
-            # Fetch emails
-            emails = client.fetch_emails(uids, folder=folder)
-
-            results = []
-            # Iterate through UIDs to maintain order
-            for uid in sorted(emails.keys(), reverse=True):
-                email_obj = emails[uid]
-                results.append(
-                    {
-                        "uid": uid,
-                        "folder": folder,
-                        "from": str(email_obj.from_),
-                        "to": [str(to) for to in email_obj.to],
-                        "subject": email_obj.subject,
-                        "date": email_obj.date.isoformat() if email_obj.date else None,
-                        "flags": email_obj.flags,
-                        "has_attachments": len(email_obj.attachments) > 0,
-                        "gmail_thread_id": email_obj.gmail_thread_id,
-                        "gmail_labels": email_obj.gmail_labels,
-                    }
-                )
-
-            return json.dumps(results, indent=2)
-
-        except Exception as e:
-            logger.error(f"Error in advanced search: {e}")
-            return f"Error: {e}"
-
-    # Search for emails
-    @mcp.tool()
-    async def search_emails(
-        query: str,
-        ctx: Context,
-        folder: Optional[str] = None,
-        criteria: str = "text",
-        limit: int = 10,
-    ) -> str:
-        """Search for emails.
-
-        Args:
-            query: Search query
-            folder: Folder to search in (None for all folders)
-            criteria: Search criteria (text, from, to, subject, all, unseen, seen)
-            limit: Maximum number of results
-            ctx: MCP context
-
-        Returns:
-            JSON-formatted list of search results
-        """
-        client = get_client_from_context(ctx)
-
-        # Define search criteria
-        search_criteria_map = {
-            "text": ["TEXT", query],
-            "from": ["FROM", query],
-            "to": ["TO", query],
-            "subject": ["SUBJECT", query],
-            "all": "ALL",
-            "unseen": "UNSEEN",
-            "seen": "SEEN",
-            "today": "today",
-            "week": "week",
-            "month": "month",
-        }
-
-        if criteria.lower() not in search_criteria_map:
-            return f"Invalid search criteria: {criteria}"
-
-        search_criteria = search_criteria_map[criteria.lower()]
-
-        folders_to_search = [folder] if folder else client.list_folders()
-        results = []
-
-        for current_folder in folders_to_search:
-            try:
-                # Search for emails
-                uids = client.search(search_criteria, folder=current_folder)
-
-                # Limit results and sort by newest first
-                uids = sorted(uids, reverse=True)[:limit]
-
-                if uids:
-                    # Fetch emails
-                    emails = client.fetch_emails(uids, folder=current_folder)
-
-                    # Create summaries
-                    for uid, email_obj in emails.items():
-                        results.append(
-                            {
-                                "uid": uid,
-                                "folder": current_folder,
-                                "from": str(email_obj.from_),
-                                "to": [str(to) for to in email_obj.to],
-                                "subject": email_obj.subject,
-                                "date": email_obj.date.isoformat()
-                                if email_obj.date
-                                else None,
-                                "flags": email_obj.flags,
-                                "has_attachments": len(email_obj.attachments) > 0,
-                            }
-                        )
-            except Exception as e:
-                logger.warning(f"Error searching folder {current_folder}: {e}")
-
-        # Sort results by date (newest first)
-        results.sort(key=lambda x: x.get("date") or "0", reverse=True)
-
-        # Apply global limit
-        results = results[:limit]
-
-        return json.dumps(results, indent=2)
-
-    # Process email interactive session
+    # Process email with multiple actions
     @mcp.tool()
     async def process_email(
         folder: str,
         uid: int,
         action: str,
-        ctx: Context,
         notes: Optional[str] = None,
         target_folder: Optional[str] = None,
+        ctx: Context = None,  # type: ignore
     ) -> str:
-        """Process an email with specified action.
-
-        This is a higher-level tool that combines multiple actions and records
-        the decision for learning purposes.
+        """Process an email with one or more actions.
 
         Args:
             folder: Folder name
@@ -935,11 +546,6 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
             Success message or error message
         """
         client = get_client_from_context(ctx)
-
-        # Fetch the email first to have context for learning
-        email_obj = client.fetch_email(uid, folder)
-        if not email_obj:
-            return f"Email with UID {uid} not found in folder {folder}"
 
         # Process the action
         result = ""
@@ -967,12 +573,175 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
             else:
                 return f"Invalid action: {action}"
 
-            # TODO: Record the action for learning in a separate module
-
             return result
         except Exception as e:
             logger.error(f"Error processing email: {e}")
             return f"Error: {e}"
+
+    # Create a task from an email
+    @mcp.tool()
+    async def create_task(
+        description: str,
+        priority: str = "medium",
+        due_date: Optional[str] = None,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Create a task in the tasks list.
+
+        Args:
+            description: Task description
+            priority: Task priority (low, medium, high)
+            due_date: Optional due date (YYYY-MM-DD)
+            ctx: MCP context
+
+        Returns:
+            Success message
+        """
+        if not description:
+            return "Error: Description is required"
+
+        if priority not in ["low", "medium", "high"]:
+            return (
+                f"Error: Invalid priority '{priority}'. Must be low, medium, or high."
+            )
+
+        if due_date:
+            try:
+                datetime.strptime(due_date, "%Y-%m-%d")
+            except ValueError:
+                return f"Error: Invalid due date format '{due_date}'. Use YYYY-MM-DD."
+
+        task_entry = f"- [ ] {description} (Priority: {priority}"
+        if due_date:
+            task_entry += f", Due: {due_date}"
+        task_entry += ")\n"
+
+        # Use absolute path for tasks.md to be more robust
+        import os
+
+        tasks_file = os.path.join(os.getcwd(), "tasks.md")
+
+        try:
+            with open(tasks_file, "a") as f:
+                f.write(task_entry)
+            logger.info(f"Created task: {description}")
+            return f"Success: Task created: {description}"
+        except Exception as e:
+            logger.error(f"Error creating task: {e}")
+            return f"Error: {e}"
+
+    # Setup Smart Secretary labels/folders
+    @mcp.tool()
+    async def setup_smart_labels(
+        ctx: Context,
+        dry_run: bool = False,
+    ) -> str:
+        """Setup the 'Smart Secretary' folder hierarchy for organizing emails.
+        Folders to be created:
+        - Secretary/Priority (Immediate attention)
+        - Secretary/Action-Required (Tasks identified)
+        - Secretary/Processed (AI handled)
+        - Secretary/Calendar (Meeting invites)
+        - Secretary/Newsletter (Low priority)
+        - Secretary/Waiting (Pending others)
+
+        Args:
+            ctx: MCP context
+            dry_run: If True, only check which folders would be created.
+
+        Returns:
+            Success or status message.
+        """
+        client = get_client_from_context(ctx)
+
+        labels = [
+            "Secretary/Priority",
+            "Secretary/Action-Required",
+            "Secretary/Processed",
+            "Secretary/Calendar",
+            "Secretary/Newsletter",
+            "Secretary/Waiting",
+        ]
+
+        try:
+            # Ensure folder cache is fresh
+            client.list_folders(refresh=True)
+
+            results = []
+            for label in labels:
+                exists = client.folder_exists(label)
+                if exists:
+                    results.append(f"[Exists] {label}")
+                else:
+                    if dry_run:
+                        results.append(f"[Pending] {label} (Dry Run)")
+                    else:
+                        success = client.create_folder(label)
+                        if success:
+                            results.append(f"[Created] {label}")
+                        else:
+                            results.append(f"[Failed] {label}")
+
+            return "\n".join(results)
+        except Exception as e:
+            logger.error(f"Error setting up smart labels: {e}")
+            return f"Error: {e}"
+
+    # Get unread messages tool
+    @mcp.tool()
+    async def get_unread_messages(
+        folder: str = "INBOX",
+        limit: int = 10,
+        offset: int = 0,
+        sort_by: str = "date",
+        sort_order: str = "desc",
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Get unread messages from a folder.
+
+        Args:
+            folder: Folder name
+            limit: Maximum number of messages to return
+            offset: Number of messages to skip
+            sort_by: Field to sort by (date, subject, from)
+            sort_order: Sort order (asc, desc)
+            ctx: MCP context
+
+        Returns:
+            JSON string with unread messages
+        """
+        client = get_client_from_context(ctx)
+
+        try:
+            # Use the refined method in ImapClient
+            emails = client.get_unread_messages(
+                folder=folder,
+                limit=limit,
+                offset=offset,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            )
+
+            if not emails:
+                return json.dumps([], indent=2)
+
+            # Format results
+            results = []
+            for email_obj in emails.values():
+                results.append(
+                    {
+                        "uid": email_obj.uid,
+                        "from": str(email_obj.from_),
+                        "subject": email_obj.subject,
+                        "date": email_obj.date.isoformat() if email_obj.date else None,
+                        "snippet": email_obj.get_snippet(100),
+                    }
+                )
+
+            return json.dumps(results, indent=2)
+        except Exception as e:
+            logger.error(f"Error getting unread messages: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
 
     # Process meeting invite and generate a draft reply
     @mcp.tool()
@@ -1063,22 +832,15 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
                 invite_details, availability_result
             )
 
-            # Step 5: Create MIME message for reply
-            logger.info("Creating MIME message for reply")
-            # Create EmailAddress object for the reply sender (use the original recipient)
-            if email_obj.to and len(email_obj.to) > 0:
-                reply_from = email_obj.to[0]
-            else:
-                # Fallback to a default if no recipient in original email
-                reply_from = EmailAddress(name="Me", address=client.config.username)
+            # Step 5: Create MIME message
+            # Determine sender (reply_from)
+            reply_from = EmailAddress(name="Me", address=client.config.username)
 
-            # Create the reply MIME message - using the standalone function
             mime_message = create_reply_mime(
                 original_email=email_obj,
                 reply_to=reply_from,
                 body=reply_content["reply_body"],
                 subject=reply_content["reply_subject"],
-                # Don't use reply_all for meeting responses
                 reply_all=False,
             )
 
@@ -1087,21 +849,190 @@ def register_tools(mcp: FastMCP, imap_client: ImapClient) -> None:
             draft_uid = client.save_draft_mime(mime_message)
 
             if draft_uid:
-                drafts_folder = client._get_drafts_folder()
                 result["status"] = "success"
                 result["message"] = (
-                    f"Draft reply created: {reply_content['reply_type']}"
+                    f"Processed invite and saved {'accept' if availability_result['available'] else 'decline'} "
+                    f"reply as draft (UID: {draft_uid})"
                 )
-                result["draft_uid"] = draft_uid
-                result["draft_folder"] = drafts_folder
-                logger.info(
-                    f"Draft saved successfully with UID {draft_uid} in folder {drafts_folder}"
-                )
+                result["draft_uid"] = str(draft_uid)
+                result["draft_folder"] = client._get_drafts_folder()
             else:
+                result["status"] = "error"
                 result["message"] = "Failed to save draft"
+
+            return result
 
         except Exception as e:
             logger.error(f"Error processing meeting invite: {e}")
-            result["message"] = f"Error: {e}"
+            result["message"] = f"Error: {str(e)}"
+            return result
 
-        return result
+    # --- Calendar Tools ---
+
+    @mcp.tool()
+    async def list_calendar_events(
+        time_min: str,
+        time_max: str,
+        calendar_id: str = "primary",
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """List upcoming events from Google Calendar.
+
+        Args:
+            time_min: ISO format start time (e.g. 2024-01-01T00:00:00Z)
+            time_max: ISO format end time
+            calendar_id: Calendar identifier
+            ctx: MCP context
+
+        Returns:
+            JSON list of calendar events
+        """
+        client = get_calendar_client_from_context(ctx)
+        try:
+            events = client.list_events(time_min, time_max, calendar_id)
+            return json.dumps(events, indent=2)
+        except Exception as e:
+            logger.error(f"Error listing calendar events: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
+
+    @mcp.tool()
+    async def create_calendar_event(
+        summary: str,
+        start_time: str,
+        end_time: str,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        calendar_id: str = "primary",
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Create a new event on Google Calendar.
+
+        Args:
+            summary: Title of the event
+            start_time: ISO format start time (e.g. 2024-01-01T10:00:00Z)
+            end_time: ISO format end time
+            description: Detailed description
+            location: Event location
+            calendar_id: Calendar identifier
+            ctx: MCP context
+
+        Returns:
+            JSON representation of created event
+        """
+        client = get_calendar_client_from_context(ctx)
+        event_data = {
+            "summary": summary,
+            "start": {"dateTime": start_time},
+            "end": {"dateTime": end_time},
+        }
+        if description:
+            event_data["description"] = description
+        if location:
+            event_data["location"] = location
+
+        try:
+            event = client.create_event(event_data, calendar_id)
+            return json.dumps(event, indent=2)
+        except Exception as e:
+            logger.error(f"Error creating calendar event: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
+
+    @mcp.tool()
+    async def gmail_search(
+        query: str,
+        max_results: int = 20,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Search emails using native Gmail search syntax.
+        Example queries: 'has:attachment', 'from:boss is:unread', 'after:2024/01/01'.
+
+        Args:
+            query: Gmail search query string
+            max_results: Max results to return
+            ctx: MCP context
+
+        Returns:
+            JSON list of message summaries
+        """
+        client = get_gmail_client_from_context(ctx)
+        try:
+            messages = client.search_messages(query, max_results)
+            results = []
+            for m in messages:
+                # Fetch minimal details for the list
+                full_msg = client.get_message(m["id"])
+                if full_msg:
+                    results.append(
+                        {
+                            "id": full_msg.message_id,
+                            "threadId": full_msg.gmail_thread_id,
+                            "from": str(full_msg.from_),
+                            "subject": full_msg.subject,
+                            "date": full_msg.date.isoformat()
+                            if full_msg.date
+                            else None,
+                            "labels": full_msg.gmail_labels,
+                        }
+                    )
+            return json.dumps(results, indent=2)
+        except Exception as e:
+            logger.error(f"Error in gmail_search: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
+
+    @mcp.tool()
+    async def gmail_get_thread(
+        thread_id: str,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Get an entire conversation thread using Gmail API.
+
+        Args:
+            thread_id: Gmail thread identifier
+            ctx: MCP context
+
+        Returns:
+            JSON list of emails in the thread
+        """
+        client = get_gmail_client_from_context(ctx)
+        try:
+            emails = client.get_thread(thread_id)
+            results = []
+            for e in emails:
+                results.append(
+                    {
+                        "id": e.message_id,
+                        "from": str(e.from_),
+                        "subject": e.subject,
+                        "date": e.date.isoformat() if e.date else None,
+                        "content": e.content.get_best_content(),
+                        "labels": e.gmail_labels,
+                    }
+                )
+            return json.dumps(results, indent=2)
+        except Exception as e:
+            logger.error(f"Error in gmail_get_thread: {e}")
+            return json.dumps({"error": str(e)}, indent=2)
+
+    @mcp.tool()
+    async def get_calendar_availability(
+        time_min: str,
+        time_max: str,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Check free/busy status for a time range.
+
+        Args:
+            time_min: ISO format start time
+            time_max: ISO format end time
+            ctx: MCP context
+
+        Returns:
+            JSON representation of availability
+        """
+        client = get_calendar_client_from_context(ctx)
+        try:
+            availability = client.get_availability(time_min, time_max)
+            return json.dumps(availability, indent=2)
+        except Exception as e:
+            logger.error(f"Error getting calendar availability: {e}")
+            return json.dumps({"error": str(e)}, indent=2)

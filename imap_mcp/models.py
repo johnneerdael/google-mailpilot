@@ -248,16 +248,20 @@ class Email:
 
         # Parse content and attachments
         content = EmailContent()
-        attachments = []
+        attachments: List[EmailAttachment] = []
 
         # Process the email body
         if message.is_multipart():
             # Create a recursive function to handle nested multipart messages
-            def process_part(part, content, attachments):
+            def process_part(
+                part: Any, content: EmailContent, attachments: List[EmailAttachment]
+            ) -> None:
                 if part.is_multipart():
                     # Recursively process each subpart
-                    for subpart in part.get_payload():
-                        process_part(subpart, content, attachments)
+                    payload = part.get_payload()
+                    if isinstance(payload, list):
+                        for subpart in payload:
+                            process_part(subpart, content, attachments)
                 else:
                     content_type = part.get_content_type()
                     content_disposition = part.get("Content-Disposition", "")
@@ -366,3 +370,19 @@ class Email:
             f"Attachments: {len(self.attachments)}"
             f"{thread_info}"
         )
+
+    def get_snippet(self, length: int = 100) -> str:
+        """Return a snippet of the email content.
+
+        Args:
+            length: Maximum length of the snippet
+
+        Returns:
+            Email snippet
+        """
+        content = self.content.get_best_content()
+        # Remove multiple newlines and extra spaces
+        content = re.sub(r"\s+", " ", content).strip()
+        if len(content) <= length:
+            return content
+        return content[:length] + "..."

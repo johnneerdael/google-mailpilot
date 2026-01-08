@@ -16,6 +16,8 @@ from mcp.server.auth.settings import AuthSettings
 
 from imap_mcp.config import ServerConfig, load_config
 from imap_mcp.imap_client import ImapClient
+from imap_mcp.calendar_client import CalendarClient
+from imap_mcp.gmail_client import GmailClient
 from imap_mcp.resources import register_resources
 from imap_mcp.tools import register_tools
 from imap_mcp.mcp_protocol import extend_server
@@ -68,14 +70,30 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict]:
         raise TypeError("Invalid server configuration")
 
     imap_client = ImapClient(config.imap, config.allowed_folders)
+    calendar_client = CalendarClient(config)
+    gmail_client = GmailClient(config)
 
     try:
         # Connect to IMAP server
         logger.info("Connecting to IMAP server...")
         imap_client.connect()
 
-        # Yield the context with the IMAP client
-        yield {"imap_client": imap_client}
+        # Connect to Calendar if enabled
+        if config.calendar and config.calendar.enabled:
+            logger.info("Connecting to Google Calendar...")
+            calendar_client.connect()
+
+        # Connect to Gmail API if it's Gmail
+        if config.imap.is_gmail and config.imap.oauth2:
+            logger.info("Connecting to Gmail REST API...")
+            gmail_client.connect()
+
+        # Yield the context with the clients
+        yield {
+            "imap_client": imap_client,
+            "calendar_client": calendar_client,
+            "gmail_client": gmail_client,
+        }
     finally:
         # Disconnect from IMAP server
         logger.info("Disconnecting from IMAP server...")
@@ -146,7 +164,7 @@ def create_server(
     )
 
     # Store config for access in the lifespan
-    server._config = config
+    setattr(server, "_config", config)
 
     # Create IMAP client for setup (will be recreated in lifespan)
     imap_client = ImapClient(config.imap, config.allowed_folders)
@@ -166,6 +184,7 @@ def create_server(
             "imap_port": config.imap.port,
             "imap_user": config.imap.username,
             "imap_ssl": config.imap.use_ssl,
+            "calendar_enabled": config.calendar.enabled if config.calendar else False,
         }
 
         if config.allowed_folders:
@@ -251,6 +270,8 @@ def main() -> None:
     # For stdio transport, we run directly
     if args.transport == "stdio":
         server = create_server(config_path=args.config, debug=args.debug)
+        if args.dev:
+            logger.info("Starting server in development mode")
         logger.info("Starting server with stdio transport...")
         server.run(transport="stdio")
 

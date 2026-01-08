@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import yaml
+import yaml  # type: ignore
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -106,11 +106,28 @@ class ImapConfig:
 
 
 @dataclass
+class CalendarConfig:
+    """Calendar configuration."""
+
+    enabled: bool = False
+    verified_client: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "CalendarConfig":
+        """Create Calendar configuration from dictionary."""
+        return cls(
+            enabled=data.get("enabled", False),
+            verified_client=data.get("verified_client"),
+        )
+
+
+@dataclass
 class ServerConfig:
     """MCP server configuration."""
 
     imap: ImapConfig
     allowed_folders: Optional[List[str]] = None
+    calendar: Optional[CalendarConfig] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ServerConfig":
@@ -118,6 +135,7 @@ class ServerConfig:
         return cls(
             imap=ImapConfig.from_dict(data.get("imap", {})),
             allowed_folders=data.get("allowed_folders"),
+            calendar=CalendarConfig.from_dict(data.get("calendar", {})),
         )
 
 
@@ -143,7 +161,7 @@ def load_config(config_path: Optional[str] = None) -> ServerConfig:
     ]
 
     # Load from specified path or try default locations
-    config_data = {}
+    config_data: Dict[str, Any] = {}
     if config_path:
         try:
             with open(config_path, "r") as f:

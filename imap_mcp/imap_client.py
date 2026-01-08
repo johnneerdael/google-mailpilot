@@ -4,7 +4,7 @@ import email
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Any, cast
 
 import imapclient
 
@@ -27,14 +27,16 @@ class ImapClient:
         """
         self.config = config
         self.allowed_folders = set(allowed_folders) if allowed_folders else None
-        self.client = None
+        self.client: Optional[imapclient.IMAPClient] = None
         self.folder_cache: Dict[str, List[str]] = {}
         self.connected = False
         self.count_cache: Dict[
             str, Dict[str, Tuple[int, datetime]]
         ] = {}  # Cache for message counts
-        self.current_folder = None  # Store the currently selected folder
-        self.folder_message_counts = {}  # Cache for folder message counts
+        self.current_folder: Optional[str] = None  # Store the currently selected folder
+        self.folder_message_counts: Dict[
+            str, Dict[str, int]
+        ] = {}  # Cache for folder message counts
 
     def connect(self) -> None:
         """Connect to IMAP server.
@@ -61,13 +63,15 @@ class ImapClient:
 
                 # Authenticate with XOAUTH2
                 # Use the oauth_login method which properly formats the XOAUTH2 string
-                self.client.oauth2_login(self.config.username, access_token)
+                if self.client:
+                    self.client.oauth2_login(self.config.username, access_token)
             else:
                 # Standard password authentication
                 if not self.config.password:
                     raise ValueError("Password is required for authentication")
 
-                self.client.login(self.config.username, self.config.password)
+                if self.client:
+                    self.client.login(self.config.username, self.config.password)
 
             self.connected = True
             logger.info(f"Connected to IMAP server {self.config.host}")
@@ -94,8 +98,27 @@ class ImapClient:
         Raises:
             ConnectionError: If connection fails
         """
-        if not self.connected:
+        if not self.connected or not self.client:
             self.connect()
+
+        # Type narrowing for static analysis - use assert to help mypy
+        # but also provide a runtime check for safety
+        if self.client is None:
+            raise ConnectionError("Failed to initialize IMAP client")
+
+    def _get_client(self) -> imapclient.IMAPClient:
+        """Get the IMAP client, ensuring it is connected.
+
+        Returns:
+            The connected IMAP client.
+
+        Raises:
+            ConnectionError: If not connected and connection fails.
+        """
+        self.ensure_connected()
+        if self.client is None:
+            raise ConnectionError("IMAP client not initialized")
+        return self.client
 
     def get_capabilities(self) -> List[str]:
         """Get IMAP server capabilities.
@@ -106,8 +129,8 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        self.ensure_connected()
-        raw_capabilities = self.client.capabilities()
+        client = self._get_client()
+        raw_capabilities = client.capabilities()
 
         # Convert byte strings to regular strings and normalize case
         capabilities = []
@@ -130,7 +153,7 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        self.ensure_connected()
+        client = self._get_client()
 
         # Check cache first
         if not refresh and self.folder_cache:
@@ -138,7 +161,8 @@ class ImapClient:
 
         # Get folders from server
         folders = []
-        for flags, delimiter, name in self.client.list_folders():
+        new_cache = {}
+        for flags, delimiter, name in client.list_folders():
             if isinstance(name, bytes):
                 # Convert bytes to string if necessary
                 name = name.decode("utf-8")
@@ -148,10 +172,55 @@ class ImapClient:
                 continue
 
             folders.append(name)
-            self.folder_cache[name] = flags
+            new_cache[name] = flags
 
+        self.folder_cache = new_cache
         logger.debug(f"Listed {len(folders)} folders")
         return folders
+
+    def folder_exists(self, folder: str) -> bool:
+        """Check if a folder exists.
+
+        Args:
+            folder: Folder name to check
+
+        Returns:
+            True if folder exists, False otherwise
+        """
+        # Ensure cache is populated
+        if not self.folder_cache:
+            self.list_folders(refresh=True)
+
+        return folder in self.folder_cache
+
+    def create_folder(self, folder: str) -> bool:
+        """Create a new folder.
+
+        Args:
+            folder: Folder name to create
+
+        Returns:
+            True if successful
+
+        Raises:
+            ConnectionError: If connection fails
+        """
+        client = self._get_client()
+
+        # Check if already exists
+        if self.folder_exists(folder):
+            logger.info(f"Folder '{folder}' already exists")
+            return True
+
+        try:
+            client.create_folder(folder)
+            logger.info(f"Created folder '{folder}'")
+            # Refresh cache
+            self.list_folders(refresh=True)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to create folder '{folder}': {e}")
+            return False
 
     def _is_folder_allowed(self, folder: str) -> bool:
         """Check if a folder is allowed.
@@ -169,7 +238,7 @@ class ImapClient:
         # If allowed_folders is specified, check if folder is in it
         return folder in self.allowed_folders
 
-    def select_folder(self, folder: str, readonly: bool = False) -> Dict:
+    def select_folder(self, folder: str, readonly: bool = False) -> Dict[Any, Any]:
         """Select folder on IMAP server.
 
         Args:
@@ -187,27 +256,26 @@ class ImapClient:
         if not self._is_folder_allowed(folder):
             raise ValueError(f"Folder '{folder}' is not allowed")
 
-        self.ensure_connected()
-
+        client = self._get_client()
         try:
-            result = self.client.select_folder(folder, readonly=readonly)
+            result = client.select_folder(folder, readonly=readonly)
             self.current_folder = folder
             logger.debug(f"Selected folder '{folder}'")
-            return result
+            return cast(Dict[Any, Any], result)
         except imapclient.IMAPClient.Error as e:
             logger.error(f"Error selecting folder {folder}: {e}")
             raise ConnectionError(f"Failed to select folder {folder}: {e}")
 
     def search(
         self,
-        criteria: Union[str, List, Tuple],
+        criteria: Union[str, List, Tuple, Dict[str, Any]],
         folder: str = "INBOX",
         charset: Optional[str] = None,
     ) -> List[int]:
         """Search for messages.
 
         Args:
-            criteria: Search criteria
+            criteria: Search criteria (predefined string, list, or advanced dictionary)
             folder: Folder to search in
             charset: Character set for search criteria
 
@@ -217,12 +285,12 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        self.ensure_connected()
+        client = self._get_client()
         self.select_folder(folder, readonly=True)
 
         if isinstance(criteria, str):
             # Predefined criteria strings
-            criteria_map = {
+            criteria_map: Dict[str, Union[str, List[Union[str, datetime, object]]]] = {
                 "all": "ALL",
                 "unseen": "UNSEEN",
                 "seen": "SEEN",
@@ -247,8 +315,64 @@ class ImapClient:
             if criteria.lower() in criteria_map:
                 criteria = criteria_map[criteria.lower()]
 
-        results = self.client.search(criteria, charset=charset)
-        logger.debug(f"Search returned {len(results)} results")
+        elif isinstance(criteria, dict):
+            # Advanced search mapping
+            search_list = []
+
+            # 1. Handle Keywords (Subject/Body)
+            if "keyword" in criteria:
+                search_list.extend(["TEXT", criteria["keyword"]])
+            if "subject" in criteria:
+                search_list.extend(["SUBJECT", criteria["subject"]])
+            if "body" in criteria:
+                search_list.extend(["BODY", criteria["body"]])
+
+            # 2. Handle Identity (Wildcards supported by most IMAP servers via string match)
+            if "from" in criteria:
+                search_list.extend(["FROM", criteria["from"]])
+            if "to" in criteria:
+                search_list.extend(["TO", criteria["to"]])
+            if "cc" in criteria:
+                search_list.extend(["CC", criteria["cc"]])
+
+            # 3. Handle Date Ranges (YYYY-MM-DD or relative keywords)
+            def parse_search_date(d_val: Union[str, datetime]) -> object:
+                if isinstance(d_val, datetime):
+                    return d_val.date()
+                if isinstance(d_val, str):
+                    try:
+                        return datetime.strptime(d_val, "%Y-%m-%d").date()
+                    except ValueError:
+                        pass
+                return d_val
+
+            if "since" in criteria:
+                search_list.extend(["SINCE", parse_search_date(criteria["since"])])
+            if "before" in criteria:
+                search_list.extend(["BEFORE", parse_search_date(criteria["before"])])
+
+            # 4. Handle Labels (Gmail specific)
+            if "label" in criteria:
+                search_list.extend(["X-GM-LABELS", criteria["label"]])
+
+            # 5. Handle Flags
+            if criteria.get("unread"):
+                search_list.append("UNSEEN")
+            if criteria.get("flagged"):
+                search_list.append("FLAGGED")
+
+            # Default to ALL if no specific criteria provided
+            if not search_list:
+                search_list = ["ALL"]
+
+            criteria = search_list
+
+        # Cast to any because imapclient search criteria type is complex
+        from typing import Any
+
+        search_criteria: Any = criteria
+        results = client.search(search_criteria, charset=charset)
+        logger.debug(f"Search returned {len(results)} results for {search_criteria}")
         return list(results)
 
     def fetch_email(self, uid: int, folder: str = "INBOX") -> Optional[Email]:
@@ -264,31 +388,8 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        self.ensure_connected()
-        self.select_folder(folder, readonly=True)
-
-        # Fetch message data with BODY.PEEK[] to get all parts including headers
-        # Using BODY.PEEK[] instead of RFC822 to avoid setting the \Seen flag
-        result = self.client.fetch([uid], ["BODY.PEEK[]", "FLAGS"])
-
-        if not result or uid not in result:
-            logger.warning(f"Message with UID {uid} not found in folder {folder}")
-            return None
-
-        # Parse message
-        message_data = result[uid]
-        raw_message = message_data[b"BODY[]"]
-        flags = message_data[b"FLAGS"]
-
-        # Convert flags to strings
-        str_flags = [f.decode("utf-8") if isinstance(f, bytes) else f for f in flags]
-
-        # Parse email
-        message = email.message_from_bytes(raw_message)
-        email_obj = Email.from_message(message, uid=uid, folder=folder)
-        email_obj.flags = str_flags
-
-        return email_obj
+        emails = self.fetch_emails([uid], folder=folder)
+        return emails.get(uid)
 
     def fetch_emails(
         self,
@@ -309,7 +410,7 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        self.ensure_connected()
+        client = self._get_client()
         self.select_folder(folder, readonly=True)
 
         # Apply limit if specified
@@ -329,39 +430,56 @@ class ImapClient:
         if is_gmail:
             fetch_attributes.extend(["X-GM-THRID", "X-GM-LABELS"])
 
-        result = self.client.fetch(uids, fetch_attributes)
+        # Cast results to Any to avoid "Envelope is not iterable" errors from imapclient's poor typing
+        from typing import Any
+
+        result = client.fetch(uids, fetch_attributes)
+        typed_result: Any = result
 
         # Parse emails
         emails = {}
-        for uid, message_data in result.items():
-            raw_message = message_data[b"BODY[]"]
-            flags = message_data[b"FLAGS"]
+        for uid, message_data in typed_result.items():
+            # Handle potential None or missing keys safely
+            raw_message = message_data.get(b"BODY[]") or message_data.get(
+                b"BODY.PEEK[]"
+            )
+            flags = message_data.get(b"FLAGS", [])
+
+            if not raw_message:
+                logger.warning(f"No body found for message {uid}")
+                continue
 
             # Gmail extensions
             gmail_thread_id = None
             gmail_labels = None
             if is_gmail:
-                gmail_thread_id = message_data.get(b"X-GM-THRID")
-                if isinstance(gmail_thread_id, bytes):
-                    gmail_thread_id = gmail_thread_id.decode("utf-8")
-                elif gmail_thread_id is not None:
-                    gmail_thread_id = str(gmail_thread_id)
+                gmail_thread_id_raw = message_data.get(b"X-GM-THRID")
+                if isinstance(gmail_thread_id_raw, bytes):
+                    gmail_thread_id = gmail_thread_id_raw.decode("utf-8")
+                elif gmail_thread_id_raw is not None:
+                    gmail_thread_id = str(gmail_thread_id_raw)
 
-                gmail_labels = message_data.get(b"X-GM-LABELS")
-                if gmail_labels:
+                gmail_labels_raw = message_data.get(b"X-GM-LABELS")
+                if gmail_labels_raw and isinstance(gmail_labels_raw, (list, tuple)):
                     gmail_labels = [
                         label.decode("utf-8")
                         if isinstance(label, bytes)
                         else str(label)
-                        for label in gmail_labels
+                        for label in gmail_labels_raw
                     ]
 
             # Convert flags to strings
-            str_flags = [
-                f.decode("utf-8") if isinstance(f, bytes) else f for f in flags
-            ]
+            str_flags = []
+            if flags and isinstance(flags, (list, tuple)):
+                str_flags = [
+                    f.decode("utf-8") if isinstance(f, bytes) else str(f) for f in flags
+                ]
 
             # Parse email
+            if not isinstance(raw_message, bytes):
+                logger.warning(f"Message data for {uid} is not bytes")
+                continue
+
             message = email.message_from_bytes(raw_message)
             email_obj = Email.from_message(
                 message,
@@ -405,8 +523,28 @@ class ImapClient:
             )
 
         # Get thread identifiers from the initial email
+        gmail_thread_id = initial_email.gmail_thread_id
         message_id = initial_email.headers.get("Message-ID", "")
         subject = initial_email.subject
+
+        # Set to store all UIDs that belong to the thread
+        thread_uids = {uid}
+
+        # Optimization for Gmail: use X-GM-THRID if available
+        capabilities = self.get_capabilities()
+        if gmail_thread_id and "X-GM-EXT-1" in capabilities:
+            try:
+                thread_results = self.search_by_thread_id(gmail_thread_id, folder)
+                thread_uids.update(thread_results)
+                # If we have Gmail thread results, we can skip manual header-based traversal
+                # as X-GM-THRID is much more reliable and faster.
+                thread_emails = self.fetch_emails(list(thread_uids), folder)
+                return sorted(
+                    thread_emails.values(),
+                    key=lambda e: e.date if e.date else datetime.min,
+                )
+            except Exception as e:
+                logger.warning(f"Error searching by Gmail thread ID: {e}")
 
         # Strip "Re:", "Fwd:", etc. from the subject for better matching
         clean_subject = re.sub(
@@ -526,15 +664,15 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        self.ensure_connected()
+        client = self._get_client()
         self.select_folder(folder)
 
         try:
             if value:
-                self.client.add_flags([uid], flag)
+                client.add_flags([uid], flag)
                 logger.debug(f"Added flag {flag} to message {uid}")
             else:
-                self.client.remove_flags([uid], flag)
+                client.remove_flags([uid], flag)
                 logger.debug(f"Removed flag {flag} from message {uid}")
             return True
         except Exception as e:
@@ -556,7 +694,7 @@ class ImapClient:
             ConnectionError: If not connected and connection fails
             ValueError: If folder is not allowed
         """
-        self.ensure_connected()
+        client = self._get_client()
 
         # Check if folders are allowed
         if self.allowed_folders is not None:
@@ -570,9 +708,9 @@ class ImapClient:
 
         try:
             # Move email (copy + delete)
-            self.client.copy([uid], target_folder)
-            self.client.add_flags([uid], r"\Deleted")
-            self.client.expunge()
+            client.copy([uid], target_folder)
+            client.add_flags([uid], r"\Deleted")
+            client.expunge()
             logger.debug(f"Moved message {uid} from {source_folder} to {target_folder}")
             return True
         except Exception as e:
@@ -592,12 +730,12 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        self.ensure_connected()
+        client = self._get_client()
         self.select_folder(folder)
 
         try:
-            self.client.add_flags([uid], r"\Deleted")
-            self.client.expunge()
+            client.add_flags([uid], r"\Deleted")
+            client.expunge()
             logger.debug(f"Deleted message {uid} from {folder}")
             return True
         except Exception as e:
@@ -615,12 +753,18 @@ class ImapClient:
         Returns:
             True if successful
         """
-        self.ensure_connected()
+        client = self._get_client()
+
+        capabilities = self.get_capabilities()
+        if "X-GM-EXT-1" not in capabilities:
+            logger.warning("Gmail extensions not supported by server")
+            return False
+
         self.select_folder(folder)
 
         try:
             # X-GM-LABELS requires the server to support X-GM-EXT-1
-            self.client.set_gmail_labels([uid], labels)
+            client.set_gmail_labels([uid], labels)
             return True
         except Exception as e:
             logger.error(f"Failed to set Gmail labels: {e}")
@@ -637,11 +781,17 @@ class ImapClient:
         Returns:
             True if successful
         """
-        self.ensure_connected()
+        client = self._get_client()
+
+        capabilities = self.get_capabilities()
+        if "X-GM-EXT-1" not in capabilities:
+            logger.warning("Gmail extensions not supported by server")
+            return False
+
         self.select_folder(folder)
 
         try:
-            self.client.add_gmail_labels([uid], labels)
+            client.add_gmail_labels([uid], labels)
             return True
         except Exception as e:
             logger.error(f"Failed to add Gmail labels: {e}")
@@ -658,11 +808,17 @@ class ImapClient:
         Returns:
             True if successful
         """
-        self.ensure_connected()
+        client = self._get_client()
+
+        capabilities = self.get_capabilities()
+        if "X-GM-EXT-1" not in capabilities:
+            logger.warning("Gmail extensions not supported by server")
+            return False
+
         self.select_folder(folder)
 
         try:
-            self.client.remove_gmail_labels([uid], labels)
+            client.remove_gmail_labels([uid], labels)
             return True
         except Exception as e:
             logger.error(f"Failed to remove Gmail labels: {e}")
@@ -678,16 +834,134 @@ class ImapClient:
         Returns:
             List of message UIDs
         """
-        self.ensure_connected()
+        client = self._get_client()
+
+        capabilities = self.get_capabilities()
+        if "X-GM-EXT-1" not in capabilities:
+            logger.warning("Gmail extensions not supported by server")
+            return []
+
         self.select_folder(folder, readonly=True)
 
         try:
             # imapclient supports X-GM-THRID in search
-            results = self.client.search([f"X-GM-THRID", thread_id])
+            results = client.search([f"X-GM-THRID", thread_id])  # type: ignore
             return list(results)
         except Exception as e:
             logger.error(f"Error searching by thread ID: {e}")
             return []
+
+    def get_message_count(
+        self, folder: str = "INBOX", status: str = "TOTAL", refresh: bool = False
+    ) -> int:
+        """Get message count for a folder.
+
+        Args:
+            folder: Folder name
+            status: Status type (TOTAL, UNSEEN, SEEN, RECENT, DELETED)
+            refresh: Force refresh cache
+
+        Returns:
+            Message count
+        """
+        client = self._get_client()
+
+        # Check cache
+        if not refresh and folder in self.folder_message_counts:
+            if status.upper() in self.folder_message_counts[folder]:
+                return self.folder_message_counts[folder][status.upper()]
+
+        # Select folder
+        try:
+            # folder_status is better for this as it doesn't change selection and returns multiple counts
+            status_keys = [b"MESSAGES", b"RECENT", b"UNSEEN"]
+            status_res = client.folder_status(folder, status_keys)
+
+            total = status_res.get(b"MESSAGES", 0)
+            unseen = status_res.get(b"UNSEEN", 0)
+            recent = status_res.get(b"RECENT", 0)
+
+            counts = {
+                "TOTAL": total,
+                "UNSEEN": unseen,
+                "RECENT": recent,
+                "SEEN": total - unseen if total >= unseen else 0,
+            }
+
+            # If DELETED is specifically requested, we still have to search as it's not usually in STATUS
+            if status.upper() == "DELETED":
+                self.select_folder(folder, readonly=True)
+                uids = client.search("DELETED")
+                counts["DELETED"] = len(uids)
+
+            self.folder_message_counts[folder] = counts
+            return cast(int, counts.get(status.upper(), 0))
+        except Exception as e:
+            logger.error(f"Error getting message count for {folder}: {e}")
+            if not self._is_folder_allowed(folder):
+                raise ValueError(f"Folder '{folder}' is not allowed")
+            return 0
+
+    def get_unread_messages(
+        self,
+        folder: str = "INBOX",
+        limit: int = 10,
+        offset: int = 0,
+        sort_by: str = "date",
+        sort_order: str = "desc",
+    ) -> Dict[int, Email]:
+        """Get unread messages from a folder.
+
+        Args:
+            folder: Folder name
+            limit: Maximum number of messages to return
+            offset: Number of messages to skip
+            sort_by: Field to sort by (date, subject, from)
+            sort_order: Sort order (asc, desc)
+
+        Returns:
+            Dictionary mapping UIDs to Email objects
+
+        Raises:
+            ValueError: If parameters are invalid
+            ConnectionError: If connection fails
+        """
+        if limit <= 0:
+            raise ValueError("Limit must be positive")
+        if offset < 0:
+            raise ValueError("Offset must be non-negative")
+        if sort_by.lower() not in ["date", "subject", "from"]:
+            raise ValueError(f"Invalid sort_by: {sort_by}")
+        if sort_order.lower() not in ["asc", "desc"]:
+            raise ValueError(f"Invalid sort_order: {sort_order}")
+
+        self.ensure_connected()
+
+        # Search for unread messages
+        uids = self.search("UNSEEN", folder=folder)
+
+        if not uids:
+            return {}
+
+        # Fetch messages
+        emails = self.fetch_emails(uids, folder=folder)
+
+        # Sort emails
+        email_list = list(emails.values())
+
+        reverse = sort_order.lower() == "desc"
+        if sort_by.lower() == "date":
+            email_list.sort(key=lambda e: e.date or datetime.min, reverse=reverse)
+        elif sort_by.lower() == "subject":
+            email_list.sort(key=lambda e: e.subject.lower(), reverse=reverse)
+        elif sort_by.lower() == "from":
+            email_list.sort(key=lambda e: str(e.from_).lower(), reverse=reverse)
+
+        # Apply pagination
+        paginated_emails = email_list[offset : offset + limit]
+
+        # Return as dict
+        return {e.uid: e for e in paginated_emails if e.uid is not None}
 
     def _get_drafts_folder(self) -> str:
         """Get the drafts folder name for the current server.
@@ -722,7 +996,7 @@ class ImapClient:
         logger.warning("No drafts folder found, using INBOX as fallback")
         return "INBOX"
 
-    def save_draft_mime(self, message) -> Optional[int]:
+    def save_draft_mime(self, message: Any) -> Optional[int]:
         """Save a MIME message as a draft.
 
         Args:
@@ -734,7 +1008,7 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        self.ensure_connected()
+        client = self._get_client()
 
         # Get the drafts folder
         drafts_folder = self._get_drafts_folder()
@@ -747,9 +1021,7 @@ class ImapClient:
                 message_bytes = message.as_string().encode("utf-8")
 
             # Save the draft with Draft flag
-            response = self.client.append(
-                drafts_folder, message_bytes, flags=(r"\Draft",)
-            )
+            response = client.append(drafts_folder, message_bytes, flags=(r"\Draft",))
 
             # Try to extract the UID from the response
             uid = None

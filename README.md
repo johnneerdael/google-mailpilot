@@ -6,6 +6,15 @@ An AI-native Model Context Protocol (MCP) server that transforms your email inbo
 
 The IMAP MCP server enables AI assistants to act as intelligent email secretaries. Unlike simple email clients, this server is optimized for high-density AI analysis, document processing, and advanced threading.
 
+### The "Smart Secretary" Framework
+The server includes a `setup_smart_labels` tool that scaffolds a standardized folder hierarchy for AI organization:
+- `Secretary/Priority`: Immediate attention required.
+- `Secretary/Action-Required`: Tasks identified that need your input.
+- `Secretary/Processed`: Emails the AI has already handled or summarized.
+- `Secretary/Calendar`: Meeting invites and schedule-related items.
+- `Secretary/Newsletter`: Low-priority informational content.
+- `Secretary/Waiting`: Emails pending a response from others.
+
 ### Key Capabilities
 - **AI-Optimized Triage**: Fetch bulk unseen emails with critical context (To/CC/BCC) and truncated bodies (700 chars) for fast, token-efficient analysis.
 - **Document Intelligence**: Deep-dive into attachments. Extract text from **PDF**, **DOCX**, and log files directly into the AI's context.
@@ -57,15 +66,26 @@ Once connected, you can ask your AI assistant to perform complex workflows using
 
 ## 🧰 Available Tools
 
-| Tool | Focus | Use Case |
+| Tool | Focus | Description |
 | :--- | :--- | :--- |
-| `get_unseen_emails` | **Analysis** | Bulk triage of newest unread messages. |
-| `get_attachment_content` | **Reading** | Extract text from PDF, DOCX, TXT. |
-| `advanced_search` | **Discovery** | Complex searches with multiple filters. |
-| `get_gmail_thread` | **Context** | View full conversations via Gmail Thread ID. |
-| `modify_gmail_labels` | **Organization**| Manage Gmail labels (add/remove/set). |
-| `draft_reply_tool` | **Action** | Create draft responses. |
-| `process_meeting_invite` | **Workflow** | Auto-identify invites and check availability. |
+| **`get_unread_messages`** | **Analysis** | Fetches recent unread emails with snippet and basic headers. |
+| **`search_emails`** | **Discovery** | Search using string, list, or advanced dict (e.g., `{"from": "boss@co.com", "unread": true, "since": "2024-01-01"}`). |
+| **`get_email_details`** | **Discovery** | Fetches full email content, headers, and attachment metadata. |
+| **`get_attachment_content`**| **Discovery** | Extracts text from PDF, DOCX, TXT, and LOG attachments. |
+| **`get_email_thread`** | **Discovery** | Fetches all emails in a conversation (using Thread-ID or headers). |
+| **`setup_smart_labels`** | **Organization** | Creates the `Secretary/` folder hierarchy. |
+| **`modify_gmail_labels`** | **Gmail** | Native support for adding/removing Gmail labels. |
+| **`process_meeting_invite`**| **Workflow** | Automatically identifies invites, checks calendar availability, and drafts an appropriate reply. |
+| **`create_draft_reply`** | **Action** | Creates a MIME-formatted draft reply with proper threading. |
+| **`process_email`** | **Action** | High-level tool to move, read, flag, or delete emails. |
+| **`move_email`** | **Action** | Moves an email from one folder to another. |
+| **`mark_as_read`** | **Action** | Marks an email as read. |
+| **`mark_as_unread`** | **Action** | Marks an email as unread. |
+| **`flag_email`** | **Action** | Flags (stars) an email. |
+| **`delete_email`** | **Action** | Deletes an email from the server. |
+| **`create_task`** | **Workflow** | Creates a local task (in `tasks.md`) from email content. |
+| **`list_folders`** | **Discovery** | Lists available IMAP folders. |
+| **`server_status`** | **System** | Retrieves current server status and configuration info. |
 
 ## 🔒 Security
 

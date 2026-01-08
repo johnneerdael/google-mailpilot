@@ -1,0 +1,225 @@
+{
+  "actions": [
+    {
+      "timestamp": "2026-01-08T04:54:58.158945",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "move",
+      "target_folder": "Archive",
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:54:58.159387",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "read",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:54:58.159628",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "unread",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:54:58.159861",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "flag",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:54:58.160095",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "delete",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:55:00.457848",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "move",
+      "target_folder": "Archive",
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:55:00.458282",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "read",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:55:00.458485",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "unread",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:55:00.458758",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "flag",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:55:00.459005",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "delete",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:59:44.858091",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "move",
+      "target_folder": "Archive",
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:59:44.858401",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "read",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:59:44.858665",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "unread",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:59:44.858943",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "flag",
+      "target_folder": null,
+      "notes": null
+    },
+    {
+      "timestamp": "2026-01-08T04:59:44.859176",
+      "email": {
+        "from": "Sender <sender@example.com>",
+        "subject": "Test Email",
+        "to": [
+          "Recipient <recipient@example.com>"
+        ],
+        "labels": []
+      },
+      "action": "delete",
+      "target_folder": null,
+      "notes": null
+    }
+  ],
+  "rules": [],
+  "stats": {
+    "total_processed": 15,
+    "action_counts": {
+      "move": 3,
+      "read": 3,
+      "unread": 3,
+      "flag": 3,
+      "delete": 3
+    }
+  }
+}
