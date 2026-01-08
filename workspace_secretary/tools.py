@@ -17,8 +17,9 @@ from workspace_secretary.resources import (
     get_calendar_client_from_context,
     get_gmail_client_from_context,
     get_oauth_mode_from_context,
+    get_server_config_from_context,
 )
-from workspace_secretary.models import EmailAddress
+from workspace_secretary.models import EmailAddress, Email
 
 logger = logging.getLogger(__name__)
 
@@ -1060,13 +1061,13 @@ def register_tools(
                 imap_criteria = _convert_gmail_query_to_imap(query)
                 uids = client.search(imap_criteria, folder="INBOX")
                 uids = uids[:max_results]
-                emails = client.fetch_emails(uids, folder="INBOX")
+                emails_dict = client.fetch_emails(uids, folder="INBOX")
                 results = []
-                for email in emails:
+                for uid, email in emails_dict.items():
                     results.append(
                         {
                             "id": email.message_id,
-                            "uid": email.uid,
+                            "uid": uid,
                             "from": str(email.from_),
                             "subject": email.subject,
                             "date": email.date.isoformat() if email.date else None,
@@ -1405,10 +1406,10 @@ def register_tools(
 
             cal_client = get_calendar_client_from_context(ctx)
             imap_client = get_client_from_context(ctx)
+            server_config = get_server_config_from_context(ctx)
 
-            config = imap_client.config
-            tz = ZoneInfo(config.timezone)
-            vip_senders = set(config.vip_senders)
+            tz = ZoneInfo(server_config.timezone)
+            vip_senders = set(server_config.vip_senders)
 
             if date:
                 target_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=tz)
@@ -1420,7 +1421,7 @@ def register_tools(
 
             briefing: Dict[str, Any] = {
                 "date": target_date.strftime("%Y-%m-%d"),
-                "timezone": config.timezone,
+                "timezone": server_config.timezone,
                 "calendar_events": [],
                 "email_candidates": [],
             }
@@ -1444,9 +1445,9 @@ def register_tools(
 
                 uids = imap_client.search({"UNSEEN": True}, folder="INBOX")
                 uids = uids[:50]
-                emails = imap_client.fetch_emails(uids, folder="INBOX")
+                emails_dict = imap_client.fetch_emails(uids, folder="INBOX")
 
-                for email in emails:
+                for uid, email in emails_dict.items():
                     sender = str(email.from_).lower()
                     subject = (email.subject or "").lower()
                     snippet = email.content.get_best_content()[:200].lower()
@@ -1478,7 +1479,7 @@ def register_tools(
                     briefing["email_candidates"].append(
                         {
                             "id": email.message_id,
-                            "uid": email.uid,
+                            "uid": uid,
                             "from": str(email.from_),
                             "subject": email.subject,
                             "date": email.date.isoformat() if email.date else None,

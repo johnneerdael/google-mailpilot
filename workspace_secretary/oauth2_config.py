@@ -56,17 +56,17 @@ class OAuth2Config:
             return cls(
                 credentials_file="",
                 token_file="gmail_token.json",
-                scopes=["https://mail.google.com/"]
+                scopes=["https://mail.google.com/"],
             )
-            
+
         credentials_file = data.get("credentials_file", "")
         token_file = data.get("token_file", "gmail_token.json")
         scopes = data.get("scopes", ["https://mail.google.com/"])
-        
+
         # Environment variables override config file
         client_id = os.environ.get("GMAIL_CLIENT_ID")
         client_secret = os.environ.get("GMAIL_CLIENT_SECRET")
-        
+
         return cls(
             credentials_file=credentials_file,
             token_file=token_file,
@@ -74,32 +74,20 @@ class OAuth2Config:
             client_id=client_id,
             client_secret=client_secret,
         )
-        
+
     @classmethod
     def from_server_config(cls, config: ServerConfig) -> "OAuth2Config":
-        """
-        Create OAuth2Config from ServerConfig.
+        """Create OAuth2Config from ServerConfig."""
+        credentials_file = ""
+        token_file = "gmail_token.json"
+        scopes = ["https://mail.google.com/"]
 
-        Args:
-            config: The server configuration object
-
-        Returns:
-            OAuth2Config instance with values from server config
-        """
-        # Get values from config.oauth2 if present
-        if hasattr(config, "oauth2") and config.oauth2:
-            oauth2_config = config.oauth2
-            credentials_file = oauth2_config.get("credentials_file", "")
-            token_file = oauth2_config.get("token_file", "gmail_token.json")
-            scopes = oauth2_config.get("scopes", ["https://mail.google.com/"])
-        else:
-            credentials_file = ""
-            token_file = "gmail_token.json"
-            scopes = ["https://mail.google.com/"]
-
-        # Environment variables override config file
         client_id = os.environ.get("GMAIL_CLIENT_ID")
         client_secret = os.environ.get("GMAIL_CLIENT_SECRET")
+
+        if config.imap.oauth2:
+            client_id = client_id or config.imap.oauth2.client_id
+            client_secret = client_secret or config.imap.oauth2.client_secret
 
         return cls(
             credentials_file=credentials_file,
@@ -115,7 +103,7 @@ class OAuth2Config:
 
         Returns:
             Dict containing the client configuration
-        
+
         Raises:
             FileNotFoundError: If the credentials file doesn't exist
             ValueError: If the credentials file is invalid
@@ -138,11 +126,15 @@ class OAuth2Config:
 
         # Otherwise load from the credentials file
         if not self.credentials_file:
-            raise ValueError("No credentials file specified and no client ID/secret provided")
+            raise ValueError(
+                "No credentials file specified and no client ID/secret provided"
+            )
 
         credentials_path = Path(self.credentials_file)
         if not credentials_path.exists():
-            raise FileNotFoundError(f"Credentials file not found: {self.credentials_file}")
+            raise FileNotFoundError(
+                f"Credentials file not found: {self.credentials_file}"
+            )
 
         try:
             with open(credentials_path) as f:
@@ -156,7 +148,7 @@ class OAuth2Config:
         """Get the client ID from the configuration."""
         if self._client_id:
             return self._client_id
-        
+
         config = self.load_client_config()
         return config.get("installed", {}).get("client_id", "")
 
@@ -165,6 +157,6 @@ class OAuth2Config:
         """Get the client secret from the configuration."""
         if self._client_secret:
             return self._client_secret
-        
+
         config = self.load_client_config()
         return config.get("installed", {}).get("client_secret", "")

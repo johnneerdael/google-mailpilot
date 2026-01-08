@@ -18,8 +18,8 @@ class CalendarClient:
 
     def __init__(self, config: ServerConfig):
         self.config: ServerConfig = config
-        self.service = None
-        self._creds = None
+        self.service: Any = None
+        self._creds: Optional[Credentials] = None
 
     def _get_credentials(self) -> Optional[Credentials]:
         """Convert our OAuth2Config to Google Credentials."""
@@ -60,15 +60,22 @@ class CalendarClient:
             logger.error(f"Failed to connect to Google Calendar: {e}")
             raise
 
+    def _ensure_connected(self) -> Any:
+        """Ensure service is connected and return it."""
+        if not self.service:
+            self.connect()
+        if not self.service:
+            raise RuntimeError("Failed to connect to Calendar service")
+        return self.service
+
     def list_events(
         self, time_min: str, time_max: str, calendar_id: str = "primary"
     ) -> List[Dict[str, Any]]:
         """List events in a given time range."""
-        if not self.service:
-            self.connect()
+        service = self._ensure_connected()
 
         events_result = (
-            self.service.events()
+            service.events()
             .list(
                 calendarId=calendar_id,
                 timeMin=time_min,
@@ -94,11 +101,10 @@ class CalendarClient:
             calendar_id: Calendar ID
             conference_data_version: Version for conference data (set to 1 to enable Meet)
         """
-        if not self.service:
-            self.connect()
+        service = self._ensure_connected()
 
         event = (
-            self.service.events()
+            service.events()
             .insert(
                 calendarId=calendar_id,
                 body=event_data,
@@ -112,9 +118,8 @@ class CalendarClient:
 
     def get_availability(self, time_min: str, time_max: str) -> Dict[str, Any]:
         """Check availability using the freebusy endpoint."""
-        if not self.service:
-            self.connect()
+        service = self._ensure_connected()
 
         body = {"timeMin": time_min, "timeMax": time_max, "items": [{"id": "primary"}]}
 
-        return self.service.freebusy().query(body=body).execute()
+        return service.freebusy().query(body=body).execute()
