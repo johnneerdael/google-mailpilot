@@ -18,8 +18,8 @@ hero:
 
 features:
   - icon: ⚡
-    title: Single Container Architecture
-    details: v3.1 brings supervisor-managed processes. Engine + MCP server run together with Unix socket IPC—simple deployment, persistent IMAP connections.
+    title: Read/Write Split Architecture
+    details: v4.0 brings a complete architecture rewrite. Engine owns all database writes, MCP is read-only. Both use the same DatabaseInterface for SQLite or PostgreSQL.
     
   - icon: 🤖
     title: AI-Native Design
@@ -125,6 +125,29 @@ The AI:
 2. Extracts PDF text with `get_attachment_content()`
 3. Parses and presents the total
 :::
+
+## What's New in v4.0.0
+
+**Complete Architecture Rewrite** — Read/Write Split for reliability and consistency:
+
+- 🔄 **Engine Owns All Writes**: Engine now uses `DatabaseInterface` for all database mutations
+- 📖 **MCP is Read-Only**: MCP reads directly from database, calls Engine API only for mutations
+- 🗄️ **Unified Database**: Both Engine and MCP use the same `DatabaseInterface` abstraction
+- 📅 **Integrated Calendar Sync**: Calendar sync now part of Engine's background sync loop
+- 🧠 **Auto Embeddings**: Engine generates embeddings automatically after email sync (PostgreSQL)
+- 🚀 **Graceful Enrollment**: Engine starts in "no account" mode, auto-connects when OAuth tokens appear
+
+### New Engine API Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/calendar/events` | List calendar events in time range |
+| `GET /api/calendar/availability` | Get free/busy information |
+| `POST /api/email/setup-labels` | Create Secretary label hierarchy |
+| `POST /api/email/send` | Send email via Gmail API |
+| `POST /api/email/draft-reply` | Create draft reply in Gmail |
+
+See the [Architecture Documentation](/architecture) for the complete technical overview.
 
 ## What's New in v3.2.0
 

@@ -1,60 +1,95 @@
-# Architecture v3.0.0
+# Architecture v4.0.0
 
-This document describes the dual-process architecture introduced in v3.0.0.
+This document describes the **read/write split architecture** introduced in v4.0.0.
 
 ## Overview
 
-The Google Workspace Secretary MCP uses a **dual-process architecture** that separates concerns:
+The Google Workspace Secretary MCP uses a **dual-process architecture** with strict separation of concerns:
 
-- **Engine** (`secretary-engine`): Headless sync daemon that owns data
-- **MCP** (`secretary-mcp`): AI interface layer that serves tools
+- **Engine** (`secretary-engine`): Owns all data mutations and external API connections
+- **MCP** (`secretary-mcp`): Read-only database access, delegates mutations to Engine
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  secretary-engine (standalone daemon)                       │
-│                                                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌───────────────────┐   │
-│  │ IMAP Sync   │  │ Calendar    │  │ Internal API      │   │
-│  │ (OAuth2)    │  │ Sync        │  │ (Unix Socket)     │   │
-│  └──────┬──────┘  └──────┬──────┘  └─────────┬─────────┘   │
-│         │                │                   │              │
-│         ▼                ▼                   ▼              │
-│  ┌─────────────────────────────────────────────────────┐   │
-│  │              Database (SQLite or PostgreSQL)        │   │
-│  │  • email_cache (emails, threads, folders)           │   │
-│  │  • calendar_cache (events, calendars)               │   │
-│  │  • embeddings (optional, pgvector)                  │   │
-│  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
-                           │
-                           │ Unix Socket (mutations)
-                           │ Database (reads)
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│  secretary-mcp (MCP server)                                 │
-│                                                             │
-│  ┌─────────────┐  ┌─────────────┐  ┌───────────────────┐   │
-│  │ MCP Tools   │  │ MCP         │  │ Bearer Auth       │   │
-│  │ (email,cal) │  │ Resources   │  │ (for clients)     │   │
-│  └─────────────┘  └─────────────┘  └───────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  secretary-engine (daemon)                                          │
+│                                                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┐  │
+│  │ IMAP Client │  │ Calendar    │  │ Gmail API   │  │ Embeddings│  │
+│  │ (OAuth2)    │  │ API         │  │ (send/draft)│  │ Generator │  │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └─────┬─────┘  │
+│         │                │                │               │         │
+│         ▼                ▼                ▼               ▼         │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │              DatabaseInterface (WRITE)                      │   │
+│  │  • upsert_email(), save_folder_state()                      │   │
+│  │  • upsert_event(), update_sync_token()                      │   │
+│  │  • upsert_embedding() (PostgreSQL only)                     │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                              │                                      │
+│                              ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │              FastAPI Internal API (Unix Socket)             │   │
+│  │  /api/email/move, /api/email/send, /api/calendar/event      │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+                               │
+          ┌────────────────────┴────────────────────┐
+          │ Unix Socket (mutations)                 │
+          │ Database file/connection (reads)        │
+          ▼                                         ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  secretary-mcp (MCP server)                                         │
+│                                                                     │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │              DatabaseInterface (READ-ONLY)                  │   │
+│  │  • get_email_by_uid(), search_emails()                      │   │
+│  │  • get_events(), semantic_search()                          │   │
+│  │  • get_thread_emails(), get_synced_folders()                │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│                                                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌───────────────────────────┐   │
+│  │ MCP Tools   │  │ MCP         │  │ EngineClient              │   │
+│  │ (40+ tools) │  │ Resources   │  │ (mutation proxy)          │   │
+│  └─────────────┘  └─────────────┘  └───────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+## The Read/Write Split
+
+### Why This Architecture?
+
+| Problem (v3.x) | Solution (v4.0) |
+|----------------|-----------------|
+| Engine used `EmailCache` (SQLite-only) | Engine uses `DatabaseInterface` (SQLite or PostgreSQL) |
+| MCP had its own database connection | MCP reads from **same database** as Engine |
+| Unclear who owns mutations | **Engine owns ALL writes**, MCP is read-only |
+| Calendar not in sync loop | Calendar sync integrated into Engine's `sync_loop()` |
+| Embeddings generated ad-hoc | Engine generates embeddings automatically after sync |
+
+### Data Flow
+
+```
+READ PATH (fast, local):
+  MCP Tool → DatabaseInterface.get_*() → SQLite/PostgreSQL → Response
+
+WRITE PATH (via Engine):
+  MCP Tool → EngineClient.move_email() → Unix Socket → Engine API
+           → ImapClient.move_email() → Gmail IMAP
+           → DatabaseInterface.delete_email() → Database updated
 ```
 
 ## Component Responsibilities
 
-| Aspect | Engine | MCP |
-|--------|--------|-----|
-| **Auth** | OAuth2 (Gmail/Calendar APIs) | Bearer token (for AI clients) |
-| **Lifecycle** | Always running, independent | Stateless, can restart anytime |
-| **Data ownership** | Owns database, syncs continuously | Reads from database |
-| **Mutations** | Handles all writes via internal API | Calls Engine API |
-| **Entry point** | `python -m workspace_secretary.engine` | `python -m workspace_secretary` |
+| Component | Owns | Does NOT Do |
+|-----------|------|-------------|
+| **Engine** | IMAP connection, OAuth tokens, Calendar API, Gmail API (send/draft), Database writes, Embedding generation | Serve MCP protocol, Handle AI client auth |
+| **MCP Server** | MCP protocol, Bearer auth, Tool definitions, Database reads | IMAP connection, OAuth, Database writes, Send emails |
 
 ## Database Backends
 
-### SQLite (Default)
+Both Engine and MCP use `DatabaseInterface`, configured by `config.database.backend`:
 
-Best for simple deployment and single-user scenarios.
+### SQLite (Default)
 
 ```yaml
 database:
@@ -64,15 +99,13 @@ database:
     calendar_cache_path: config/calendar_cache.db
 ```
 
-**Features:**
+**Characteristics:**
+- Two separate files (email + calendar)
 - WAL mode for concurrent reads
 - FTS5 for full-text search
-- Zero configuration
-- Single-file deployment
+- Zero external dependencies
 
-### PostgreSQL + pgvector (AI Features)
-
-Required when you want semantic search and AI-powered features.
+### PostgreSQL + pgvector
 
 ```yaml
 database:
@@ -83,36 +116,113 @@ database:
     database: secretary
     user: secretary
     password: ${POSTGRES_PASSWORD}
-  
-embeddings:
-  enabled: true
-  endpoint: https://api.openai.com/v1/embeddings
-  model: text-embedding-3-small
-  api_key: ${OPENAI_API_KEY}
-  dimensions: 1536
+  embeddings:
+    enabled: true
+    provider: openai
+    model: text-embedding-3-small
+    api_key: ${OPENAI_API_KEY}
 ```
 
-**Features:**
-- pgvector for vector similarity search
-- Semantic email search ("find emails about project deadlines")
-- Related email detection
-- Context retrieval for AI drafting (RAG)
-- HNSW indexing for fast similarity queries
+**Characteristics:**
+- Single database (unified schema)
+- pgvector for semantic search
+- Connection pooling
+- HNSW index for fast similarity queries
 
-## Internal API
+## Engine Internal API
 
-The Engine exposes a FastAPI server on Unix socket for mutations:
+The Engine exposes a FastAPI server on Unix socket (`/tmp/secretary-engine.sock`):
+
+### Status & Sync
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/status` | GET | Health check, sync status |
-| `/api/sync/trigger` | POST | Trigger immediate sync |
-| `/api/email/move` | POST | Move email to folder |
+| `/api/status` | GET | Health check, enrollment status, sync state |
+| `/api/sync/trigger` | POST | Trigger immediate email + calendar sync |
+
+### Email Mutations
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/email/move` | POST | Move email to folder (IMAP + DB) |
 | `/api/email/mark-read` | POST | Mark email as read |
 | `/api/email/mark-unread` | POST | Mark email as unread |
-| `/api/email/labels` | POST | Modify Gmail labels |
+| `/api/email/labels` | POST | Add/remove/set Gmail labels |
+| `/api/email/send` | POST | Send email via Gmail API |
+| `/api/email/draft-reply` | POST | Create draft reply in Gmail |
+| `/api/email/setup-labels` | POST | Create Secretary label hierarchy |
+
+### Calendar Mutations
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/calendar/events` | GET | List events in time range |
+| `/api/calendar/availability` | GET | Get free/busy information |
 | `/api/calendar/event` | POST | Create calendar event |
-| `/api/calendar/respond` | POST | Accept/decline meeting |
+| `/api/calendar/respond` | POST | Accept/decline/tentative meeting |
+
+## Sync Strategy
+
+### Email Sync (Engine)
+
+```python
+async def sync_emails():
+    for folder in allowed_folders:
+        # 1. Get last synced UID
+        folder_state = database.get_folder_state(folder)
+        last_uid = folder_state.get("uidnext", 1)
+        
+        # 2. Search for new emails (UID > last_uid)
+        uids = imap_client.search({"uid_range": (last_uid, "*")}, folder)
+        
+        # 3. Fetch and store
+        emails = imap_client.fetch_emails(uids, folder)
+        for uid, email in emails.items():
+            database.upsert_email(...)
+        
+        # 4. Update folder state
+        database.save_folder_state(folder, uidvalidity, max_uid + 1)
+```
+
+### Calendar Sync (Engine)
+
+```python
+async def sync_calendar():
+    # Uses CalendarSync with DatabaseInterface as cache
+    calendar_sync.sync_calendar("primary")
+    
+    # Sync token-based incremental sync
+    # Falls back to full sync on 410 (token expired)
+```
+
+### Embedding Generation (Engine, PostgreSQL only)
+
+```python
+async def generate_embeddings():
+    if not database.supports_embeddings():
+        return
+    
+    for folder in folders:
+        emails = database.get_emails_needing_embedding(folder, limit=50)
+        for email in emails:
+            embedding = embeddings_client.embed_text(email.subject + email.body)
+            database.upsert_embedding(email.uid, folder, embedding, model, hash)
+```
+
+## Graceful Startup
+
+The Engine supports **graceful enrollment** - it starts even without OAuth tokens:
+
+```
+1. Engine starts → checks for OAuth tokens
+2. No tokens? → Starts in "no_account" mode
+   - API endpoints return {"status": "no_account", ...}
+   - Enrollment watch loop monitors config/token.json
+3. User runs auth_setup → tokens written to token.json
+4. Engine detects change → auto-connects IMAP + Calendar
+5. Sync loop starts → emails/calendar sync to database
+6. MCP tools now work
+```
 
 ## Database Schema
 
@@ -125,20 +235,17 @@ CREATE TABLE emails (
     message_id TEXT,
     subject TEXT,
     from_addr TEXT,
-    to_addr TEXT,
-    cc_addr TEXT,
+    to_addr TEXT,        -- JSON array
+    cc_addr TEXT,        -- JSON array
     date TEXT,
     body_text TEXT,
     body_html TEXT,
-    flags TEXT,
+    flags TEXT,          -- JSON array
     is_unread INTEGER,
     is_important INTEGER,
-    modseq INTEGER,
+    size INTEGER,
     in_reply_to TEXT,
     references_header TEXT,
-    thread_root TEXT,
-    thread_parent_uid INTEGER,
-    thread_depth INTEGER,
     PRIMARY KEY (uid, folder)
 );
 
@@ -146,8 +253,13 @@ CREATE TABLE folder_state (
     folder TEXT PRIMARY KEY,
     uidvalidity INTEGER,
     uidnext INTEGER,
-    highestmodseq INTEGER,
-    last_sync TEXT
+    highestmodseq INTEGER DEFAULT 0
+);
+
+-- SQLite FTS5 for full-text search
+CREATE VIRTUAL TABLE emails_fts USING fts5(
+    subject, body_text, from_addr, to_addr,
+    content='emails', content_rowid='rowid'
 );
 ```
 
@@ -155,7 +267,7 @@ CREATE TABLE folder_state (
 
 ```sql
 CREATE TABLE calendars (
-    id TEXT PRIMARY KEY,
+    calendar_id TEXT PRIMARY KEY,
     summary TEXT,
     description TEXT,
     timezone TEXT,
@@ -165,7 +277,7 @@ CREATE TABLE calendars (
 );
 
 CREATE TABLE events (
-    id TEXT PRIMARY KEY,
+    event_id TEXT PRIMARY KEY,
     calendar_id TEXT,
     summary TEXT,
     description TEXT,
@@ -176,13 +288,10 @@ CREATE TABLE events (
     status TEXT,
     organizer_email TEXT,
     recurrence TEXT,
-    recurring_event_id TEXT,
     html_link TEXT,
     hangout_link TEXT,
-    created TEXT,
-    updated TEXT,
-    etag TEXT,
-    raw_json TEXT
+    raw_json TEXT,
+    FOREIGN KEY (calendar_id) REFERENCES calendars(calendar_id)
 );
 
 CREATE TABLE attendees (
@@ -205,120 +314,78 @@ CREATE TABLE email_embeddings (
     embedding vector(1536),
     model TEXT,
     content_hash TEXT,
-    created_at TIMESTAMP DEFAULT NOW(),
-    PRIMARY KEY (email_uid, email_folder)
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (email_uid, email_folder),
+    FOREIGN KEY (email_uid, email_folder) REFERENCES emails(uid, folder)
 );
 
-CREATE INDEX idx_email_embeddings_vector 
+-- HNSW index for fast cosine similarity
+CREATE INDEX idx_email_embeddings_hnsw 
 ON email_embeddings USING hnsw (embedding vector_cosine_ops);
-```
-
-## Sync Strategy
-
-### Email Sync
-1. **Initial**: Full sync of INBOX (newest first, batch of 50)
-2. **Incremental**: UIDNEXT-based delta sync every 5 minutes
-3. **Threading**: RFC 5256 THREAD/SORT when available, References-based fallback
-
-### Calendar Sync
-1. **Initial**: Full sync (all events, no time limit for historical data)
-2. **Incremental**: Sync token-based delta sync
-3. **Fallback**: Full resync on 410 (sync token expired)
-
-## Deployment Options
-
-### Single Process (Development)
-
-```bash
-# Runs both Engine and MCP in one process (legacy mode)
-docker-compose -f docker-compose.single.yaml up
-```
-
-### Dual Process (Production)
-
-```bash
-# Runs Engine and MCP as separate services
-docker-compose up
-```
-
-### Docker Compose (Dual Process)
-
-```yaml
-services:
-  engine:
-    build: .
-    command: ["uv", "run", "python", "-m", "workspace_secretary.engine"]
-    volumes:
-      - ./config:/app/config
-      - engine-socket:/tmp
-    environment:
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
-
-  mcp:
-    build: .
-    command: ["uv", "run", "python", "-m", "workspace_secretary"]
-    volumes:
-      - ./config:/app/config:ro
-      - engine-socket:/tmp:ro
-    ports:
-      - "8000:8000"
-    depends_on:
-      engine:
-        condition: service_healthy
-
-volumes:
-  engine-socket:
-```
-
-## AI Features (pgvector)
-
-When PostgreSQL + embeddings are configured, additional capabilities are unlocked:
-
-### Semantic Search
-
-Find emails by meaning, not just keywords:
-
-```python
-# "Find emails about project deadlines" matches:
-# - "We need to finish by end of quarter"
-# - "Timeline for the deliverable"
-# - "When is this due?"
-```
-
-### Related Emails
-
-Find contextually similar emails:
-
-```python
-# Given an email about "Q4 budget planning"
-# Returns related emails about:
-# - Previous budget discussions
-# - Q3 budget review
-# - Financial planning meetings
-```
-
-### RAG Context
-
-Automatically retrieve relevant context for drafting replies:
-
-```python
-# When drafting a reply, system fetches:
-# - Previous emails in thread
-# - Semantically related emails
-# - Relevant calendar events
 ```
 
 ## Performance Characteristics
 
 | Operation | SQLite | PostgreSQL |
 |-----------|--------|------------|
-| Email query (cached) | <1ms | <5ms |
-| Full-text search | 10-50ms | 5-20ms |
-| Semantic search | N/A | 20-100ms |
-| Initial sync (1000 emails) | 30-60s | 30-60s |
-| Incremental sync | <1s | <1s |
+| Email lookup by UID | <1ms | <5ms |
+| Full-text search | 10-50ms (FTS5) | 5-20ms (GIN) |
+| Semantic search | N/A | 20-100ms (HNSW) |
+| Sync loop (incremental) | <1s | <1s |
+| Database reads (MCP) | Direct file access | Connection pool |
 
-## Migration Path
+## Deployment
 
-1. **v2.x → v3.0**: Automatic. Existing SQLite cache is preserved.
-2. **SQLite → PostgreSQL**: Export/import tool provided (see `docs/guide/migration.md`)
+### Single Container (Recommended)
+
+Both processes run in one container via supervisord:
+
+```yaml
+services:
+  secretary:
+    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.0.0
+    volumes:
+      - ./config:/app/config
+    ports:
+      - "8000:8000"
+    environment:
+      - BEARER_TOKEN=${BEARER_TOKEN}
+```
+
+### Dual Container (Advanced)
+
+Separate containers sharing Unix socket:
+
+```yaml
+services:
+  engine:
+    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.0.0
+    command: ["python", "-m", "workspace_secretary.engine"]
+    volumes:
+      - ./config:/app/config
+      - socket:/tmp
+
+  mcp:
+    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.0.0
+    command: ["python", "-m", "workspace_secretary"]
+    volumes:
+      - ./config:/app/config:ro
+      - socket:/tmp:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - engine
+
+volumes:
+  socket:
+```
+
+## Migration from v3.x
+
+**Automatic and seamless:**
+
+1. Existing SQLite cache files are compatible
+2. No config changes required
+3. Engine will use existing `email_cache.db` and `calendar_cache.db`
+
+The only visible change: Engine now handles calendar sync automatically (was manual in v3.x).

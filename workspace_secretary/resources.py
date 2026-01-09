@@ -1,331 +1,151 @@
-"""MCP resources implementation for email access."""
+"""MCP resources implementation - reads from database."""
 
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from mcp.server.fastmcp import FastMCP, Context
 
 from workspace_secretary.config import ServerConfig
-from workspace_secretary.imap_client import ImapClient
-from workspace_secretary.calendar_client import CalendarClient
-from workspace_secretary.gmail_client import GmailClient
-from workspace_secretary.smtp_client import SMTPClient
-from workspace_secretary.cache import EmailCache
-from workspace_secretary.models import Email
+from workspace_secretary.engine.database import DatabaseInterface
 
 logger = logging.getLogger(__name__)
 
 
-def get_server_config_from_context(ctx: Context) -> ServerConfig:
+def get_database_from_context(ctx: Context) -> Optional[DatabaseInterface]:
     ctx_any: Any = ctx
-    config = ctx_any.request_context.lifespan_context.get("config")
-    if not config:
-        raise RuntimeError("Server config not available in context")
-    return config
+    return ctx_any.request_context.lifespan_context.get("database")
 
 
-def get_client_from_context(ctx: Context) -> ImapClient:
-    """Get IMAP client from context, ensuring connection is established."""
-    from workspace_secretary.server import _client_manager
-
+def get_config_from_context(ctx: Context) -> Optional[ServerConfig]:
     ctx_any: Any = ctx
-    if (
-        hasattr(ctx_any, "kwargs")
-        and "client" in ctx_any.kwargs
-        and ctx_any.kwargs["client"]
-    ):
-        return ctx_any.kwargs["client"]  # type: ignore
-
-    _client_manager.ensure_connections()
-
-    client = ctx_any.request_context.lifespan_context.get("imap_client")  # type: ignore
-    if not client:
-        raise RuntimeError("IMAP client not available")
-    return client  # type: ignore
+    return ctx_any.request_context.lifespan_context.get("config")
 
 
-def get_smtp_client_from_context(ctx: Context) -> SMTPClient:
-    ctx_any: Any = ctx
-    client = ctx_any.request_context.lifespan_context.get("smtp_client")  # type: ignore
-    if not client:
-        raise RuntimeError("SMTP client not available")
-    return client  # type: ignore
+def register_resources(mcp: FastMCP) -> None:
+    """Register MCP resources for email access via database."""
 
-
-def get_email_cache_from_context(ctx: Context) -> EmailCache:
-    ctx_any: Any = ctx
-    cache = ctx_any.request_context.lifespan_context.get("email_cache")  # type: ignore
-    return cache  # type: ignore
-
-
-def get_calendar_client_from_context(ctx: Context) -> CalendarClient:
-    """Get Calendar client from context, ensuring connection is established."""
-    from workspace_secretary.server import _client_manager
-
-    _client_manager.ensure_connections()
-
-    ctx_any: Any = ctx
-    client = ctx_any.request_context.lifespan_context.get("calendar_client")
-    if not client:
-        raise RuntimeError("Calendar client not available")
-    return client
-
-
-def get_gmail_client_from_context(ctx: Context) -> GmailClient:
-    """Get Gmail API client from context.
-
-    Args:
-        ctx: MCP context
-
-    Returns:
-        Gmail client
-
-    Raises:
-        RuntimeError: If Gmail client is not available
-    """
-    ctx_any: Any = ctx
-    client = ctx_any.request_context.lifespan_context.get("gmail_client")
-    if not client:
-        raise RuntimeError("Gmail client not available")
-    return client
-
-
-def register_resources(mcp: FastMCP, imap_client: ImapClient) -> None:
-    """Register MCP resources.
-
-    Args:
-        mcp: MCP server
-        imap_client: IMAP client
-    """
-
-    # Define a wrapper for the folders resource
-    async def get_folders_impl(ctx: Context) -> str:
-        """Implementation for listing folders."""
-        client = get_client_from_context(ctx)
-        folders = client.list_folders()
-        return json.dumps(folders, indent=2)
-
-    # List folders resource
     @mcp.resource("email://folders")
     async def get_folders() -> str:
-        """List available email folders.
+        """List available email folders from database."""
+        ctx_any: Any = Context
+        ctx = ctx_any.get_current()
+        db = get_database_from_context(ctx)
 
-        Returns:
-            JSON-formatted list of folders
-        """
-        # Get context from the global context manager
-        ctx_cls: Any = Context
-        ctx = ctx_cls.get_current()
-        return await get_folders_impl(ctx)
-        """List available email folders.
-        
-        Returns:
-            JSON-formatted list of folders
-        """
-
-    # Define a wrapper for the list emails resource
-    async def list_emails_impl(ctx: Context, folder: str) -> str:
-        """Implementation for listing emails."""
-        client = get_client_from_context(ctx)
+        if not db:
+            return json.dumps({"error": "Database not available"})
 
         try:
-            # Search for all emails in folder
-            uids = client.search("ALL", folder=folder)
+            folders = db.get_synced_folders()
+            return json.dumps(folders, indent=2)
+        except Exception as e:
+            logger.error(f"Error listing folders: {e}")
+            return json.dumps({"error": str(e)})
 
-            if not uids:
-                return json.dumps([])
+    @mcp.resource("email://{folder}/list")
+    async def list_emails(folder: str) -> str:
+        """List emails in a folder from database."""
+        ctx_any: Any = Context
+        ctx = ctx_any.get_current()
+        db = get_database_from_context(ctx)
 
-            # Fetch emails with specified UIDs
-            emails = client.fetch_emails(uids, folder=folder)
+        if not db:
+            return json.dumps({"error": "Database not available"})
 
-            # Convert to list of dictionaries for JSON output
+        try:
+            emails = db.search_emails(folder=folder, limit=50)
+
             results = []
-            for uid, email in emails.items():
-                if not email:
-                    continue
-
+            for email in emails:
                 results.append(
                     {
-                        "uid": uid,
+                        "uid": email.get("uid"),
                         "folder": folder,
-                        "from": str(email.from_),
-                        "to": [str(to) for to in email.to],
-                        "subject": email.subject,
-                        "date": email.date.isoformat() if email.date else None,
-                        "snippet": email.get_snippet(100),
-                        "flags": email.flags,
-                        "has_attachments": bool(email.attachments),
+                        "from": email.get("from_addr"),
+                        "to": email.get("to_addr"),
+                        "subject": email.get("subject"),
+                        "date": str(email.get("date")) if email.get("date") else None,
+                        "is_unread": email.get("is_unread", False),
+                        "is_important": email.get("is_important", False),
                     }
                 )
 
             return json.dumps(results, indent=2)
         except Exception as e:
-            logging.error(f"Error listing emails: {e}")
-            return f"Error: {e}"
-
-    # List email summaries in a folder
-    @mcp.resource("email://{folder}/list")
-    async def list_emails(folder: str) -> str:
-        """List emails in a folder.
-
-        Args:
-            folder: Folder name
-
-        Returns:
-            JSON-formatted list of email summaries
-        """
-        # Get context from the global context manager
-        ctx_cls: Any = Context
-        ctx = ctx_cls.get_current()
-        client = get_client_from_context(ctx)
-
-        # Search for all emails in the folder
-        try:
-            uids = client.search("ALL", folder=folder)
-
-            # Limit to the 50 most recent emails to avoid overwhelming
-            # the LLM with too much context
-            uids = sorted(uids, reverse=True)[:50]
-
-            # Fetch emails
-            emails = client.fetch_emails(uids, folder=folder)
-
-            # Create summaries
-            summaries = []
-            for uid, email_obj in emails.items():
-                summaries.append(
-                    {
-                        "uid": uid,
-                        "folder": folder,
-                        "from": str(email_obj.from_),
-                        "to": [str(to) for to in email_obj.to],
-                        "subject": email_obj.subject,
-                        "date": email_obj.date.isoformat() if email_obj.date else None,
-                        "flags": email_obj.flags,
-                        "has_attachments": len(email_obj.attachments) > 0,
-                    }
-                )
-
-            return json.dumps(summaries, indent=2)
-        except Exception as e:
             logger.error(f"Error listing emails: {e}")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
-    # Search emails across folders
-    @mcp.resource("email://search/{query}")
-    async def search_emails(query: str) -> str:
-        """Search for emails across folders.
-
-        Args:
-            query: Search query (format depends on search mode)
-
-        Returns:
-            JSON-formatted list of email summaries
-        """
-        # Get context from the global context manager
-        ctx_cls: Any = Context
-        ctx = ctx_cls.get_current()
-        client = get_client_from_context(ctx)
-
-        # Get all folders
-        folders = client.list_folders()
-        results = []
-
-        for folder in folders:
-            try:
-                # Customize the search criteria based on the query
-                if query.lower() in ["all", "unseen", "seen", "today", "week", "month"]:
-                    # Predefined searches
-                    uids = client.search(query, folder=folder)
-                else:
-                    # Text search
-                    uids = client.search(["TEXT", query], folder=folder)
-
-                # Limit results per folder
-                uids = sorted(uids, reverse=True)[:10]
-
-                if uids:
-                    # Fetch emails
-                    emails = client.fetch_emails(uids, folder=folder)
-
-                    # Create summaries
-                    for uid, email_obj in emails.items():
-                        results.append(
-                            {
-                                "uid": uid,
-                                "folder": folder,
-                                "from": str(email_obj.from_),
-                                "to": [str(to) for to in email_obj.to],
-                                "subject": email_obj.subject,
-                                "date": email_obj.date.isoformat()
-                                if email_obj.date
-                                else None,
-                                "flags": email_obj.flags,
-                                "has_attachments": len(email_obj.attachments) > 0,
-                            }
-                        )
-            except Exception as e:
-                logger.warning(f"Error searching folder {folder}: {e}")
-
-        # Sort results by date (newest first)
-        results.sort(key=lambda x: str(x.get("date") or "0"), reverse=True)
-
-        return json.dumps(results, indent=2)
-
-    # Get a specific email by UID
     @mcp.resource("email://{folder}/{uid}")
     async def get_email(folder: str, uid: str) -> str:
-        """Get a specific email.
+        """Get a specific email from database."""
+        ctx_any: Any = Context
+        ctx = ctx_any.get_current()
+        db = get_database_from_context(ctx)
 
-        Args:
-            folder: Folder name
-            uid: Email UID
-
-        Returns:
-            Email content in text format
-        """
-        # Get context from the global context manager
-        ctx_cls: Any = Context
-        ctx = ctx_cls.get_current()
-        client = get_client_from_context(ctx)
+        if not db:
+            return "Database not available"
 
         try:
-            # Fetch email
-            email_obj = client.fetch_email(int(uid), folder=folder)
+            email = db.get_email_by_uid(int(uid), folder)
 
-            if not email_obj:
-                return f"Email with UID {uid} not found in folder {folder}"
+            if not email:
+                return f"Email {uid} not found in {folder}"
 
-            # Format email as text
             parts = [
-                f"From: {email_obj.from_}",
-                f"To: {', '.join(str(to) for to in email_obj.to)}",
+                f"From: {email.get('from_addr')}",
+                f"To: {email.get('to_addr')}",
             ]
 
-            if email_obj.cc:
-                parts.append(f"Cc: {', '.join(str(cc) for cc in email_obj.cc)}")
+            if email.get("cc_addr"):
+                parts.append(f"Cc: {email.get('cc_addr')}")
 
-            if email_obj.date:
-                parts.append(f"Date: {email_obj.date.isoformat()}")
+            if email.get("date"):
+                parts.append(f"Date: {email.get('date')}")
 
-            parts.append(f"Subject: {email_obj.subject}")
-            parts.append(f"Flags: {', '.join(email_obj.flags)}")
+            parts.append(f"Subject: {email.get('subject')}")
+            parts.append(f"Unread: {email.get('is_unread', False)}")
+            parts.append(f"Important: {email.get('is_important', False)}")
+            parts.append("")
 
-            if email_obj.attachments:
-                parts.append(f"Attachments: {len(email_obj.attachments)}")
-                for i, attachment in enumerate(email_obj.attachments, 1):
-                    parts.append(
-                        f"  {i}. {attachment.filename} ({attachment.content_type}, {attachment.size} bytes)"
-                    )
-
-            parts.append("")  # Empty line before content
-
-            # Add email content
-            content = email_obj.content.get_best_content()
-            parts.append(content)
+            body = email.get("body_text") or email.get("body_html") or "(no content)"
+            parts.append(body)
 
             return "\n".join(parts)
         except Exception as e:
             logger.error(f"Error fetching email: {e}")
             return f"Error: {e}"
+
+    @mcp.resource("email://search/{query}")
+    async def search_emails(query: str) -> str:
+        """Search emails in database."""
+        ctx_any: Any = Context
+        ctx = ctx_any.get_current()
+        db = get_database_from_context(ctx)
+
+        if not db:
+            return json.dumps({"error": "Database not available"})
+
+        try:
+            emails = db.search_emails(
+                subject_contains=query,
+                body_contains=query,
+                limit=50,
+            )
+
+            results = []
+            for email in emails:
+                results.append(
+                    {
+                        "uid": email.get("uid"),
+                        "folder": email.get("folder"),
+                        "from": email.get("from_addr"),
+                        "subject": email.get("subject"),
+                        "date": str(email.get("date")) if email.get("date") else None,
+                        "is_unread": email.get("is_unread", False),
+                    }
+                )
+
+            return json.dumps(results, indent=2)
+        except Exception as e:
+            logger.error(f"Error searching emails: {e}")
+            return json.dumps({"error": str(e)})

@@ -1,31 +1,16 @@
-"""Main server implementation for IMAP MCP."""
+"""MCP server - reads from database (read-only), mutations via Engine API."""
 
 import argparse
 import logging
 import os
 from contextlib import asynccontextmanager
-import secrets
-import time
-import threading
-from typing import AsyncIterator, Dict, Optional
+from typing import AsyncIterator, Dict, Optional, cast
 
-from starlette.responses import JSONResponse
-from starlette.requests import Request
 from mcp.server.fastmcp import FastMCP
-from mcp.server.auth.provider import AccessToken, TokenVerifier
-from mcp.server.auth.settings import AuthSettings
 
 from workspace_secretary.config import ServerConfig, load_config
-from workspace_secretary.imap_client import ImapClient
-from workspace_secretary.calendar_client import CalendarClient
-from workspace_secretary.gmail_client import GmailClient
-from workspace_secretary.smtp_client import SMTPClient
-from workspace_secretary.cache import EmailCache
-from workspace_secretary.resources import register_resources
-from workspace_secretary.tools import register_tools
-from workspace_secretary.mcp_protocol import extend_server
-from workspace_secretary.oauth2 import validate_oauth_config, OAuthValidationResult
-import asyncio
+from workspace_secretary.engine.database import DatabaseInterface, create_database
+from workspace_secretary.engine_client import EngineClient, get_engine_client
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,169 +18,77 @@ logging.basicConfig(
 )
 logger = logging.getLogger("workspace_secretary")
 
-AUTH_RETRY_TIMEOUT = 30
-AUTH_RETRY_INTERVAL = 3
 
-
-class ClientManager:
+class MCPState:
     def __init__(self):
         self.config: Optional[ServerConfig] = None
-        self.imap_client: Optional[ImapClient] = None
-        self.calendar_client: Optional[CalendarClient] = None
-        self.gmail_client: Optional[GmailClient] = None
-        self.smtp_client: Optional[SMTPClient] = None
-        self.email_cache: Optional[EmailCache] = None
+        self.database: Optional[DatabaseInterface] = None
+        self.engine_client: Optional[EngineClient] = None
+        self.embeddings_client = None
         self._initialized = False
-        self._connections_established = False
-        self._sync_thread: Optional[threading.Thread] = None
 
     def initialize(self, config_path: Optional[str] = None) -> None:
         if self._initialized:
             return
 
-        logger.info("Initializing client manager...")
+        logger.info("Initializing MCP server...")
         self.config = load_config(config_path)
 
         if not isinstance(self.config, ServerConfig):
             raise TypeError("Invalid server configuration")
 
-        self.imap_client = ImapClient(self.config.imap, self.config.allowed_folders)
-        self.calendar_client = CalendarClient(self.config)
-        self.email_cache = EmailCache()
-
-        logger.info("Starting server in IMAP mode...")
-        logger.info("Using SMTP for sending")
-        self.smtp_client = SMTPClient(self.config)
-
-        self._initialized = True
-        logger.info("Client manager initialized (IMAP/Calendar connections deferred)")
-
-    def _wait_for_valid_oauth(self) -> bool:
-        """Wait up to AUTH_RETRY_TIMEOUT seconds for valid OAuth tokens."""
-        if not self.config or not self.config.imap.oauth2:
-            return True
-
-        start_time = time.time()
-        while time.time() - start_time < AUTH_RETRY_TIMEOUT:
-            validation = validate_oauth_config(self.config.imap.oauth2)
-
-            if validation.valid or validation.can_refresh:
-                logger.info(
-                    "OAuth tokens valid/refreshable, proceeding with connection"
-                )
-                return True
-
-            elapsed = int(time.time() - start_time)
-            remaining = AUTH_RETRY_TIMEOUT - elapsed
-            logger.warning(
-                f"OAuth tokens not ready: {validation.error}. "
-                f"Retrying for {remaining}s... "
-                f"Run 'python -m workspace_secretary.auth_setup' to authenticate."
-            )
-            time.sleep(AUTH_RETRY_INTERVAL)
-
-        logger.error(
-            f"OAuth authentication timeout after {AUTH_RETRY_TIMEOUT}s. "
-            "Please run 'python -m workspace_secretary.auth_setup' to authenticate."
-        )
-        return False
-
-    def ensure_connections(self) -> None:
-        """Establish IMAP and Calendar connections, with OAuth retry loop."""
-        if self._connections_established:
-            return
-
-        if not self.imap_client:
-            raise RuntimeError("IMAP client not initialized")
-
-        if not self._wait_for_valid_oauth():
-            raise ConnectionError(
-                "OAuth authentication required. "
-                "Run 'python -m workspace_secretary.auth_setup' to authenticate."
-            )
-
-        logger.info("Establishing IMAP connection...")
-        self.imap_client.connect()
-
-        self._connections_established = True
-        self._start_background_sync()
-
-        if self.config and self.config.calendar and self.config.calendar.enabled:
-            if self.calendar_client:
-                try:
-                    logger.info("Connecting to Google Calendar...")
-                    self.calendar_client.connect()
-                except Exception as e:
-                    logger.warning(f"Calendar connection failed (non-fatal): {e}")
-
-    def _start_background_sync(self) -> None:
-        def sync_loop():
-            logger.info("Background sync thread started")
+        if self.config.database:
             try:
-                self._run_sync()
-                while True:
-                    time.sleep(300)
-                    logger.info("Running incremental email cache sync...")
-                    self._run_sync()
-                    logger.info("Incremental cache sync completed")
+                self.database = create_database(self.config.database)
+                logger.info(f"Database connected: {self.config.database.backend.value}")
             except Exception as e:
-                logger.error(f"Background sync error: {e}", exc_info=True)
+                logger.warning(f"Database connection failed (will retry): {e}")
+                self.database = None
 
-        self._sync_thread = threading.Thread(target=sync_loop, daemon=True)
-        self._sync_thread.start()
+        if (
+            self.config.database
+            and self.config.database.embeddings.enabled
+            and self.database
+            and self.database.supports_embeddings()
+        ):
+            try:
+                from workspace_secretary.engine.embeddings import EmbeddingsClient
 
-    def _run_sync(self) -> None:
-        if not self.email_cache or not self.imap_client:
-            logger.error("Cannot sync: cache or IMAP client not initialized")
-            return
+                self.embeddings_client = EmbeddingsClient(
+                    endpoint=self.config.database.embeddings.endpoint,
+                    api_key=self.config.database.embeddings.api_key,
+                    model=self.config.database.embeddings.model,
+                    dimensions=self.config.database.embeddings.dimensions,
+                )
+                logger.info("Embeddings client initialized for semantic search")
+            except Exception as e:
+                logger.warning(f"Embeddings client failed: {e}")
 
-        def progress_callback(current: int, total: int) -> None:
-            if current % 10 == 0:
-                logger.info(f"Cache sync progress: {current}/{total} emails")
+        self.engine_client = get_engine_client()
+        self._initialized = True
+        logger.info("MCP server initialized")
 
-        self.email_cache.sync_folder(self.imap_client, "INBOX", progress_callback)
+    def get_engine_status(self) -> dict:
+        if not self.engine_client:
+            return {"status": "no_client"}
+        try:
+            return self.engine_client.get_status()
+        except ConnectionError:
+            return {"status": "disconnected"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
-    def shutdown(self) -> None:
-        if self.imap_client:
-            logger.info("Disconnecting from IMAP server...")
-            self.imap_client.disconnect()
 
-
-_client_manager = ClientManager()
-
-
-class StaticTokenVerifier:
-    """Simple token verifier for static bearer token."""
-
-    def __init__(self, token: str):
-        self.token = token
-
-    async def verify_token(self, token: str) -> AccessToken | None:
-        """Verify the bearer token."""
-        if secrets.compare_digest(token, self.token):
-            return AccessToken(
-                token=token,
-                client_id="static-client",
-                scopes=[],
-                expires_at=int(time.time())
-                + 3600,  # Valid for 1 hour window (refreshed per request)
-            )
-        return None
+_state = MCPState()
 
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict]:
-    try:
-        _client_manager.ensure_connections()
-    except Exception as e:
-        logger.warning(f"Deferred connection failed (will retry on first request): {e}")
     yield {
-        "imap_client": _client_manager.imap_client,
-        "calendar_client": _client_manager.calendar_client,
-        "gmail_client": _client_manager.gmail_client,
-        "smtp_client": _client_manager.smtp_client,
-        "config": _client_manager.config,
-        "email_cache": _client_manager.email_cache,
+        "config": _state.config,
+        "database": _state.database,
+        "engine_client": _state.engine_client,
+        "embeddings_client": _state.embeddings_client,
     }
 
 
@@ -208,204 +101,403 @@ def create_server(
     if debug:
         logger.setLevel(logging.DEBUG)
 
-    _client_manager.initialize(config_path)
-    config = _client_manager.config
+    _state.initialize(config_path)
+    config = _state.config
 
     if not config:
         raise RuntimeError("Failed to load configuration")
 
-    auth_settings = None
-    token_verifier = None
-
-    if config.bearer_auth.enabled:
-        auth_token = config.bearer_auth.token or os.environ.get("IMAP_MCP_TOKEN")
-        if not auth_token:
-            auth_token = secrets.token_urlsafe(32)
-        logger.info(f"Bearer authentication enabled. Token: {auth_token}")
-
-        token_verifier = StaticTokenVerifier(auth_token)
-        auth_settings = AuthSettings(
-            issuer_url="http://localhost/",  # type: ignore
-            resource_server_url="http://localhost/",  # type: ignore
-            required_scopes=[],
-        )
-
     server = FastMCP(
-        "IMAP",
-        instructions="IMAP Model Context Protocol server for email processing",
+        "Secretary",
+        instructions="Google Workspace Secretary - Email and Calendar MCP",
         lifespan=server_lifespan,
         host=host,
         port=port,
-        auth=auth_settings,
-        token_verifier=token_verifier,
     )
 
-    # Store config for access in the lifespan
-    setattr(server, "_config", config)
-
-    # Create IMAP client for setup (will be recreated in lifespan)
-    imap_client = ImapClient(config.imap, config.allowed_folders)
-
-    # Register resources and tools
-    register_resources(server, imap_client)
-
-    enable_semantic_search = (
-        config.database.backend.value == "postgres"
-        and config.database.embeddings.enabled
-    )
-    register_tools(server, imap_client, enable_semantic_search)
-
-    # Add server status tool
-    @server.tool()
-    def server_status() -> str:
-        """Get server status and configuration info."""
-        status = {
-            "server": "IMAP MCP",
-            "version": "0.1.0",
-            "imap_host": config.imap.host,
-            "imap_port": config.imap.port,
-            "imap_user": config.imap.username,
-            "imap_ssl": config.imap.use_ssl,
-            "calendar_enabled": config.calendar.enabled if config.calendar else False,
-        }
-
-        if config.allowed_folders:
-            status["allowed_folders"] = list(config.allowed_folders)
-        else:
-            status["allowed_folders"] = "All folders allowed"
-
-        return "\n".join(f"{k}: {v}" for k, v in status.items())
-
-    # Apply MCP protocol extension for Claude Desktop compatibility
-    server = extend_server(server)
-
-    @server.custom_route("/health", methods=["GET"])
-    async def health_check(request: Request) -> JSONResponse:
-        """Health check endpoint."""
-        return JSONResponse({"status": "healthy", "service": "workspace-secretary"})
+    _register_tools(server, config)
 
     return server
 
 
-def create_app() -> "Starlette":  # type: ignore
-    """Create the Starlette app for the server.
+def _register_tools(server: FastMCP, config: ServerConfig) -> None:
+    @server.tool()
+    def server_status() -> str:
+        engine_status = _state.get_engine_status()
+        has_db = _state.database is not None
+        has_embeddings = False
+        db = _state.database
+        if db is not None and db.supports_embeddings():
+            has_embeddings = _state.embeddings_client is not None
 
-    This factory function is intended to be used by uvicorn:
-    uvicorn --factory workspace_secretary.server:create_app
-    """
-    config_path = os.environ.get("IMAP_MCP_CONFIG")
-    debug = os.environ.get("IMAP_MCP_DEBUG", "").lower() == "true"
+        lines = [
+            "server: Workspace Secretary MCP",
+            "version: 0.1.0",
+            f"database: {'connected' if has_db else 'not_available'}",
+            f"engine: {engine_status.get('status', 'unknown')}",
+            f"enrolled: {engine_status.get('enrolled', False)}",
+            f"semantic_search: {'available' if has_embeddings else 'not_available'}",
+        ]
 
-    server = create_server(config_path=config_path, debug=debug)
-    return server.streamable_http_app()
+        if not engine_status.get("enrolled", False):
+            lines.append("setup: Run 'auth_setup' to add a Google account")
+
+        return "\n".join(lines)
+
+    @server.tool()
+    def search_emails(
+        folder: str = "INBOX",
+        from_addr: Optional[str] = None,
+        to_addr: Optional[str] = None,
+        subject: Optional[str] = None,
+        body: Optional[str] = None,
+        unread_only: bool = False,
+        limit: int = 50,
+    ) -> str:
+        if not _state.database:
+            return "Database not available. Engine may still be syncing."
+
+        try:
+            emails = _state.database.search_emails(
+                folder=folder,
+                from_addr=from_addr,
+                to_addr=to_addr,
+                subject_contains=subject,
+                body_contains=body,
+                is_unread=True if unread_only else None,
+                limit=limit,
+            )
+
+            if not emails:
+                return "No emails found."
+
+            lines = [f"Found {len(emails)} emails:\n"]
+            for e in emails:
+                lines.extend(
+                    [
+                        f"UID: {e.get('uid')}",
+                        f"From: {e.get('from_addr')}",
+                        f"Subject: {e.get('subject')}",
+                        f"Date: {e.get('date')}",
+                        f"Unread: {e.get('is_unread', False)}",
+                        "---",
+                    ]
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Search error: {e}"
+
+    @server.tool()
+    def get_email(uid: int, folder: str = "INBOX") -> str:
+        if not _state.database:
+            return "Database not available."
+
+        try:
+            email = _state.database.get_email_by_uid(uid, folder)
+            if not email:
+                return f"Email {uid} not found in {folder}."
+
+            return "\n".join(
+                [
+                    f"UID: {email.get('uid')}",
+                    f"Message-ID: {email.get('message_id', 'N/A')}",
+                    f"From: {email.get('from_addr')}",
+                    f"To: {email.get('to_addr')}",
+                    f"CC: {email.get('cc_addr', '')}",
+                    f"Subject: {email.get('subject')}",
+                    f"Date: {email.get('date')}",
+                    f"Unread: {email.get('is_unread', False)}",
+                    "",
+                    "Body:",
+                    email.get("body_text") or email.get("body_html") or "(no content)",
+                ]
+            )
+        except Exception as e:
+            return f"Error: {e}"
+
+    @server.tool()
+    def get_unread_emails(folder: str = "INBOX", limit: int = 50) -> str:
+        if not _state.database:
+            return "Database not available."
+
+        try:
+            emails = _state.database.search_emails(
+                folder=folder, is_unread=True, limit=limit
+            )
+
+            if not emails:
+                return "No unread emails."
+
+            lines = [f"Found {len(emails)} unread emails:\n"]
+            for e in emails:
+                lines.extend(
+                    [
+                        f"UID: {e.get('uid')}",
+                        f"From: {e.get('from_addr')}",
+                        f"Subject: {e.get('subject')}",
+                        f"Date: {e.get('date')}",
+                        "---",
+                    ]
+                )
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error: {e}"
+
+    @server.tool()
+    def get_folder_stats(folder: str = "INBOX") -> str:
+        if not _state.database:
+            return "Database not available."
+
+        try:
+            state = _state.database.get_folder_state(folder)
+            if not state:
+                return f"No data for folder {folder}."
+
+            return "\n".join(
+                [
+                    f"Folder: {folder}",
+                    f"Total: {state.get('total_count', 0)}",
+                    f"Unread: {state.get('unread_count', 0)}",
+                    f"Last sync: {state.get('last_sync', 'Never')}",
+                ]
+            )
+        except Exception as e:
+            return f"Error: {e}"
+
+    _db = _state.database
+    _emb = _state.embeddings_client
+    if _db is not None and _db.supports_embeddings() and _emb is not None:
+
+        @server.tool()
+        async def semantic_search(
+            query: str, folder: str = "INBOX", limit: int = 20
+        ) -> str:
+            """Search emails by meaning using AI embeddings."""
+            db = _state.database
+            emb = _state.embeddings_client
+            if db is None or emb is None:
+                return "Semantic search not available."
+            result = await emb.embed_text(query)
+            try:
+                emails = db.semantic_search(
+                    query_embedding=result.embedding,
+                    folder=folder,
+                    limit=limit,
+                )
+
+                if not emails:
+                    return "No semantically similar emails found."
+
+                lines = [f"Found {len(emails)} relevant emails:\n"]
+                for e in emails:
+                    similarity = e.get("similarity", 0)
+                    lines.extend(
+                        [
+                            f"UID: {e.get('uid')} (similarity: {similarity:.2f})",
+                            f"From: {e.get('from_addr')}",
+                            f"Subject: {e.get('subject')}",
+                            f"Date: {e.get('date')}",
+                            "---",
+                        ]
+                    )
+                return "\n".join(lines)
+            except Exception as e:
+                return f"Semantic search error: {e}"
+
+        @server.tool()
+        def find_similar_emails(
+            uid: int, folder: str = "INBOX", limit: int = 10
+        ) -> str:
+            """Find emails similar to a specific email."""
+            db = _state.database
+            if db is None:
+                return "Database not available."
+            try:
+                emails = db.find_similar_emails(uid, folder, limit)
+
+                if not emails:
+                    return f"No similar emails found for UID {uid}."
+
+                lines = [f"Found {len(emails)} similar emails:\n"]
+                for e in emails:
+                    similarity = e.get("similarity", 0)
+                    lines.extend(
+                        [
+                            f"UID: {e.get('uid')} (similarity: {similarity:.2f})",
+                            f"From: {e.get('from_addr')}",
+                            f"Subject: {e.get('subject')}",
+                            "---",
+                        ]
+                    )
+                return "\n".join(lines)
+            except Exception as e:
+                return f"Error: {e}"
+
+    @server.tool()
+    def mark_as_read(uid: int, folder: str = "INBOX") -> str:
+        if not _state.engine_client:
+            return "Engine not available."
+
+        try:
+            result = _state.engine_client.mark_read(uid, folder)
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            if result.get("status") == "ok":
+                return f"Email {uid} marked as read."
+            return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start the engine first."
+
+    @server.tool()
+    def mark_as_unread(uid: int, folder: str = "INBOX") -> str:
+        if not _state.engine_client:
+            return "Engine not available."
+
+        try:
+            result = _state.engine_client.mark_unread(uid, folder)
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            if result.get("status") == "ok":
+                return f"Email {uid} marked as unread."
+            return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running."
+
+    @server.tool()
+    def move_email(uid: int, folder: str, destination: str) -> str:
+        if not _state.engine_client:
+            return "Engine not available."
+
+        try:
+            result = _state.engine_client.move_email(uid, folder, destination)
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            if result.get("status") == "ok":
+                return f"Email {uid} moved to {destination}."
+            return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running."
+
+    @server.tool()
+    def modify_labels(uid: int, folder: str, labels: str, action: str = "add") -> str:
+        if not _state.engine_client:
+            return "Engine not available."
+
+        label_list = [l.strip() for l in labels.split(",")]
+
+        try:
+            result = _state.engine_client.modify_labels(uid, folder, label_list, action)
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            if result.get("status") == "ok":
+                return f"Labels {action}: {labels}"
+            return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running."
+
+    @server.tool()
+    def trigger_sync() -> str:
+        if not _state.engine_client:
+            return "Engine not available."
+
+        try:
+            result = _state.engine_client.trigger_sync()
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            if result.get("status") == "ok":
+                return "Sync triggered."
+            return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running."
+
+    @server.tool()
+    def create_calendar_event(
+        summary: str,
+        start_time: str,
+        end_time: str,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        calendar_id: str = "primary",
+        meeting_type: Optional[str] = None,
+    ) -> str:
+        if not _state.engine_client:
+            return "Engine not available."
+
+        try:
+            result = _state.engine_client.create_calendar_event(
+                summary=summary,
+                start_time=start_time,
+                end_time=end_time,
+                description=description,
+                location=location,
+                calendar_id=calendar_id,
+                meeting_type=meeting_type,
+            )
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            if result.get("status") == "ok":
+                event = result.get("event", {})
+                return f"Event created: {event.get('htmlLink', 'Success')}"
+            return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running."
+
+    @server.tool()
+    def respond_to_meeting(event_id: str, calendar_id: str, response: str) -> str:
+        if not _state.engine_client:
+            return "Engine not available."
+
+        if response not in ["accepted", "declined", "tentative"]:
+            return f"Invalid response: {response}. Use: accepted, declined, tentative"
+
+        try:
+            result = _state.engine_client.respond_to_meeting(
+                event_id, calendar_id, response
+            )
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            if result.get("status") == "ok":
+                return f"Response '{response}' sent."
+            return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running."
 
 
 def main() -> None:
-    """Run the IMAP MCP server."""
-    parser = argparse.ArgumentParser(description="IMAP MCP Server")
+    parser = argparse.ArgumentParser(description="Workspace Secretary MCP Server")
     parser.add_argument(
         "--config",
         help="Path to configuration file",
-        default=os.environ.get("IMAP_MCP_CONFIG"),
+        default=os.environ.get("CONFIG_PATH"),
     )
-    parser.add_argument(
-        "--dev",
-        action="store_true",
-        help="Enable development mode",
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug logging",
-    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument(
         "--transport",
         default="stdio",
         choices=["stdio", "sse", "http"],
-        help="Transport protocol to use: stdio, sse, or http (streamable http)",
+        help="Transport protocol",
     )
-    parser.add_argument(
-        "--host",
-        default="0.0.0.0",
-        help="Host to bind to for SSE/HTTP server",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=8000,
-        help="Port to bind to for SSE/HTTP server",
-    )
-    parser.add_argument(
-        "--version",
-        action="store_true",
-        help="Show version information and exit",
-    )
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")
+    parser.add_argument("--port", type=int, default=8000, help="Port to bind to")
     args = parser.parse_args()
-
-    if args.version:
-        print("IMAP MCP Server version 0.1.0")
-        return
 
     if args.debug:
         logger.setLevel(logging.DEBUG)
 
-    # For stdio transport, we run directly
-    if args.transport == "stdio":
-        server = create_server(config_path=args.config, debug=args.debug)
-        if args.dev:
-            logger.info("Starting server in development mode")
-        logger.info("Starting server with stdio transport...")
-        server.run(transport="stdio")
+    server = create_server(config_path=args.config, debug=args.debug)
 
-    # For HTTP/SSE transport, we use uvicorn
-    elif args.transport in ["sse", "http"]:
+    if args.transport == "stdio":
+        logger.info("Starting MCP server (stdio)...")
+        server.run(transport="stdio")
+    else:
         import uvicorn
 
-        # Legacy SSE warning
+        logger.info(f"Starting MCP server ({args.transport})...")
         if args.transport == "sse":
-            logger.warning(
-                "SSE transport is deprecated. Consider using 'http' for Streamable HTTP."
-            )
-
-        logger.info(
-            "Starting server{} with uvicorn...".format(
-                " in development mode" if args.dev else ""
-            )
-        )
-
-        # If we are in dev mode (reload), we must use the import string
-        if args.dev:
-            # Set env var so the module-level create_server picks up the config
-            if args.config:
-                os.environ["IMAP_MCP_CONFIG"] = args.config
-
-            uvicorn.run(
-                "workspace_secretary.server:create_app",
-                host=args.host,
-                port=args.port,
-                reload=True,
-                factory=True,
-            )
+            app = server.sse_app()
         else:
-            # If not reloading, we can create a specific server instance with the config
-            server = create_server(
-                config_path=args.config,
-                debug=args.debug,
-                host=args.host,
-                port=args.port,
-            )
-
-            # Select app based on transport
-            if args.transport == "sse":
-                starlette_app = server.sse_app()
-            else:
-                starlette_app = server.streamable_http_app()
-
-            uvicorn.run(
-                starlette_app,
-                host=args.host,
-                port=args.port,
-            )
+            app = server.streamable_http_app()
+        uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

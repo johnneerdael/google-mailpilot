@@ -1,532 +1,424 @@
-"""MCP tools implementation for email operations."""
+"""MCP tools - reads from database, mutations via Engine API.
+
+Architecture:
+- Read operations: Direct database queries (SQLite or PostgreSQL)
+- Mutations: Engine API calls via EngineClient
+- No direct IMAP/Gmail/Calendar client access
+"""
 
 import json
 import logging
 import re
 from datetime import datetime
-from typing import List, Optional, Union, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP, Context
 
-from workspace_secretary.imap_client import ImapClient
-from workspace_secretary.calendar_client import CalendarClient
-from workspace_secretary.gmail_client import GmailClient
-from workspace_secretary.resources import (
-    get_client_from_context,
-    get_server_config_from_context,
-    get_gmail_client_from_context,
-    get_calendar_client_from_context,
-    get_smtp_client_from_context,
-    get_email_cache_from_context,
-)
-from workspace_secretary.models import EmailAddress, Email
+from workspace_secretary.config import ServerConfig
+from workspace_secretary.engine.database import DatabaseInterface
+from workspace_secretary.engine_client import EngineClient
 
 logger = logging.getLogger(__name__)
 
 
-def _convert_gmail_query_to_imap(query: str) -> Dict[str, Any]:
-    """Convert Gmail search syntax to IMAP search criteria."""
-    criteria: Dict[str, Any] = {}
+def _get_database(ctx: Context) -> DatabaseInterface:
+    """Get database from context."""
+    db = ctx.request_context.lifespan_context.get("database")
+    if not db:
+        raise RuntimeError("Database not available. Engine may still be syncing.")
+    return db
 
-    query_lower = query.lower()
 
-    if "is:unread" in query_lower:
-        criteria["UNSEEN"] = True
-    if "is:read" in query_lower:
-        criteria["SEEN"] = True
-    if "has:attachment" in query_lower:
-        criteria["TEXT"] = "Content-Disposition: attachment"
+def _get_engine(ctx: Context) -> EngineClient:
+    """Get engine client from context."""
+    engine = ctx.request_context.lifespan_context.get("engine_client")
+    if not engine:
+        raise RuntimeError("Engine client not available.")
+    return engine
 
-    import re
 
-    from_match = re.search(r"from:(\S+)", query_lower)
-    if from_match:
-        criteria["FROM"] = from_match.group(1)
+def _get_config(ctx: Context) -> ServerConfig:
+    """Get server config from context."""
+    config = ctx.request_context.lifespan_context.get("config")
+    if not config:
+        raise RuntimeError("Configuration not available.")
+    return config
 
-    to_match = re.search(r"to:(\S+)", query_lower)
-    if to_match:
-        criteria["TO"] = to_match.group(1)
 
-    subject_match = re.search(r'subject:(["\']?)(.+?)\1(?:\s|$)', query, re.IGNORECASE)
-    if subject_match:
-        criteria["SUBJECT"] = subject_match.group(2)
+def _get_embeddings_client(ctx: Context):
+    """Get embeddings client from context (may be None)."""
+    return ctx.request_context.lifespan_context.get("embeddings_client")
 
-    if not criteria:
-        criteria["ALL"] = True
 
-    return criteria
+def _format_email_summary(email: Dict[str, Any]) -> Dict[str, Any]:
+    """Format email dict for API response."""
+    flags = email.get("flags", "").split(",") if email.get("flags") else []
+    return {
+        "uid": email.get("uid"),
+        "folder": email.get("folder"),
+        "from": email.get("from_addr"),
+        "to": email.get("to_addr"),
+        "cc": email.get("cc_addr"),
+        "subject": email.get("subject"),
+        "date": email.get("date"),
+        "is_unread": email.get("is_unread", False),
+        "flags": flags,
+    }
+
+
+def _format_email_detail(email: Dict[str, Any]) -> Dict[str, Any]:
+    """Format email dict with full details."""
+    base = _format_email_summary(email)
+    base.update(
+        {
+            "message_id": email.get("message_id"),
+            "in_reply_to": email.get("in_reply_to"),
+            "references": email.get("references"),
+            "body": email.get("body_text") or email.get("body_html") or "",
+            "body_html": email.get("body_html"),
+        }
+    )
+    return base
 
 
 def register_tools(
     mcp: FastMCP,
-    imap_client: ImapClient,
+    config: ServerConfig,
     enable_semantic_search: bool = False,
 ) -> None:
-    """Register MCP tools."""
+    """Register all MCP tools.
 
-    # List folders tool
+    Args:
+        mcp: FastMCP server instance
+        config: Server configuration
+        enable_semantic_search: Whether semantic search is available
+    """
+
+    # ============================================================
+    # READ-ONLY TOOLS (Database queries)
+    # ============================================================
+
     @mcp.tool()
     async def list_folders(ctx: Context) -> str:
-        """List available email folders.
-
-        Args:
-            ctx: MCP context
+        """List all synced email folders.
 
         Returns:
-            JSON string with folder list
+            JSON list of folder information
         """
-        client = get_client_from_context(ctx)
-        folders = client.list_folders()
-        return json.dumps(folders, indent=2)
+        try:
+            db = _get_database(ctx)
+            folders = db.get_synced_folders()
+            return json.dumps(folders, indent=2, default=str)
+        except Exception as e:
+            logger.error(f"Error listing folders: {e}")
+            return json.dumps({"error": str(e)})
 
-    # Search emails tool
     @mcp.tool()
     async def search_emails(
-        criteria: Union[str, List[Any], Dict[str, Any]],
         folder: str = "INBOX",
+        from_addr: Optional[str] = None,
+        to_addr: Optional[str] = None,
+        subject: Optional[str] = None,
+        body: Optional[str] = None,
+        unread_only: bool = False,
+        limit: int = 50,
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Search for emails.
+        """Search emails in the database.
 
         Args:
-            criteria: Search criteria (e.g., "ALL", "UNSEEN", or complex criteria)
             folder: Folder to search in
+            from_addr: Filter by sender address (partial match)
+            to_addr: Filter by recipient address (partial match)
+            subject: Filter by subject (partial match)
+            body: Filter by body content (partial match)
+            unread_only: Only return unread emails
+            limit: Maximum results to return
             ctx: MCP context
 
         Returns:
-            JSON string with search results
+            JSON list of matching emails
         """
         try:
-            cache = get_email_cache_from_context(ctx)
-            if cache and isinstance(criteria, dict):
-                is_unread = None
-                from_addr = None
-                subject_contains = None
-
-                if criteria.get("UNSEEN"):
-                    is_unread = True
-                if criteria.get("SEEN"):
-                    is_unread = False
-                if criteria.get("FROM"):
-                    from_addr = criteria["FROM"]
-                if criteria.get("SUBJECT"):
-                    subject_contains = criteria["SUBJECT"]
-
-                emails = cache.search_emails(
-                    folder=folder,
-                    is_unread=is_unread,
-                    from_addr=from_addr,
-                    subject_contains=subject_contains,
-                    limit=50,
-                )
-
-                results = []
-                for email in emails:
-                    flags = (
-                        email.get("flags", "").split(",") if email.get("flags") else []
-                    )
-                    results.append(
-                        {
-                            "uid": email["uid"],
-                            "from": email["from_addr"],
-                            "subject": email["subject"],
-                            "date": email["date"],
-                            "flags": flags,
-                        }
-                    )
-                return json.dumps(results, indent=2)
-        except Exception:
-            logging.debug("search_emails: Cache not available, falling back to IMAP")
-
-        client = get_client_from_context(ctx)
-
-        try:
-            uids = client.search(criteria, folder=folder)
-
-            if not uids:
-                return json.dumps([], indent=2)
-
-            emails = client.fetch_emails(uids, folder=folder, limit=50)
-
-            results = []
-            for uid, email_obj in emails.items():
-                results.append(
-                    {
-                        "uid": uid,
-                        "from": str(email_obj.from_),
-                        "subject": email_obj.subject,
-                        "date": email_obj.date.isoformat() if email_obj.date else None,
-                        "flags": email_obj.flags,
-                    }
-                )
-
-            return json.dumps(results, indent=2)
+            db = _get_database(ctx)
+            emails = db.search_emails(
+                folder=folder,
+                from_addr=from_addr,
+                to_addr=to_addr,
+                subject_contains=subject,
+                body_contains=body,
+                is_unread=True if unread_only else None,
+                limit=limit,
+            )
+            results = [_format_email_summary(e) for e in emails]
+            return json.dumps(results, indent=2, default=str)
         except Exception as e:
             logger.error(f"Error searching emails: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            return json.dumps({"error": str(e)})
 
-    # Get email details tool
     @mcp.tool()
     async def get_email_details(
-        folder: str,
         uid: int,
-        ctx: Context,
+        folder: str = "INBOX",
+        ctx: Context = None,  # type: ignore
     ) -> str:
         """Get full details of a specific email.
 
         Args:
-            folder: Folder name
             uid: Email UID
+            folder: Folder name
             ctx: MCP context
 
         Returns:
-            JSON string with email details
+            JSON with email details including body
         """
         try:
-            cache = get_email_cache_from_context(ctx)
-            if cache:
-                cached_email = cache.get_email_by_uid(uid, folder)
-                if cached_email:
-                    flags = (
-                        cached_email.get("flags", "").split(",")
-                        if cached_email.get("flags")
-                        else []
-                    )
-                    to_list = [
-                        addr.strip()
-                        for addr in (cached_email.get("to_addr") or "").split(",")
-                        if addr.strip()
-                    ]
-                    cc_list = [
-                        addr.strip()
-                        for addr in (cached_email.get("cc_addr") or "").split(",")
-                        if addr.strip()
-                    ]
-
-                    details = {
-                        "uid": uid,
-                        "folder": folder,
-                        "message_id": cached_email.get("message_id"),
-                        "from": cached_email.get("from_addr"),
-                        "to": to_list,
-                        "cc": cc_list,
-                        "subject": cached_email.get("subject"),
-                        "date": cached_email.get("date"),
-                        "content": cached_email.get("body_text")
-                        or cached_email.get("body_html")
-                        or "",
-                        "flags": flags,
-                        "attachments": [],
-                        "gmail_thread_id": None,
-                        "gmail_labels": None,
-                    }
-                    return json.dumps(details, indent=2)
-        except Exception:
-            logging.debug(
-                "get_email_details: Cache not available, falling back to IMAP"
-            )
-
-        client = get_client_from_context(ctx)
-
-        try:
-            email_obj = client.fetch_email(uid, folder)
-            if not email_obj:
-                return json.dumps({"error": "Email not found"}, indent=2)
-
-            details = {
-                "uid": uid,
-                "folder": folder,
-                "message_id": email_obj.message_id,
-                "from": str(email_obj.from_),
-                "to": [str(t) for t in email_obj.to],
-                "cc": [str(c) for c in email_obj.cc],
-                "subject": email_obj.subject,
-                "date": email_obj.date.isoformat() if email_obj.date else None,
-                "content": email_obj.content.get_best_content(),
-                "flags": email_obj.flags,
-                "attachments": [
-                    {
-                        "filename": a.filename,
-                        "content_type": a.content_type,
-                        "size": a.size,
-                    }
-                    for a in email_obj.attachments
-                ],
-                "gmail_thread_id": email_obj.gmail_thread_id,
-                "gmail_labels": email_obj.gmail_labels,
-            }
-
-            return json.dumps(details, indent=2)
+            db = _get_database(ctx)
+            email = db.get_email_by_uid(uid, folder)
+            if not email:
+                return json.dumps({"error": f"Email {uid} not found in {folder}"})
+            return json.dumps(_format_email_detail(email), indent=2, default=str)
         except Exception as e:
             logger.error(f"Error getting email details: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            return json.dumps({"error": str(e)})
 
-    # Create a draft reply tool
-    @mcp.tool()
-    async def create_draft_reply(
-        folder: str,
-        uid: int,
-        reply_body: str,
-        reply_all: bool = False,
-        cc: Optional[List[str]] = None,
-        body_html: Optional[str] = None,
-        ctx: Context = None,  # type: ignore
-    ) -> Dict[str, Any]:
-        """Create a draft reply to an email.
-
-        Args:
-            folder: Folder containing the email
-            uid: Email UID
-            reply_body: Content of the reply
-            reply_all: Whether to reply to all
-            cc: Additional CC addresses
-            body_html: Optional HTML content
-            ctx: MCP context
-
-        Returns:
-            Processing result
-        """
-        from workspace_secretary.smtp_client import create_reply_mime
-
-        client = get_client_from_context(ctx)
-
-        try:
-            # Fetch original email
-            email_obj = client.fetch_email(uid, folder)
-            if not email_obj:
-                return {"status": "error", "message": f"Email with UID {uid} not found"}
-
-            # Determine sender (reply_from)
-            reply_from = EmailAddress(name="Me", address=client.config.username)
-
-            # Create MIME message
-            mime_message = create_reply_mime(
-                original_email=email_obj,
-                reply_to=reply_from,
-                body=reply_body,
-                subject=None,  # Will be auto-generated with Re:
-                reply_all=reply_all,
-                html_body=body_html,
-                cc=[EmailAddress.parse(c) for c in cc] if cc else None,
-            )
-
-            # Save draft
-            draft_uid = client.save_draft_mime(mime_message)
-
-            if draft_uid:
-                drafts_folder = client._get_drafts_folder()
-                return {
-                    "status": "success",
-                    "message": "Draft created successfully",
-                    "draft_uid": str(draft_uid),
-                    "draft_folder": drafts_folder,
-                }
-            else:
-                return {"status": "error", "message": "Failed to save draft"}
-
-        except Exception as e:
-            logger.error(f"Error creating draft: {e}")
-            return {"status": "error", "message": str(e)}
-
-    # Move email to a different folder
-    @mcp.tool()
-    async def move_email(
-        folder: str,
-        uid: int,
-        target_folder: str,
-        ctx: Context,
-    ) -> str:
-        """Move email to another folder.
-
-        Args:
-            folder: Source folder
-            uid: Email UID
-            target_folder: Target folder
-            ctx: MCP context
-
-        Returns:
-            Success message or error message
-        """
-        client = get_client_from_context(ctx)
-
-        try:
-            success = client.move_email(uid, folder, target_folder)
-            if success:
-                try:
-                    cache = get_email_cache_from_context(ctx)
-                    if cache:
-                        cache.move_email(uid, folder, target_folder)
-                        logging.debug(
-                            f"Cache updated: moved email {uid} from {folder} to {target_folder}"
-                        )
-                except Exception as cache_err:
-                    logging.warning(
-                        f"Failed to update cache after move_email: {cache_err}"
-                    )
-
-                return f"Email moved from {folder} to {target_folder}"
-            else:
-                return "Failed to move email"
-        except Exception as e:
-            logger.error(f"Error moving email: {e}")
-            return f"Error: {e}"
-
-    # Mark email as read
-    @mcp.tool()
-    async def mark_as_read(
-        folder: str,
-        uid: int,
-        ctx: Context,
-    ) -> str:
-        """Mark email as read.
-
-        Args:
-            folder: Folder name
-            uid: Email UID
-            ctx: MCP context
-
-        Returns:
-            Success message
-        """
-        client = get_client_from_context(ctx)
-        try:
-            client.mark_email(uid, folder, r"\Seen", True)
-
-            try:
-                cache = get_email_cache_from_context(ctx)
-                if cache:
-                    cache.mark_as_read(uid, folder)
-                    logging.debug(f"Cache updated: marked email {uid} as read")
-            except Exception as cache_err:
-                logging.warning(
-                    f"Failed to update cache after mark_as_read: {cache_err}"
-                )
-
-            return "Email marked as read"
-        except Exception as e:
-            logger.error(f"Error marking email as read: {e}")
-            return f"Error: {e}"
-
-    # Mark email as unread
-    @mcp.tool()
-    async def mark_as_unread(
-        folder: str,
-        uid: int,
-        ctx: Context,
-    ) -> str:
-        """Mark email as unread.
-
-        Args:
-            folder: Folder name
-            uid: Email UID
-            ctx: MCP context
-
-        Returns:
-            Success message
-        """
-        client = get_client_from_context(ctx)
-        try:
-            client.mark_email(uid, folder, r"\Seen", False)
-
-            try:
-                cache = get_email_cache_from_context(ctx)
-                if cache:
-                    cache.mark_as_unread(uid, folder)
-                    logging.debug(f"Cache updated: marked email {uid} as unread")
-            except Exception as cache_err:
-                logging.warning(
-                    f"Failed to update cache after mark_as_unread: {cache_err}"
-                )
-
-            return "Email marked as unread"
-        except Exception as e:
-            logger.error(f"Error marking email as unread: {e}")
-            return f"Error: {e}"
-
-    # Get email thread tool
     @mcp.tool()
     async def get_email_thread(
-        folder: str,
         uid: int,
-        ctx: Context,
+        folder: str = "INBOX",
+        ctx: Context = None,  # type: ignore
     ) -> str:
         """Get all emails in a conversation thread.
 
         Args:
-            folder: Folder name
             uid: UID of an email in the thread
+            folder: Folder name
             ctx: MCP context
 
         Returns:
-            JSON string with emails in the thread
+            JSON list of emails in the thread, sorted by date
         """
         try:
-            cache = get_email_cache_from_context(ctx)
-            if cache:
-                thread_emails = cache.get_thread_emails(uid, folder)
-                if thread_emails:
-                    results = []
-                    for email in sorted(
-                        thread_emails, key=lambda e: e.get("date") or ""
-                    ):
-                        flags = (
-                            email.get("flags", "").split(",")
-                            if email.get("flags")
-                            else []
-                        )
-                        to_list = [
-                            addr.strip()
-                            for addr in (email.get("to_addr") or "").split(",")
-                            if addr.strip()
-                        ]
-                        snippet = (
-                            email.get("body_text") or email.get("body_html") or ""
-                        )[:150]
+            db = _get_database(ctx)
+            thread_emails = db.get_thread_emails(uid, folder)
+            if not thread_emails:
+                # Fall back to single email
+                email = db.get_email_by_uid(uid, folder)
+                if email:
+                    thread_emails = [email]
+                else:
+                    return json.dumps({"error": f"Email {uid} not found"})
 
-                        results.append(
-                            {
-                                "uid": email["uid"],
-                                "from": email.get("from_addr"),
-                                "to": to_list,
-                                "subject": email.get("subject"),
-                                "date": email.get("date"),
-                                "snippet": snippet,
-                                "flags": flags,
-                            }
-                        )
-                    return json.dumps(results, indent=2)
-        except Exception:
-            logging.debug("get_email_thread: Cache not available, falling back to IMAP")
-
-        client = get_client_from_context(ctx)
-
-        try:
-            emails = client.fetch_thread(uid, folder)
+            # Sort by date
+            thread_emails.sort(key=lambda e: e.get("date") or "")
 
             results = []
-            for email_obj in emails:
-                results.append(
-                    {
-                        "uid": email_obj.uid,
-                        "from": str(email_obj.from_),
-                        "to": [str(t) for t in email_obj.to],
-                        "subject": email_obj.subject,
-                        "date": email_obj.date.isoformat() if email_obj.date else None,
-                        "snippet": email_obj.get_snippet(150),
-                        "flags": email_obj.flags,
-                    }
-                )
+            for email in thread_emails:
+                result = _format_email_summary(email)
+                result["snippet"] = (
+                    email.get("body_text") or email.get("body_html") or ""
+                )[:150]
+                results.append(result)
 
-            return json.dumps(results, indent=2)
+            return json.dumps(results, indent=2, default=str)
         except Exception as e:
             logger.error(f"Error getting email thread: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            return json.dumps({"error": str(e)})
 
-    # Modify Gmail labels tool
+    @mcp.tool()
+    async def get_unread_messages(
+        folder: str = "INBOX",
+        limit: int = 50,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Get unread messages from a folder.
+
+        Args:
+            folder: Folder name
+            limit: Maximum messages to return
+            ctx: MCP context
+
+        Returns:
+            JSON list of unread emails
+        """
+        try:
+            db = _get_database(ctx)
+            emails = db.search_emails(folder=folder, is_unread=True, limit=limit)
+            results = []
+            for email in emails:
+                result = _format_email_summary(email)
+                result["snippet"] = (email.get("body_text") or "")[:100]
+                results.append(result)
+            return json.dumps(results, indent=2, default=str)
+        except Exception as e:
+            logger.error(f"Error getting unread messages: {e}")
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def gmail_search(
+        query: str,
+        max_results: int = 20,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Search emails using Gmail-like syntax.
+
+        Supports: from:, to:, subject:, is:unread, is:read
+
+        Args:
+            query: Gmail-style search query
+            max_results: Maximum results
+            ctx: MCP context
+
+        Returns:
+            JSON list of matching emails
+        """
+        try:
+            db = _get_database(ctx)
+
+            # Parse Gmail-style query
+            is_unread = None
+            from_addr = None
+            to_addr = None
+            subject_contains = None
+
+            query_lower = query.lower()
+            if "is:unread" in query_lower:
+                is_unread = True
+            if "is:read" in query_lower:
+                is_unread = False
+
+            from_match = re.search(r"from:(\S+)", query_lower)
+            if from_match:
+                from_addr = from_match.group(1)
+
+            to_match = re.search(r"to:(\S+)", query_lower)
+            if to_match:
+                to_addr = to_match.group(1)
+
+            subject_match = re.search(
+                r'subject:(["\']?)(.+?)\1(?:\s|$)', query, re.IGNORECASE
+            )
+            if subject_match:
+                subject_contains = subject_match.group(2)
+
+            emails = db.search_emails(
+                folder="INBOX",
+                from_addr=from_addr,
+                to_addr=to_addr,
+                subject_contains=subject_contains,
+                is_unread=is_unread,
+                limit=max_results,
+            )
+
+            results = [_format_email_summary(e) for e in emails]
+            return json.dumps(results, indent=2, default=str)
+        except Exception as e:
+            logger.error(f"Error in gmail_search: {e}")
+            return json.dumps({"error": str(e)})
+
+    # ============================================================
+    # MUTATION TOOLS (Engine API calls)
+    # ============================================================
+
+    @mcp.tool()
+    async def mark_as_read(
+        uid: int,
+        folder: str = "INBOX",
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Mark an email as read.
+
+        Args:
+            uid: Email UID
+            folder: Folder name
+            ctx: MCP context
+
+        Returns:
+            Success or error message
+        """
+        try:
+            engine = _get_engine(ctx)
+            result = engine.mark_read(uid, folder)
+            if result.get("status") == "ok":
+                return f"Email {uid} marked as read"
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
+        except Exception as e:
+            logger.error(f"Error marking as read: {e}")
+            return f"Error: {e}"
+
+    @mcp.tool()
+    async def mark_as_unread(
+        uid: int,
+        folder: str = "INBOX",
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Mark an email as unread.
+
+        Args:
+            uid: Email UID
+            folder: Folder name
+            ctx: MCP context
+
+        Returns:
+            Success or error message
+        """
+        try:
+            engine = _get_engine(ctx)
+            result = engine.mark_unread(uid, folder)
+            if result.get("status") == "ok":
+                return f"Email {uid} marked as unread"
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
+        except Exception as e:
+            logger.error(f"Error marking as unread: {e}")
+            return f"Error: {e}"
+
+    @mcp.tool()
+    async def move_email(
+        uid: int,
+        folder: str,
+        target_folder: str,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Move an email to another folder.
+
+        Args:
+            uid: Email UID
+            folder: Source folder
+            target_folder: Destination folder
+            ctx: MCP context
+
+        Returns:
+            Success or error message
+        """
+        try:
+            engine = _get_engine(ctx)
+            result = engine.move_email(uid, folder, target_folder)
+            if result.get("status") == "ok":
+                return f"Email {uid} moved from {folder} to {target_folder}"
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
+        except Exception as e:
+            logger.error(f"Error moving email: {e}")
+            return f"Error: {e}"
+
     @mcp.tool()
     async def modify_gmail_labels(
-        folder: str,
         uid: int,
+        folder: str = "INBOX",
         add_labels: Optional[List[str]] = None,
         remove_labels: Optional[List[str]] = None,
         ctx: Context = None,  # type: ignore
@@ -534,506 +426,96 @@ def register_tools(
         """Add or remove Gmail labels from an email.
 
         Args:
-            folder: Folder name
             uid: Email UID
-            add_labels: List of labels to add
-            remove_labels: List of labels to remove
+            folder: Folder name
+            add_labels: Labels to add
+            remove_labels: Labels to remove
             ctx: MCP context
 
         Returns:
             Success or error message
         """
-        client = get_client_from_context(ctx)
-
         try:
+            engine = _get_engine(ctx)
             results = []
+
             if add_labels:
-                success = client.add_gmail_labels(uid, folder, add_labels)
-                if success:
-                    results.append(f"Added labels: {', '.join(add_labels)}")
+                result = engine.modify_labels(uid, folder, add_labels, "add")
+                if result.get("status") == "ok":
+                    results.append(f"Added: {', '.join(add_labels)}")
                 else:
-                    results.append(f"Failed to add labels: {', '.join(add_labels)}")
+                    results.append(f"Failed to add labels: {result.get('message')}")
 
             if remove_labels:
-                success = client.remove_gmail_labels(uid, folder, remove_labels)
-                if success:
-                    results.append(f"Removed labels: {', '.join(remove_labels)}")
+                result = engine.modify_labels(uid, folder, remove_labels, "remove")
+                if result.get("status") == "ok":
+                    results.append(f"Removed: {', '.join(remove_labels)}")
                 else:
-                    results.append(
-                        f"Failed to remove labels: {', '.join(remove_labels)}"
-                    )
+                    results.append(f"Failed to remove labels: {result.get('message')}")
 
             if not results:
                 return "No label changes requested"
 
             return "; ".join(results)
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
-            logger.error(f"Error modifying Gmail labels: {e}")
+            logger.error(f"Error modifying labels: {e}")
             return f"Error: {e}"
 
-    # Get attachment content tool
-    @mcp.tool()
-    async def get_attachment_content(
-        folder: str,
-        uid: int,
-        filename: str,
-        ctx: Context,
-    ) -> str:
-        """Extract text content from an email attachment.
-        Supports PDF, DOCX, and text-based files.
-
-        Args:
-            folder: Folder name
-            uid: Email UID
-            filename: Name of the attachment
-            ctx: MCP context
-
-        Returns:
-            Extracted text content or error message
-        """
-        import io
-
-        client = get_client_from_context(ctx)
-
-        try:
-            email_obj = client.fetch_email(uid, folder)
-            if not email_obj:
-                return "Error: Email not found"
-
-            # Find the attachment
-            attachment = next(
-                (a for a in email_obj.attachments if a.filename == filename), None
-            )
-
-            if not attachment:
-                available = [a.filename for a in email_obj.attachments]
-                return f"Error: Attachment '{filename}' not found. Available: {', '.join(available)}"
-
-            # If using Gmail and attachment data is missing, fetch it
-            if (
-                not attachment.content
-                and hasattr(client, "get_attachment_data")
-                and hasattr(attachment, "attachment_id")
-                and attachment.attachment_id
-            ):
-                try:
-                    # Cast to Any to satisfy static analysis
-                    client_any: Any = client
-                    attachment.content = client_any.get_attachment_data(
-                        email_obj.message_id, attachment.attachment_id
-                    )
-                except Exception as e:
-                    return f"Error fetching Gmail attachment: {e}"
-
-            if not attachment.content:
-                return "Error: Attachment has no content"
-
-            content_type = attachment.content_type.lower()
-
-            # Handle different content types
-            if content_type == "application/pdf":
-                try:
-                    import pypdf
-
-                    reader = pypdf.PdfReader(io.BytesIO(attachment.content))
-                    text = ""
-                    for page in reader.pages:
-                        text += page.extract_text() + "\n"
-                    return text.strip() or "[No text could be extracted from PDF]"
-                except ImportError:
-                    return "Error: pypdf library not installed on server"
-                except Exception as e:
-                    return f"Error parsing PDF: {e}"
-
-            elif (
-                content_type
-                == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                or filename.lower().endswith(".docx")
-            ):
-                try:
-                    import docx
-
-                    doc = docx.Document(io.BytesIO(attachment.content))
-                    text = "\n".join([p.text for p in doc.paragraphs])
-                    return text.strip() or "[No text could be extracted from DOCX]"
-                except ImportError:
-                    return "Error: python-docx library not installed on server"
-                except Exception as e:
-                    return f"Error parsing DOCX: {e}"
-
-            elif content_type.startswith("text/") or filename.lower().endswith(
-                (".txt", ".log", ".md", ".json", ".csv")
-            ):
-                try:
-                    # Try to decode as utf-8
-                    return attachment.content.decode("utf-8", errors="replace")
-                except Exception as e:
-                    return f"Error decoding text: {e}"
-
-            else:
-                return f"Error: Unsupported content type '{content_type}' for text extraction"
-
-        except Exception as e:
-            logger.error(f"Error getting attachment content: {e}")
-            return f"Error: {e}"
-
-    # Process email with multiple actions
     @mcp.tool()
     async def process_email(
-        folder: str,
         uid: int,
+        folder: str,
         action: str,
-        notes: Optional[str] = None,
         target_folder: Optional[str] = None,
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Process an email with one or more actions.
+        """Process an email with a specific action.
 
         Args:
-            folder: Folder name
             uid: Email UID
-            action: Action to take (move, read, unread, flag, unflag, delete)
-            notes: Optional notes about the decision
+            folder: Source folder
+            action: Action (move, read, unread, delete)
             target_folder: Target folder for move action
             ctx: MCP context
 
         Returns:
-            Success message or error message
+            Success or error message
         """
-        client = get_client_from_context(ctx)
-
-        result = ""
-        cache = None
         try:
-            cache = get_email_cache_from_context(ctx)
-        except Exception:
-            pass
+            engine = _get_engine(ctx)
+            action_lower = action.lower()
 
-        try:
-            if action.lower() == "move":
+            if action_lower == "move":
                 if not target_folder:
-                    return "Target folder must be specified for move action"
-                client.move_email(uid, folder, target_folder)
-                if cache:
-                    cache.move_email(uid, folder, target_folder)
-                result = f"Email moved from {folder} to {target_folder}"
-            elif action.lower() == "read":
-                client.mark_email(uid, folder, r"\Seen", True)
-                if cache:
-                    cache.mark_as_read(uid, folder)
-                result = "Email marked as read"
-            elif action.lower() == "unread":
-                client.mark_email(uid, folder, r"\Seen", False)
-                if cache:
-                    cache.mark_as_unread(uid, folder)
-                result = "Email marked as unread"
-            elif action.lower() == "flag":
-                client.mark_email(uid, folder, r"\Flagged", True)
-                result = "Email flagged"
-            elif action.lower() == "unflag":
-                client.mark_email(uid, folder, r"\Flagged", False)
-                result = "Email unflagged"
-            elif action.lower() == "delete":
-                client.delete_email(uid, folder)
-                if cache:
-                    cache.delete_email(uid, folder)
-                result = "Email deleted"
+                    return "Target folder required for move action"
+                result = engine.move_email(uid, folder, target_folder)
+            elif action_lower == "read":
+                result = engine.mark_read(uid, folder)
+            elif action_lower == "unread":
+                result = engine.mark_unread(uid, folder)
+            elif action_lower == "delete":
+                # Move to trash
+                result = engine.move_email(uid, folder, "[Gmail]/Trash")
             else:
-                return f"Invalid action: {action}"
+                return f"Invalid action: {action}. Use: move, read, unread, delete"
 
-            return result
+            if result.get("status") == "ok":
+                return f"Action '{action}' completed on email {uid}"
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
             logger.error(f"Error processing email: {e}")
             return f"Error: {e}"
 
-    # Create a task from an email
-    @mcp.tool()
-    async def create_task(
-        description: str,
-        priority: str = "medium",
-        due_date: Optional[str] = None,
-        ctx: Context = None,  # type: ignore
-    ) -> str:
-        """Create a task in the tasks list.
-
-        Args:
-            description: Task description
-            priority: Task priority (low, medium, high)
-            due_date: Optional due date (YYYY-MM-DD)
-            ctx: MCP context
-
-        Returns:
-            Success message
-        """
-        if not description:
-            return "Error: Description is required"
-
-        if priority not in ["low", "medium", "high"]:
-            return (
-                f"Error: Invalid priority '{priority}'. Must be low, medium, or high."
-            )
-
-        if due_date:
-            try:
-                datetime.strptime(due_date, "%Y-%m-%d")
-            except ValueError:
-                return f"Error: Invalid due date format '{due_date}'. Use YYYY-MM-DD."
-
-        task_entry = f"- [ ] {description} (Priority: {priority}"
-        if due_date:
-            task_entry += f", Due: {due_date}"
-        task_entry += ")\n"
-
-        # Use absolute path for tasks.md to be more robust
-        import os
-
-        tasks_file = os.path.join(os.getcwd(), "tasks.md")
-
-        try:
-            with open(tasks_file, "a") as f:
-                f.write(task_entry)
-            logger.info(f"Created task: {description}")
-            return f"Success: Task created: {description}"
-        except Exception as e:
-            logger.error(f"Error creating task: {e}")
-            return f"Error: {e}"
-
-    # Setup Smart Secretary labels/folders
-    @mcp.tool()
-    async def setup_smart_labels(
-        ctx: Context,
-        dry_run: bool = False,
-    ) -> str:
-        """Setup the 'Smart Secretary' folder hierarchy for organizing emails.
-        Folders to be created:
-        - Secretary/Priority (Immediate attention)
-        - Secretary/Action-Required (Tasks identified)
-        - Secretary/Processed (AI handled)
-        - Secretary/Calendar (Meeting invites)
-        - Secretary/Newsletter (Low priority)
-        - Secretary/Waiting (Pending others)
-
-        Args:
-            ctx: MCP context
-            dry_run: If True, only check which folders would be created.
-
-        Returns:
-            Success or status message.
-        """
-        client = get_client_from_context(ctx)
-
-        labels = [
-            "Secretary/Priority",
-            "Secretary/Action-Required",
-            "Secretary/Processed",
-            "Secretary/Calendar",
-            "Secretary/Newsletter",
-            "Secretary/Waiting",
-        ]
-
-        try:
-            # Ensure folder cache is fresh
-            client.list_folders(refresh=True)
-
-            results = []
-            for label in labels:
-                exists = client.folder_exists(label)
-                if exists:
-                    results.append(f"[Exists] {label}")
-                else:
-                    if dry_run:
-                        results.append(f"[Pending] {label} (Dry Run)")
-                    else:
-                        success = client.create_folder(label)
-                        if success:
-                            results.append(f"[Created] {label}")
-                        else:
-                            results.append(f"[Failed] {label}")
-
-            return "\n".join(results)
-        except Exception as e:
-            logger.error(f"Error setting up smart labels: {e}")
-            return f"Error: {e}"
-
-    # Get unread messages tool
-    @mcp.tool()
-    async def get_unread_messages(
-        folder: str = "INBOX",
-        limit: int = 10,
-        offset: int = 0,
-        sort_by: str = "date",
-        sort_order: str = "desc",
-        ctx: Context = None,  # type: ignore
-    ) -> str:
-        """Get unread messages from a folder.
-
-        Args:
-            folder: Folder name
-            limit: Maximum number of messages to return
-            offset: Number of messages to skip
-            sort_by: Field to sort by (date, subject, from)
-            sort_order: Sort order (asc, desc)
-            ctx: MCP context
-
-        Returns:
-            JSON string with unread messages
-        """
-        try:
-            cache = get_email_cache_from_context(ctx)
-
-            if cache:
-                logging.debug("get_unread_messages: Using email cache")
-                emails = cache.get_unread_emails(folder=folder, limit=limit + offset)
-
-                if sort_by == "from":
-                    emails.sort(
-                        key=lambda e: e.get("from_addr", ""),
-                        reverse=(sort_order == "desc"),
-                    )
-                elif sort_by == "subject":
-                    emails.sort(
-                        key=lambda e: e.get("subject", ""),
-                        reverse=(sort_order == "desc"),
-                    )
-                else:
-                    emails.sort(
-                        key=lambda e: e.get("date", ""), reverse=(sort_order == "desc")
-                    )
-
-                emails = emails[offset : offset + limit]
-
-                if not emails:
-                    return json.dumps([], indent=2)
-
-                results = []
-                for email in emails:
-                    results.append(
-                        {
-                            "uid": email["uid"],
-                            "from": email["from_addr"],
-                            "subject": email["subject"],
-                            "date": email["date"],
-                            "snippet": (
-                                email.get("body_text") or email.get("body_html") or ""
-                            )[:100],
-                        }
-                    )
-
-                return json.dumps(results, indent=2)
-        except Exception:
-            logging.debug(
-                "get_unread_messages: Cache not available, falling back to IMAP"
-            )
-
-        try:
-            client = get_client_from_context(ctx)
-            emails = client.get_unread_messages(
-                folder=folder,
-                limit=limit,
-                offset=offset,
-                sort_by=sort_by,
-                sort_order=sort_order,
-            )
-
-            if not emails:
-                return json.dumps([], indent=2)
-
-            results = []
-            for email_obj in emails.values():
-                results.append(
-                    {
-                        "uid": email_obj.uid,
-                        "from": str(email_obj.from_),
-                        "subject": email_obj.subject,
-                        "date": email_obj.date.isoformat() if email_obj.date else None,
-                        "snippet": email_obj.get_snippet(100),
-                    }
-                )
-
-            return json.dumps(results, indent=2)
-        except Exception as e:
-            logger.error(f"Error getting unread messages: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
-
-    @mcp.tool()
-    async def process_meeting_invite(
-        folder: str,
-        uid: int,
-        ctx: Context,
-    ) -> dict:
-        """Process a meeting invite email. Creates task and moves to Secretary/Calendar."""
-        from workspace_secretary.workflows.invite_parser import (
-            identify_meeting_invite_details,
-        )
-
-        client = get_client_from_context(ctx)
-        result: Dict[str, Any] = {
-            "status": "error",
-            "message": "An error occurred during processing",
-            "task_created": False,
-            "moved_to_folder": None,
-            "invite_details": None,
-        }
-
-        try:
-            email_obj = client.fetch_email(uid, folder)
-            if not email_obj:
-                result["message"] = f"Email with UID {uid} not found in folder {folder}"
-                return result
-
-            invite_result = identify_meeting_invite_details(email_obj)
-            if not invite_result["is_invite"]:
-                result["status"] = "not_invite"
-                result["message"] = "The email is not a meeting invite"
-                return result
-
-            invite_details = invite_result["details"]
-            result["invite_details"] = invite_details
-
-            task_desc = (
-                f"MEETING INVITE: {invite_details.get('subject', 'Unknown')} "
-                f"from {str(email_obj.from_)}"
-            )
-            if invite_details.get("start_time"):
-                task_desc += f" at {invite_details['start_time']}"
-
-            import os
-
-            tasks_file = os.path.join(os.getcwd(), "tasks.md")
-            task_entry = f"- [ ] {task_desc} (Priority: high)\n"
-            try:
-                with open(tasks_file, "a") as f:
-                    f.write(task_entry)
-                result["task_created"] = True
-            except Exception as task_err:
-                logger.warning(f"Failed to create task: {task_err}")
-
-            calendar_folder = "Secretary/Calendar"
-            if not client.folder_exists(calendar_folder):
-                client.create_folder(calendar_folder)
-
-            client.move_email(uid, folder, calendar_folder)
-            result["moved_to_folder"] = calendar_folder
-
-            try:
-                cache = get_email_cache_from_context(ctx)
-                if cache:
-                    cache.move_email(uid, folder, calendar_folder)
-            except Exception:
-                pass
-
-            result["status"] = "success"
-            result["message"] = (
-                f"Meeting invite identified. Created task and moved to {calendar_folder}."
-            )
-            return result
-
-        except Exception as e:
-            logger.error(f"Error processing meeting invite: {e}")
-            result["message"] = f"Error: {str(e)}"
-            return result
-
-    # --- Calendar Tools ---
+    # ============================================================
+    # CALENDAR TOOLS (Engine API calls)
+    # ============================================================
 
     @mcp.tool()
     async def list_calendar_events(
@@ -1042,24 +524,56 @@ def register_tools(
         calendar_id: str = "primary",
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """List upcoming events from Google Calendar.
+        """List calendar events in a time range.
 
         Args:
-            time_min: ISO format start time (e.g. 2024-01-01T00:00:00Z)
-            time_max: ISO format end time
-            calendar_id: Calendar identifier
+            time_min: Start time (ISO format, e.g., 2024-01-01T00:00:00Z)
+            time_max: End time (ISO format)
+            calendar_id: Calendar ID
             ctx: MCP context
 
         Returns:
-            JSON list of calendar events
+            JSON list of events
         """
-        client = get_calendar_client_from_context(ctx)
         try:
-            events = client.list_events(time_min, time_max, calendar_id)
-            return json.dumps(events, indent=2)
+            engine = _get_engine(ctx)
+            result = engine.list_calendar_events(time_min, time_max, calendar_id)
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            return json.dumps(result.get("events", []), indent=2, default=str)
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
             logger.error(f"Error listing calendar events: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def get_calendar_availability(
+        time_min: str,
+        time_max: str,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Check free/busy status for a time range.
+
+        Args:
+            time_min: Start time (ISO format)
+            time_max: End time (ISO format)
+            ctx: MCP context
+
+        Returns:
+            JSON with availability information
+        """
+        try:
+            engine = _get_engine(ctx)
+            result = engine.get_calendar_availability(time_min, time_max)
+            if result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            return json.dumps(result, indent=2, default=str)
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
+        except Exception as e:
+            logger.error(f"Error getting availability: {e}")
+            return json.dumps({"error": str(e)})
 
     @mcp.tool()
     async def create_calendar_event(
@@ -1072,324 +586,213 @@ def register_tools(
         meeting_type: Optional[str] = None,
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Create a new event on Google Calendar.
+        """Create a calendar event.
 
         Args:
-            summary: Title of the event
-            start_time: ISO format start time (e.g. 2024-01-01T10:00:00Z)
-            end_time: ISO format end time
-            description: Detailed description
+            summary: Event title
+            start_time: Start time (ISO format)
+            end_time: End time (ISO format)
+            description: Event description
             location: Event location
-            calendar_id: Calendar identifier
-            meeting_type: Optional meeting type ('google_meet' or None)
+            calendar_id: Calendar ID
+            meeting_type: 'google_meet' to add video conferencing
             ctx: MCP context
 
         Returns:
-            JSON representation of created event
+            JSON with created event details
         """
-        client = get_calendar_client_from_context(ctx)
-        event_data = {
-            "summary": summary,
-            "start": {"dateTime": start_time},
-            "end": {"dateTime": end_time},
-        }
-        if description:
-            event_data["description"] = description
-        if location:
-            event_data["location"] = location
-
-        conference_version = 0
-        if meeting_type == "google_meet":
-            conference_version = 1
-            import uuid
-
-            event_data["conferenceData"] = {
-                "createRequest": {
-                    "requestId": str(uuid.uuid4()),
-                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
-                }
-            }
-
         try:
-            event = client.create_event(
-                event_data, calendar_id, conference_data_version=conference_version
+            engine = _get_engine(ctx)
+            result = engine.create_calendar_event(
+                summary=summary,
+                start_time=start_time,
+                end_time=end_time,
+                description=description,
+                location=location,
+                calendar_id=calendar_id,
+                meeting_type=meeting_type,
             )
-            return json.dumps(event, indent=2)
+            if result.get("status") == "ok":
+                event = result.get("event", {})
+                return json.dumps(
+                    {
+                        "status": "success",
+                        "event_id": event.get("id"),
+                        "html_link": event.get("htmlLink"),
+                        "summary": event.get("summary"),
+                    },
+                    indent=2,
+                )
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
             logger.error(f"Error creating calendar event: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            return json.dumps({"error": str(e)})
 
     @mcp.tool()
-    async def gmail_search(
-        query: str,
-        max_results: int = 20,
+    async def respond_to_meeting(
+        event_id: str,
+        calendar_id: str = "primary",
+        response: str = "accepted",
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Search emails using Gmail-like search syntax.
-        Supports common Gmail operators: from:, to:, subject:, is:unread, has:attachment.
+        """Respond to a meeting invitation.
 
         Args:
-            query: Search query string
-            max_results: Max results to return
+            event_id: Calendar event ID
+            calendar_id: Calendar ID
+            response: Response (accepted, declined, tentative)
             ctx: MCP context
 
         Returns:
-            JSON list of message summaries
+            Success or error message
         """
+        if response not in ["accepted", "declined", "tentative"]:
+            return f"Invalid response: {response}. Use: accepted, declined, tentative"
+
         try:
-            cache = get_email_cache_from_context(ctx)
-            if cache:
-                is_unread = None
-                from_addr = None
-                subject_contains = None
-
-                query_lower = query.lower()
-                if "is:unread" in query_lower:
-                    is_unread = True
-                if "is:read" in query_lower:
-                    is_unread = False
-
-                import re
-
-                from_match = re.search(r"from:(\S+)", query_lower)
-                if from_match:
-                    from_addr = from_match.group(1)
-
-                subject_match = re.search(
-                    r'subject:(["\']?)(.+?)\1(?:\s|$)', query, re.IGNORECASE
-                )
-                if subject_match:
-                    subject_contains = subject_match.group(2)
-
-                emails = cache.search_emails(
-                    folder="INBOX",
-                    is_unread=is_unread,
-                    from_addr=from_addr,
-                    subject_contains=subject_contains,
-                    limit=max_results,
-                )
-
-                results = []
-                for email in emails:
-                    results.append(
-                        {
-                            "id": email.get("message_id"),
-                            "uid": email["uid"],
-                            "from": email["from_addr"],
-                            "subject": email["subject"],
-                            "date": email["date"],
-                        }
-                    )
-                return json.dumps(results, indent=2)
-        except Exception:
-            logging.debug("gmail_search: Cache not available, falling back to IMAP")
-
-        client = get_client_from_context(ctx)
-        try:
-            imap_criteria = _convert_gmail_query_to_imap(query)
-            uids = client.search(imap_criteria, folder="INBOX")
-            uids = uids[:max_results]
-            emails_dict = client.fetch_emails(uids, folder="INBOX")
-            results = []
-            for uid, email in emails_dict.items():
-                results.append(
-                    {
-                        "id": email.message_id,
-                        "uid": uid,
-                        "from": str(email.from_),
-                        "subject": email.subject,
-                        "date": email.date.isoformat() if email.date else None,
-                    }
-                )
-            return json.dumps(results, indent=2)
+            engine = _get_engine(ctx)
+            result = engine.respond_to_meeting(event_id, calendar_id, response)
+            if result.get("status") == "ok":
+                return f"Response '{response}' sent for event {event_id}"
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
-            logger.error(f"Error in gmail_search: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            logger.error(f"Error responding to meeting: {e}")
+            return f"Error: {e}"
+
+    # ============================================================
+    # UTILITY TOOLS
+    # ============================================================
 
     @mcp.tool()
-    async def gmail_get_thread(
-        thread_id: str,
+    async def setup_smart_labels(
+        dry_run: bool = False,
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Get an entire conversation thread.
-        Uses message threading headers (References, In-Reply-To).
+        """Setup Secretary folder hierarchy for organizing emails.
+
+        Creates:
+        - Secretary/Priority
+        - Secretary/Action-Required
+        - Secretary/Processed
+        - Secretary/Calendar
+        - Secretary/Newsletter
+        - Secretary/Waiting
 
         Args:
-            thread_id: Message UID of any message in the thread
+            dry_run: If True, only report what would be created
             ctx: MCP context
 
         Returns:
-            JSON list of emails in the thread
+            Status of folder creation
         """
-        client = get_client_from_context(ctx)
         try:
-            uid = int(thread_id)
-            emails = client.fetch_thread(uid)
-            results = []
-            for e in emails:
-                results.append(
-                    {
-                        "id": e.message_id,
-                        "uid": e.uid,
-                        "from": str(e.from_),
-                        "subject": e.subject,
-                        "date": e.date.isoformat() if e.date else None,
-                        "content": e.content.get_best_content(),
-                    }
-                )
-            return json.dumps(results, indent=2)
-        except ValueError:
-            return json.dumps(
-                {"error": f"Invalid thread_id '{thread_id}'. Use numeric UID."},
-                indent=2,
-            )
+            engine = _get_engine(ctx)
+            result = engine.setup_labels(dry_run=dry_run)
+            if result.get("status") == "ok":
+                return "\n".join(result.get("results", ["Labels configured"]))
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
-            logger.error(f"Error in gmail_get_thread: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
-
-    @mcp.tool()
-    async def get_calendar_availability(
-        time_min: str,
-        time_max: str,
-        ctx: Context = None,  # type: ignore
-    ) -> str:
-        """Check free/busy status for a time range.
-
-        Args:
-            time_min: ISO format start time
-            time_max: ISO format end time
-            ctx: MCP context
-
-        Returns:
-            JSON representation of availability
-        """
-        client = get_calendar_client_from_context(ctx)
-        try:
-            availability = client.get_availability(time_min, time_max)
-            return json.dumps(availability, indent=2)
-        except Exception as e:
-            logger.error(f"Error getting calendar availability: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            logger.error(f"Error setting up labels: {e}")
+            return f"Error: {e}"
 
     @mcp.tool()
     async def get_daily_briefing(
         date: Optional[str] = None,
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Get a combined briefing of calendar events and candidate emails for prioritization.
-        Returns high-recall email candidates with signals for LLM-based prioritization.
+        """Get daily briefing with calendar and priority emails.
 
         Args:
-            date: Optional date in YYYY-MM-DD format. Defaults to today.
+            date: Date in YYYY-MM-DD format (defaults to today)
             ctx: MCP context
 
         Returns:
-            JSON object with 'calendar_events' and 'email_candidates' (with signals)
+            JSON with calendar events and email candidates with signals
         """
-        from datetime import datetime, time
         from zoneinfo import ZoneInfo
-        import re
-
-        cal_client = get_calendar_client_from_context(ctx)
-        imap_client = get_client_from_context(ctx)
-        server_config = get_server_config_from_context(ctx)
-
-        tz = ZoneInfo(server_config.timezone)
-        vip_senders = set(server_config.vip_senders)
-
-        if date:
-            target_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=tz)
-        else:
-            target_date = datetime.now(tz)
-
-        start_of_day = datetime.combine(target_date.date(), time.min, tzinfo=tz)
-        end_of_day = datetime.combine(target_date.date(), time.max, tzinfo=tz)
-
-        briefing: Dict[str, Any] = {
-            "date": target_date.strftime("%Y-%m-%d"),
-            "timezone": server_config.timezone,
-            "calendar_events": [],
-            "email_candidates": [],
-        }
+        from datetime import time as dt_time
 
         try:
-            events = cal_client.list_events(
-                start_of_day.isoformat(), end_of_day.isoformat()
-            )
-            for event in events:
-                briefing["calendar_events"].append(
-                    {
-                        "summary": event.get("summary"),
-                        "start": event.get("start", {}).get("dateTime")
-                        or event.get("start", {}).get("date"),
-                        "end": event.get("end", {}).get("dateTime")
-                        or event.get("end", {}).get("date"),
-                        "location": event.get("location"),
-                        "hangoutLink": event.get("hangoutLink"),
-                    }
-                )
+            db = _get_database(ctx)
+            engine = _get_engine(ctx)
+            config = _get_config(ctx)
 
-            emails_data = []
+            tz = ZoneInfo(config.timezone)
+            vip_senders = set(config.vip_senders)
+            identity = config.identity
+
+            if date:
+                target_date = datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=tz)
+            else:
+                target_date = datetime.now(tz)
+
+            start_of_day = datetime.combine(target_date.date(), dt_time.min, tzinfo=tz)
+            end_of_day = datetime.combine(target_date.date(), dt_time.max, tzinfo=tz)
+
+            briefing: Dict[str, Any] = {
+                "date": target_date.strftime("%Y-%m-%d"),
+                "timezone": config.timezone,
+                "calendar_events": [],
+                "email_candidates": [],
+            }
+
+            # Get calendar events via Engine
             try:
-                cache = get_email_cache_from_context(ctx)
-                if cache:
-                    cached_emails = cache.get_unread_emails(folder="INBOX", limit=50)
-                    for email in cached_emails:
-                        emails_data.append(
+                cal_result = engine.list_calendar_events(
+                    start_of_day.isoformat(),
+                    end_of_day.isoformat(),
+                )
+                if cal_result.get("status") != "no_account":
+                    for event in cal_result.get("events", []):
+                        briefing["calendar_events"].append(
                             {
-                                "uid": email["uid"],
-                                "message_id": email.get("message_id"),
-                                "from_": email.get("from_addr", ""),
-                                "subject": email.get("subject") or "",
-                                "to_addr": email.get("to_addr") or "",
-                                "body_text": email.get("body_text")
-                                or email.get("body_html")
-                                or "",
-                                "date": email.get("date"),
+                                "summary": event.get("summary"),
+                                "start": event.get("start", {}).get("dateTime")
+                                or event.get("start", {}).get("date"),
+                                "end": event.get("end", {}).get("dateTime")
+                                or event.get("end", {}).get("date"),
+                                "location": event.get("location"),
+                                "hangoutLink": event.get("hangoutLink"),
                             }
                         )
-            except Exception:
-                pass
+            except Exception as cal_err:
+                logger.warning(f"Could not fetch calendar: {cal_err}")
 
-            if not emails_data:
-                imap_client = get_client_from_context(ctx)
-                uids = imap_client.search({"UNSEEN": True}, folder="INBOX")
-                uids = uids[:50]
-                emails_dict = imap_client.fetch_emails(uids, folder="INBOX")
-                for uid, email in emails_dict.items():
-                    emails_data.append(
-                        {
-                            "uid": uid,
-                            "message_id": email.message_id,
-                            "from_": str(email.from_),
-                            "subject": email.subject or "",
-                            "to_addr": ", ".join(str(addr) for addr in email.to),
-                            "body_text": email.content.get_best_content(),
-                            "date": email.date.isoformat() if email.date else None,
-                        }
-                    )
+            # Get unread emails from database
+            emails = db.search_emails(folder="INBOX", is_unread=True, limit=50)
 
-            identity = server_config.identity
-
-            for email_data in emails_data:
-                sender = email_data["from_"].lower()
-                subject = email_data["subject"].lower()
-                body_text = email_data["body_text"]
+            for email in emails:
+                sender = (email.get("from_addr") or "").lower()
+                subject = (email.get("subject") or "").lower()
+                body_text = email.get("body_text") or email.get("body_html") or ""
                 snippet = body_text[:200].lower()
 
                 to_addresses = [
                     addr.strip().lower()
-                    for addr in email_data["to_addr"].split(",")
+                    for addr in (email.get("to_addr") or "").split(",")
                     if addr.strip()
                 ]
                 is_addressed_to_me = any(
                     identity.matches_email(addr) for addr in to_addresses
                 )
-
                 mentions_my_name = identity.matches_name(body_text)
 
                 signals = {
-                    "is_important": False,
                     "is_from_vip": any(vip in sender for vip in vip_senders),
                     "is_addressed_to_me": is_addressed_to_me,
                     "mentions_my_name": mentions_my_name,
@@ -1414,1078 +817,580 @@ def register_tools(
 
                 briefing["email_candidates"].append(
                     {
-                        "id": email_data["message_id"],
-                        "uid": email_data["uid"],
-                        "from": email_data["from_"],
-                        "subject": email_data["subject"],
-                        "date": email_data["date"],
+                        "uid": email.get("uid"),
+                        "from": email.get("from_addr"),
+                        "subject": email.get("subject"),
+                        "date": email.get("date"),
                         "snippet": body_text[:150],
                         "signals": signals,
                     }
                 )
 
-            return json.dumps(briefing, indent=2)
+            return json.dumps(briefing, indent=2, default=str)
         except Exception as e:
             logger.error(f"Error generating daily briefing: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            return json.dumps({"error": str(e)})
 
     @mcp.tool()
     async def send_email(
-        to: Union[str, List[str]],
+        to: str,
         subject: str,
         body: str,
-        cc: Optional[Union[str, List[str]]] = None,
-        thread_id: Optional[str] = None,
+        cc: Optional[str] = None,
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Send an email using SMTP with OAuth2.
-        CRITICAL SAFETY: This tool performs a mutation (sending an email).
-        Always ensure you have confirmed the content with the user before calling this.
+        """Send an email.
+
+        CRITICAL: This performs a mutation. Confirm content with user first.
 
         Args:
-            to: Recipient email address or list of addresses
+            to: Recipient email (comma-separated for multiple)
             subject: Email subject
             body: Email body (plain text)
-            cc: Optional CC addresses
-            thread_id: Optional thread UID (ignored, use reply tools instead)
+            cc: CC recipients (comma-separated)
             ctx: MCP context
 
         Returns:
-            JSON status message
+            Success or error message
         """
-        import email.message
-
-        smtp_client = get_smtp_client_from_context(ctx)
-
         try:
-            msg = email.message.EmailMessage()
-            msg.set_content(body)
-            msg["Subject"] = subject
-            msg["From"] = smtp_client.config.imap.username
+            engine = _get_engine(ctx)
+            to_list = [addr.strip() for addr in to.split(",")]
+            cc_list = [addr.strip() for addr in cc.split(",")] if cc else None
 
-            if isinstance(to, list):
-                msg["To"] = ", ".join(to)
-            else:
-                msg["To"] = to
-
-            if cc:
-                if isinstance(cc, list):
-                    msg["Cc"] = ", ".join(cc)
-                else:
-                    msg["Cc"] = cc
-
-            smtp_client.send_message(msg)
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": f"Email sent to {to}",
-                },
-                indent=2,
+            result = engine.send_email(
+                to=to_list,
+                subject=subject,
+                body=body,
+                cc=cc_list,
             )
-
+            if result.get("status") == "ok":
+                return f"Email sent to {to}"
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
             logger.error(f"Error sending email: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            return f"Error: {e}"
 
     @mcp.tool()
-    async def summarize_thread(
-        thread_id: str,
+    async def create_draft_reply(
+        uid: int,
+        folder: str,
+        reply_body: str,
+        reply_all: bool = False,
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Fetch a full conversation thread and provide a structured summary context.
-        Optimized for identifying decisions and pending actions.
+        """Create a draft reply to an email.
 
         Args:
-            thread_id: Message UID of any message in the thread
+            uid: Original email UID
+            folder: Folder containing original email
+            reply_body: Reply content
+            reply_all: Whether to reply to all recipients
             ctx: MCP context
 
         Returns:
-            JSON summary of the thread
+            JSON with draft details
         """
         try:
-            uid = int(thread_id)
-        except ValueError:
-            return json.dumps(
-                {"error": f"Invalid thread_id '{thread_id}'. Use numeric UID."},
-                indent=2,
+            engine = _get_engine(ctx)
+            result = engine.create_draft_reply(
+                uid=uid,
+                folder=folder,
+                body=reply_body,
+                reply_all=reply_all,
             )
-
-        try:
-            cache = get_email_cache_from_context(ctx)
-            if cache:
-                thread_emails = cache.get_thread_emails(uid, "INBOX")
-                if thread_emails:
-                    sorted_emails = sorted(
-                        thread_emails, key=lambda e: e.get("date") or ""
-                    )
-                    participants = set(e.get("from_addr", "") for e in sorted_emails)
-
-                    thread_summary = {
-                        "thread_id": thread_id,
-                        "subject": sorted_emails[0].get("subject")
-                        if sorted_emails
-                        else "",
-                        "participant_count": len(participants),
-                        "message_count": len(sorted_emails),
-                        "messages": [],
-                    }
-
-                    for e in sorted_emails:
-                        content = (e.get("body_text") or e.get("body_html") or "")[
-                            :2000
-                        ]
-                        thread_summary["messages"].append(
-                            {
-                                "from": e.get("from_addr"),
-                                "date": e.get("date"),
-                                "content": content,
-                            }
-                        )
-
-                    return json.dumps(thread_summary, indent=2)
-        except Exception:
-            logging.debug("summarize_thread: Cache not available, falling back to IMAP")
-
-        imap_client = get_client_from_context(ctx)
-
-        try:
-            emails = imap_client.fetch_thread(uid)
-            if not emails:
-                return json.dumps({"error": "Thread not found or empty"}, indent=2)
-
-            thread_summary = {
-                "thread_id": thread_id,
-                "subject": emails[0].subject,
-                "participant_count": len(set(str(e.from_) for e in emails)),
-                "message_count": len(emails),
-                "messages": [],
-            }
-
-            for e in emails:
-                thread_summary["messages"].append(
+            if result.get("status") == "ok":
+                return json.dumps(
                     {
-                        "from": str(e.from_),
-                        "date": e.date.isoformat() if e.date else None,
-                        "content": e.content.get_best_content()[:2000],
-                    }
+                        "status": "success",
+                        "message": "Draft created",
+                        "draft_uid": result.get("draft_uid"),
+                        "draft_folder": result.get("draft_folder"),
+                    },
+                    indent=2,
                 )
-
-            return json.dumps(thread_summary, indent=2)
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
-            logger.error(f"Error summarizing thread: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            logger.error(f"Error creating draft: {e}")
+            return json.dumps({"error": str(e)})
 
     @mcp.tool()
-    async def suggest_reschedule(
-        thread_id: str,
-        suggested_date: str,
+    async def create_task(
+        description: str,
+        priority: str = "medium",
+        due_date: Optional[str] = None,
         ctx: Context = None,  # type: ignore
     ) -> str:
-        """Analyze a thread for a meeting, find the existing event, and suggest 3 new slots on a target date.
-        Only suggests slots within configured working hours and workdays.
+        """Create a task in tasks.md file.
 
         Args:
-            thread_id: Gmail thread ID related to the meeting
-            suggested_date: Target date for rescheduling (YYYY-MM-DD)
+            description: Task description
+            priority: Priority (low, medium, high)
+            due_date: Due date (YYYY-MM-DD)
             ctx: MCP context
 
         Returns:
-            JSON with suggested slots and status
+            Success message
         """
-        from datetime import datetime, time, timedelta
-        from zoneinfo import ZoneInfo
+        import os
 
-        gmail_client = get_gmail_client_from_context(ctx)
-        cal_client = get_calendar_client_from_context(ctx)
+        if not description:
+            return "Error: Description is required"
 
-        try:
-            # Get config for timezone and working hours
-            config = gmail_client.config
-            tz = ZoneInfo(config.timezone)
+        if priority not in ["low", "medium", "high"]:
+            return f"Error: Invalid priority '{priority}'. Use: low, medium, high"
 
-            # Parse working hours
-            start_time_obj = datetime.strptime(
-                config.working_hours.start, "%H:%M"
-            ).time()
-            end_time_obj = datetime.strptime(config.working_hours.end, "%H:%M").time()
-            workdays = config.working_hours.workdays
-
-            # 1. Get thread to find subject/context
-            emails = gmail_client.get_thread(thread_id)
-            if not emails:
-                return json.dumps({"error": "Thread not found"}, indent=2)
-
-            subject = emails[0].subject.replace("Re: ", "").replace("Fwd: ", "")
-
-            # 2. Check availability on suggested_date
-            target_date_naive = datetime.strptime(suggested_date, "%Y-%m-%d")
-            target_date = target_date_naive.replace(tzinfo=tz)
-
-            # Check if target date is a workday (1=Monday, 7=Sunday)
-            weekday = target_date.isoweekday()
-            if weekday not in workdays:
-                return json.dumps(
-                    {
-                        "error": f"Target date {suggested_date} is not a workday (configured workdays: {workdays})"
-                    },
-                    indent=2,
-                )
-
-            # Use configured working hours
-            day_start = datetime.combine(target_date.date(), start_time_obj, tzinfo=tz)
-            day_end = datetime.combine(target_date.date(), end_time_obj, tzinfo=tz)
-
-            # Convert to RFC3339 for Google Calendar API
-            day_start_rfc = day_start.isoformat()
-            day_end_rfc = day_end.isoformat()
-
-            availability = cal_client.get_availability(day_start_rfc, day_end_rfc)
-            busy_slots = (
-                availability.get("calendars", {}).get("primary", {}).get("busy", [])
-            )
-
-            # 3. Simple slot finder (30 min slots)
-            suggestions = []
-            current_slot = day_start
-
-            while len(suggestions) < 3 and current_slot < day_end:
-                slot_start = current_slot
-                slot_end = current_slot + timedelta(minutes=30)
-
-                # Don't suggest slots that extend past working hours
-                if slot_end > day_end:
-                    break
-
-                # Check if busy
-                is_busy = False
-                for busy in busy_slots:
-                    # Parse freebusy timestamps - handle both Z and +HH:MM offsets
-                    b_start_str = busy["start"]
-                    b_end_str = busy["end"]
-
-                    # Convert to timezone-aware datetimes
-                    if b_start_str.endswith("Z"):
-                        b_start = datetime.fromisoformat(
-                            b_start_str.replace("Z", "+00:00")
-                        )
-                    else:
-                        b_start = datetime.fromisoformat(b_start_str)
-
-                    if b_end_str.endswith("Z"):
-                        b_end = datetime.fromisoformat(b_end_str.replace("Z", "+00:00"))
-                    else:
-                        b_end = datetime.fromisoformat(b_end_str)
-
-                    # Convert to configured timezone for comparison
-                    b_start = b_start.astimezone(tz)
-                    b_end = b_end.astimezone(tz)
-
-                    if (slot_start < b_end) and (slot_end > b_start):
-                        is_busy = True
-                        break
-
-                if not is_busy:
-                    suggestions.append(
-                        {
-                            "start": slot_start.isoformat(),
-                            "end": slot_end.isoformat(),
-                        }
-                    )
-
-                current_slot += timedelta(minutes=30)
-
-            return json.dumps(
-                {
-                    "original_subject": subject,
-                    "target_date": suggested_date,
-                    "timezone": config.timezone,
-                    "working_hours": {
-                        "start": config.working_hours.start,
-                        "end": config.working_hours.end,
-                        "workdays": workdays,
-                    },
-                    "suggestions": suggestions,
-                    "note": f"Suggestions are based on configured working hours ({config.working_hours.start} - {config.working_hours.end}) in 30-minute blocks.",
-                },
-                indent=2,
-            )
-
-        except Exception as e:
-            logger.error(f"Error suggesting reschedule: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
-
-    @mcp.tool()
-    async def quick_clean_inbox(
-        ctx: Context = None,  # type: ignore
-        continuation_state: Optional[str] = None,
-        time_limit_seconds: float = 5.0,
-    ) -> str:
-        """Identify emails where user is not directly addressed (time-boxed).
-
-        Processes emails for up to time_limit_seconds, then returns partial results.
-        Pass continuation_state from previous response to resume processing.
-        """
-        import time as time_module
-        from workspace_secretary.batch_utils import BatchState
-
-        client = get_client_from_context(ctx)
-        config = get_server_config_from_context(ctx)
-        identity = config.identity
-
-        state = BatchState.from_dict(
-            json.loads(continuation_state) if continuation_state else None
-        )
-        already_processed = set(state.processed_uids)
-
-        try:
-            target_folder = "Secretary/Auto-Cleaned"
-            if not client.folder_exists(target_folder):
-                client.create_folder(target_folder)
-
-            all_unread_uids = client.search({"UNSEEN": True}, folder="INBOX")
-            total_unread = len(all_unread_uids)
-
-            if not all_unread_uids:
-                return json.dumps(
-                    {
-                        "status": "complete",
-                        "candidates": [],
-                        "has_more": False,
-                        "total_unread": 0,
-                    },
-                    indent=2,
-                )
-
-            uid_list = list(all_unread_uids)
-            uids_to_process = [
-                u for u in uid_list[state.offset :] if u not in already_processed
-            ]
-
-            if not uids_to_process:
-                return json.dumps(
-                    {
-                        "status": "complete",
-                        "candidates": [],
-                        "has_more": False,
-                        "total_unread": total_unread,
-                    },
-                    indent=2,
-                )
-
-            candidates: list[dict[str, Any]] = []
-            skipped: list[dict[str, Any]] = []
-            start_time = time_module.time()
-            processed_count = 0
-            time_limit_reached = False
-
-            batch_size = 20
-            for batch_start in range(0, len(uids_to_process), batch_size):
-                if time_module.time() - start_time >= time_limit_seconds:
-                    time_limit_reached = True
-                    break
-
-                batch_uids = uids_to_process[batch_start : batch_start + batch_size]
-                emails = client.fetch_emails(batch_uids, folder="INBOX")
-
-                for uid, email in emails.items():
-                    if time_module.time() - start_time >= time_limit_seconds:
-                        time_limit_reached = True
-                        break
-
-                    to_addresses = [str(addr).lower() for addr in email.to]
-                    cc_addresses = [str(addr).lower() for addr in (email.cc or [])]
-                    all_recipients = to_addresses + cc_addresses
-
-                    user_in_recipients = any(
-                        identity.matches_email(addr) for addr in all_recipients
-                    )
-
-                    body_text = email.content.get_best_content()
-                    user_mentioned_in_body = identity.matches_email(
-                        body_text
-                    ) or identity.matches_name(body_text)
-
-                    email_info = {
-                        "uid": uid,
-                        "date": email.date.isoformat() if email.date else None,
-                        "from": str(email.from_),
-                        "to": ", ".join(to_addresses[:3]),
-                        "cc": ", ".join(cc_addresses[:3]) if cc_addresses else None,
-                        "subject": email.subject or "(no subject)",
-                    }
-
-                    if not user_in_recipients and not user_mentioned_in_body:
-                        candidates.append(email_info)
-                    else:
-                        skipped.append(email_info)
-
-                    state.processed_uids.append(uid)
-                    processed_count += 1
-
-                if time_limit_reached:
-                    break
-
-            state.offset += processed_count
-            elapsed = time_module.time() - start_time
-            is_complete = state.offset >= total_unread and not time_limit_reached
-
-            return json.dumps(
-                {
-                    "status": "complete" if is_complete else "partial",
-                    "candidates": candidates,
-                    "candidates_count": len(candidates),
-                    "skipped": skipped,
-                    "skipped_count": len(skipped),
-                    "has_more": not is_complete,
-                    "continuation_state": None if is_complete else state.to_dict(),
-                    "total_unread": total_unread,
-                    "processed_this_batch": processed_count,
-                    "time_elapsed_seconds": round(elapsed, 2),
-                    "time_limit_reached": time_limit_reached,
-                    "target_folder": target_folder,
-                },
-                indent=2,
-            )
-
-        except Exception as e:
-            logger.error(f"Error in quick_clean_inbox: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
-
-    @mcp.tool()
-    async def execute_clean_batch(
-        ctx: Context = None,  # type: ignore
-        uids: Optional[list[int]] = None,
-    ) -> str:
-        """Execute the auto-clean action on approved email UIDs."""
-        if not uids:
-            return json.dumps({"error": "No UIDs provided"}, indent=2)
-
-        client = get_client_from_context(ctx)
-        target_folder = "Secretary/Auto-Cleaned"
-
-        moved = 0
-        failed = 0
-
-        for uid in uids:
+        if due_date:
             try:
-                client.mark_email(uid, "INBOX", r"\Seen", True)
-                client.move_email(uid, "INBOX", target_folder)
-                moved += 1
+                datetime.strptime(due_date, "%Y-%m-%d")
+            except ValueError:
+                return f"Error: Invalid date format '{due_date}'. Use YYYY-MM-DD"
 
-                try:
-                    cache = get_email_cache_from_context(ctx)
-                    if cache:
-                        cache.mark_as_read(uid, "INBOX")
-                        cache.move_email(uid, "INBOX", target_folder)
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.warning(f"Failed to clean UID {uid}: {e}")
-                failed += 1
+        task_entry = f"- [ ] {description} (Priority: {priority}"
+        if due_date:
+            task_entry += f", Due: {due_date}"
+        task_entry += ")\n"
 
-        return json.dumps(
-            {
-                "status": "success",
-                "moved": moved,
-                "failed": failed,
-                "target_folder": target_folder,
-            },
-            indent=2,
-        )
-
-    @mcp.tool()
-    async def triage_priority_emails(
-        ctx: Context = None,  # type: ignore
-        continuation_state: Optional[str] = None,
-        time_limit_seconds: float = 5.0,
-    ) -> str:
-        """Identify high-priority emails (time-boxed).
-
-        Criteria: User in To: with <5 recipients, OR <15 recipients with name in body.
-        Pass continuation_state from previous response to resume processing.
-        """
-        import time as time_module
-        from workspace_secretary.batch_utils import BatchState
-
-        client = get_client_from_context(ctx)
-        config = get_server_config_from_context(ctx)
-        identity = config.identity
-
-        state = BatchState.from_dict(
-            json.loads(continuation_state) if continuation_state else None
-        )
-        already_processed = set(state.processed_uids)
+        tasks_file = os.path.join(os.getcwd(), "tasks.md")
 
         try:
-            priority_folder = "Secretary/Priority"
-            if not client.folder_exists(priority_folder):
-                client.create_folder(priority_folder)
-
-            all_unread_uids = client.search({"UNSEEN": True}, folder="INBOX")
-            total_unread = len(all_unread_uids)
-
-            if not all_unread_uids:
-                return json.dumps(
-                    {
-                        "status": "complete",
-                        "priority_emails": [],
-                        "has_more": False,
-                        "total_unread": 0,
-                    },
-                    indent=2,
-                )
-
-            uid_list = list(all_unread_uids)
-            uids_to_process = [
-                u for u in uid_list[state.offset :] if u not in already_processed
-            ]
-
-            if not uids_to_process:
-                return json.dumps(
-                    {
-                        "status": "complete",
-                        "priority_emails": [],
-                        "has_more": False,
-                        "total_unread": total_unread,
-                    },
-                    indent=2,
-                )
-
-            priority_emails: list[dict[str, Any]] = []
-            skipped_emails: list[dict[str, Any]] = []
-            start_time = time_module.time()
-            processed_count = 0
-            time_limit_reached = False
-
-            batch_size = 20
-            for batch_start in range(0, len(uids_to_process), batch_size):
-                if time_module.time() - start_time >= time_limit_seconds:
-                    time_limit_reached = True
-                    break
-
-                batch_uids = uids_to_process[batch_start : batch_start + batch_size]
-                emails = client.fetch_emails(batch_uids, folder="INBOX")
-
-                for uid, email in emails.items():
-                    if time_module.time() - start_time >= time_limit_seconds:
-                        time_limit_reached = True
-                        break
-
-                    to_addresses = [str(addr).lower() for addr in email.to]
-                    total_to_recipients = len(to_addresses)
-                    user_in_to = any(
-                        identity.matches_email(addr) for addr in to_addresses
-                    )
-
-                    if not user_in_to:
-                        state.processed_uids.append(uid)
-                        processed_count += 1
-                        skipped_emails.append(
-                            {
-                                "uid": str(uid),
-                                "reason": "not_in_to",
-                            }
-                        )
-                        continue
-
-                    body_text = email.content.get_best_content()
-                    name_in_body = identity.matches_name_part(body_text)
-
-                    is_priority = False
-                    priority_reason = ""
-
-                    if total_to_recipients < 5:
-                        is_priority = True
-                        priority_reason = (
-                            f"direct_small_group ({total_to_recipients} recipients)"
-                        )
-                    elif total_to_recipients < 15 and name_in_body:
-                        is_priority = True
-                        priority_reason = (
-                            f"name_mentioned ({total_to_recipients} recipients)"
-                        )
-
-                    if is_priority:
-                        client.move_email(uid, "INBOX", priority_folder)
-                        priority_emails.append(
-                            {
-                                "uid": str(uid),
-                                "from": str(email.from_),
-                                "subject": email.subject or "(no subject)",
-                                "date": email.date.isoformat() if email.date else None,
-                                "to_count": total_to_recipients,
-                                "priority_reason": priority_reason,
-                                "snippet": body_text[:300],
-                            }
-                        )
-                        try:
-                            cache = get_email_cache_from_context(ctx)
-                            if cache:
-                                cache.move_email(uid, "INBOX", priority_folder)
-                        except Exception:
-                            pass
-                    else:
-                        skipped_emails.append(
-                            {
-                                "uid": str(uid),
-                                "reason": f"large_group ({total_to_recipients} recipients)",
-                            }
-                        )
-
-                    state.processed_uids.append(uid)
-                    processed_count += 1
-
-                if time_limit_reached:
-                    break
-
-            state.offset += processed_count
-            elapsed = time_module.time() - start_time
-            is_complete = state.offset >= total_unread and not time_limit_reached
-
-            return json.dumps(
-                {
-                    "status": "complete" if is_complete else "partial",
-                    "priority_emails": priority_emails,
-                    "priority_count": len(priority_emails),
-                    "skipped_count": len(skipped_emails),
-                    "has_more": not is_complete,
-                    "continuation_state": None if is_complete else state.to_dict(),
-                    "total_unread": total_unread,
-                    "processed_this_batch": processed_count,
-                    "time_elapsed_seconds": round(elapsed, 2),
-                    "time_limit_reached": time_limit_reached,
-                    "target_folder": priority_folder,
-                },
-                indent=2,
-            )
-
+            with open(tasks_file, "a") as f:
+                f.write(task_entry)
+            return f"Task created: {description}"
         except Exception as e:
-            logger.error(f"Error in triage_priority_emails: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            logger.error(f"Error creating task: {e}")
+            return f"Error: {e}"
 
     @mcp.tool()
-    async def triage_remaining_emails(
-        ctx: Context = None,  # type: ignore
-        continuation_state: Optional[str] = None,
-        time_limit_seconds: float = 5.0,
-    ) -> str:
-        """Process emails not matching auto-clean or high-priority (time-boxed).
+    async def trigger_sync(ctx: Context = None) -> str:  # type: ignore
+        """Trigger email sync in the engine.
 
-        These emails have user in To:/CC: but don't meet priority criteria.
-        Pass continuation_state from previous response to resume processing.
+        Returns:
+            Sync status
         """
-        import time as time_module
-        from workspace_secretary.batch_utils import BatchState
-
-        client = get_client_from_context(ctx)
-        config = get_server_config_from_context(ctx)
-        identity = config.identity
-
-        state = BatchState.from_dict(
-            json.loads(continuation_state) if continuation_state else None
-        )
-        already_processed = set(state.processed_uids)
-
         try:
-            waiting_folder = "Secretary/Waiting"
-            if not client.folder_exists(waiting_folder):
-                client.create_folder(waiting_folder)
-
-            all_unread_uids = client.search({"UNSEEN": True}, folder="INBOX")
-            total_unread = len(all_unread_uids)
-
-            if not all_unread_uids:
-                return json.dumps(
-                    {
-                        "status": "complete",
-                        "remaining_emails": [],
-                        "has_more": False,
-                        "total_unread": 0,
-                    },
-                    indent=2,
-                )
-
-            uid_list = list(all_unread_uids)
-            uids_to_process = [
-                u for u in uid_list[state.offset :] if u not in already_processed
-            ]
-
-            if not uids_to_process:
-                return json.dumps(
-                    {
-                        "status": "complete",
-                        "remaining_emails": [],
-                        "has_more": False,
-                        "total_unread": total_unread,
-                    },
-                    indent=2,
-                )
-
-            remaining_emails: list[dict[str, Any]] = []
-            skipped_count = 0
-            start_time = time_module.time()
-            processed_count = 0
-            time_limit_reached = False
-
-            batch_size = 20
-            for batch_start in range(0, len(uids_to_process), batch_size):
-                if time_module.time() - start_time >= time_limit_seconds:
-                    time_limit_reached = True
-                    break
-
-                batch_uids = uids_to_process[batch_start : batch_start + batch_size]
-                emails = client.fetch_emails(batch_uids, folder="INBOX")
-
-                for uid, email in emails.items():
-                    if time_module.time() - start_time >= time_limit_seconds:
-                        time_limit_reached = True
-                        break
-
-                    to_addresses = [str(addr).lower() for addr in email.to]
-                    cc_addresses = [str(addr).lower() for addr in (email.cc or [])]
-
-                    user_in_to = any(
-                        identity.matches_email(addr) for addr in to_addresses
-                    )
-                    user_in_cc = any(
-                        identity.matches_email(addr) for addr in cc_addresses
-                    )
-
-                    if not user_in_to and not user_in_cc:
-                        state.processed_uids.append(uid)
-                        processed_count += 1
-                        skipped_count += 1
-                        continue
-
-                    total_to_recipients = len(to_addresses)
-                    body_text = email.content.get_best_content()
-                    name_in_body = identity.matches_name_part(body_text)
-
-                    is_high_priority = user_in_to and (
-                        total_to_recipients < 5
-                        or (total_to_recipients < 15 and name_in_body)
-                    )
-
-                    if is_high_priority:
-                        state.processed_uids.append(uid)
-                        processed_count += 1
-                        skipped_count += 1
-                        continue
-
-                    vip_senders = [v.lower() for v in config.vip_senders]
-                    sender = str(email.from_).lower()
-                    is_from_vip = any(vip in sender for vip in vip_senders)
-
-                    email_summary: dict[str, Any] = {
-                        "uid": str(uid),
-                        "from": str(email.from_),
-                        "subject": email.subject or "(no subject)",
-                        "date": email.date.isoformat() if email.date else None,
-                        "to_count": total_to_recipients,
-                        "user_in_to": user_in_to,
-                        "user_in_cc": user_in_cc,
-                        "snippet": body_text[:300],
-                        "signals": {
-                            "is_from_vip": is_from_vip,
-                            "name_mentioned": name_in_body,
-                            "has_question": "?" in (email.subject or "")
-                            or bool(
-                                re.search(
-                                    r"\b(can you|could you|please|would you)\b",
-                                    body_text[:500].lower(),
-                                )
-                            ),
-                            "mentions_deadline": bool(
-                                re.search(
-                                    r"\b(eod|asap|urgent|deadline|due|by \w+day)\b",
-                                    body_text[:500].lower(),
-                                )
-                            ),
-                        },
-                    }
-
-                    client.move_email(uid, "INBOX", waiting_folder)
-                    remaining_emails.append(email_summary)
-
-                    try:
-                        cache = get_email_cache_from_context(ctx)
-                        if cache:
-                            cache.move_email(uid, "INBOX", waiting_folder)
-                    except Exception:
-                        pass
-
-                    state.processed_uids.append(uid)
-                    processed_count += 1
-
-                if time_limit_reached:
-                    break
-
-            state.offset += processed_count
-            elapsed = time_module.time() - start_time
-            is_complete = state.offset >= total_unread and not time_limit_reached
-
-            return json.dumps(
-                {
-                    "status": "complete" if is_complete else "partial",
-                    "remaining_emails": remaining_emails,
-                    "remaining_count": len(remaining_emails),
-                    "skipped_count": skipped_count,
-                    "has_more": not is_complete,
-                    "continuation_state": None if is_complete else state.to_dict(),
-                    "total_unread": total_unread,
-                    "processed_this_batch": processed_count,
-                    "time_elapsed_seconds": round(elapsed, 2),
-                    "time_limit_reached": time_limit_reached,
-                    "target_folder": waiting_folder,
-                },
-                indent=2,
-            )
-
+            engine = _get_engine(ctx)
+            result = engine.trigger_sync()
+            if result.get("status") == "ok":
+                return "Sync triggered"
+            elif result.get("status") == "no_account":
+                return result.get("message", "No account configured")
+            else:
+                return f"Error: {result.get('message', 'Unknown error')}"
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
         except Exception as e:
-            logger.error(f"Error in triage_remaining_emails: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
+            logger.error(f"Error triggering sync: {e}")
+            return f"Error: {e}"
+
+    # ============================================================
+    # SEMANTIC SEARCH TOOLS (Conditional)
+    # ============================================================
 
     if enable_semantic_search:
 
         @mcp.tool()
         async def semantic_search_emails(
-            ctx: Context,
             query: str,
             folder: str = "INBOX",
             limit: int = 20,
-            similarity_threshold: float = 0.7,
+            ctx: Context = None,  # type: ignore
         ) -> str:
-            """Search emails by semantic meaning using AI embeddings.
-
-            Finds emails conceptually similar to your query without exact keywords.
+            """Search emails by meaning using AI embeddings.
 
             Args:
-                query: Natural language query (e.g., "emails about project deadlines")
-                folder: Email folder to search (default: INBOX)
-                limit: Maximum results (default: 20)
-                similarity_threshold: Minimum similarity 0-1 (default: 0.7)
+                query: Natural language query
+                folder: Folder to search
+                limit: Maximum results
+                ctx: MCP context
+
+            Returns:
+                JSON list of semantically similar emails
             """
             try:
-                from workspace_secretary.engine.database import DatabaseInterface
-                from workspace_secretary.engine.embeddings import EmbeddingsClient
+                db = _get_database(ctx)
+                embeddings = _get_embeddings_client(ctx)
 
-                database: DatabaseInterface | None = None
-                embeddings_client: EmbeddingsClient | None = None
+                if not embeddings:
+                    return json.dumps({"error": "Embeddings not available"})
 
-                try:
-                    database = ctx.request_context.lifespan_context.get("database")
-                    embeddings_client = ctx.request_context.lifespan_context.get(
-                        "embeddings_client"
-                    )
-                except (AttributeError, KeyError):
-                    pass
+                if not db.supports_embeddings():
+                    return json.dumps({"error": "Database does not support embeddings"})
 
-                if not database or not database.supports_embeddings():
-                    return json.dumps(
-                        {
-                            "error": "Database not initialized or doesn't support embeddings"
-                        },
-                        indent=2,
-                    )
+                # Get query embedding
+                result = await embeddings.embed_text(query)
 
-                if not embeddings_client:
-                    return json.dumps(
-                        {"error": "Embeddings client not initialized"},
-                        indent=2,
-                    )
-
-                query_result = await embeddings_client.embed_text(query)
-                query_embedding = query_result.embedding
-
-                results = database.semantic_search(
-                    query_embedding=query_embedding,
-                    limit=limit,
+                # Search
+                emails = db.semantic_search(
+                    query_embedding=result.embedding,
                     folder=folder,
-                    similarity_threshold=similarity_threshold,
+                    limit=limit,
                 )
 
-                emails = []
-                for row in results:
-                    emails.append(
-                        {
-                            "uid": row.get("uid"),
-                            "folder": row.get("folder"),
-                            "from": row.get("from_addr"),
-                            "to": row.get("to_addr"),
-                            "subject": row.get("subject"),
-                            "date": row.get("date"),
-                            "similarity": round(row.get("similarity", 0), 3),
-                            "snippet": (row.get("body_text") or "")[:300],
-                        }
+                if not emails:
+                    return json.dumps(
+                        {"message": "No semantically similar emails found"}
                     )
 
-                return json.dumps(
-                    {
-                        "query": query,
-                        "folder": folder,
-                        "results_count": len(emails),
-                        "similarity_threshold": similarity_threshold,
-                        "emails": emails,
-                    },
-                    indent=2,
-                )
+                results = []
+                for email in emails:
+                    r = _format_email_summary(email)
+                    r["similarity"] = round(email.get("similarity", 0), 3)
+                    results.append(r)
 
+                return json.dumps(results, indent=2, default=str)
             except Exception as e:
-                logger.error(f"Error in semantic_search_emails: {e}")
-                return json.dumps({"error": str(e)}, indent=2)
+                logger.error(f"Error in semantic search: {e}")
+                return json.dumps({"error": str(e)})
 
         @mcp.tool()
         async def find_related_emails(
-            ctx: Context,
-            folder: str,
             uid: int,
+            folder: str = "INBOX",
             limit: int = 10,
+            ctx: Context = None,  # type: ignore
         ) -> str:
-            """Find emails contextually similar to a specific email using AI embeddings.
-
-            Useful for finding previous discussions, gathering context before replying,
-            or discovering related conversations.
+            """Find emails similar to a specific email.
 
             Args:
-                folder: Folder containing the reference email
-                uid: UID of the email to find similar emails for
-                limit: Maximum similar emails to return (default: 10)
+                uid: Reference email UID
+                folder: Folder name
+                limit: Maximum results
+                ctx: MCP context
+
+            Returns:
+                JSON list of similar emails
             """
             try:
-                from workspace_secretary.engine.database import DatabaseInterface
+                db = _get_database(ctx)
 
-                database: DatabaseInterface | None = None
+                if not db.supports_embeddings():
+                    return json.dumps({"error": "Database does not support embeddings"})
 
-                try:
-                    database = ctx.request_context.lifespan_context.get("database")
-                except (AttributeError, KeyError):
-                    pass
+                emails = db.find_similar_emails(uid, folder, limit)
 
-                if not database or not database.supports_embeddings():
+                if not emails:
+                    return json.dumps(
+                        {"message": f"No similar emails found for UID {uid}"}
+                    )
+
+                results = []
+                for email in emails:
+                    r = _format_email_summary(email)
+                    r["similarity"] = round(email.get("similarity", 0), 3)
+                    results.append(r)
+
+                return json.dumps(results, indent=2, default=str)
+            except Exception as e:
+                logger.error(f"Error finding related emails: {e}")
+                return json.dumps({"error": str(e)})
+
+    # ============================================================
+    # BATCH OPERATION TOOLS (Time-boxed with continuation)
+    # ============================================================
+
+    @mcp.tool()
+    async def quick_clean_inbox(
+        continuation_state: Optional[str] = None,
+        time_limit_seconds: int = 5,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Identify emails for cleanup (time-boxed operation).
+
+        Finds emails where user is NOT in To/CC and name NOT mentioned.
+        Safe for batch processing with continuation support.
+
+        Args:
+            continuation_state: State from previous call (for pagination)
+            time_limit_seconds: Max time to process (default 5s)
+            ctx: MCP context
+
+        Returns:
+            JSON with candidates and continuation state
+        """
+        import time
+
+        try:
+            db = _get_database(ctx)
+            config = _get_config(ctx)
+            identity = config.identity
+
+            start_time = time.time()
+
+            # Parse continuation state
+            state = (
+                json.loads(continuation_state)
+                if continuation_state
+                else {
+                    "offset": 0,
+                    "processed_uids": [],
+                }
+            )
+            offset = state.get("offset", 0)
+            processed_uids = set(state.get("processed_uids", []))
+
+            # Fetch batch of emails
+            emails = db.search_emails(folder="INBOX", limit=100)
+
+            candidates = []
+            new_processed = []
+
+            for i, email in enumerate(emails[offset:]):
+                # Check time limit
+                if time.time() - start_time > time_limit_seconds:
                     return json.dumps(
                         {
-                            "error": "Database not initialized or doesn't support embeddings"
+                            "status": "partial",
+                            "has_more": True,
+                            "time_limit_reached": True,
+                            "candidates": candidates,
+                            "continuation_state": json.dumps(
+                                {
+                                    "offset": offset + i,
+                                    "processed_uids": list(
+                                        processed_uids | set(new_processed)
+                                    ),
+                                }
+                            ),
                         },
                         indent=2,
                     )
 
-                reference_email = database.get_email_by_uid(uid, folder)
-                if not reference_email:
-                    return json.dumps(
-                        {"error": f"Email not found: UID {uid} in {folder}"},
-                        indent=2,
-                    )
+                uid = email.get("uid")
+                if uid in processed_uids:
+                    continue
 
-                embedding = database.get_embedding(uid, folder)
-                if not embedding:
-                    return json.dumps(
-                        {
-                            "error": "Reference email has no embedding",
-                            "suggestion": "Try again later or run embedding sync manually.",
-                        },
-                        indent=2,
-                    )
+                new_processed.append(uid)
 
-                results = database.find_similar_emails(
-                    email_uid=uid,
-                    email_folder=folder,
-                    limit=limit,
+                # Check if user is in To/CC
+                to_addr = (email.get("to_addr") or "").lower()
+                cc_addr = (email.get("cc_addr") or "").lower()
+
+                user_in_to = identity.matches_email(to_addr)
+                user_in_cc = identity.matches_email(cc_addr)
+
+                if user_in_to or user_in_cc:
+                    continue  # Skip - user is directly addressed
+
+                # Check if name mentioned in body
+                body = email.get("body_text") or email.get("body_html") or ""
+                if identity.matches_name(body):
+                    continue  # Skip - user's name mentioned
+
+                # This is a candidate for cleanup
+                candidates.append(
+                    {
+                        "uid": uid,
+                        "from": email.get("from_addr"),
+                        "to": email.get("to_addr"),
+                        "cc": email.get("cc_addr"),
+                        "subject": email.get("subject"),
+                        "date": email.get("date"),
+                        "confidence": "high"
+                        if not user_in_to and not user_in_cc
+                        else "medium",
+                    }
                 )
 
-                similar_emails = []
-                for row in results:
-                    similar_emails.append(
+            return json.dumps(
+                {
+                    "status": "complete",
+                    "has_more": False,
+                    "candidates": candidates,
+                },
+                indent=2,
+                default=str,
+            )
+
+        except Exception as e:
+            logger.error(f"Error in quick_clean_inbox: {e}")
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def execute_clean_batch(
+        uids: List[int],
+        action: str = "archive",
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Execute cleanup on approved emails.
+
+        Args:
+            uids: List of email UIDs to process
+            action: Action to take (archive, mark_read, label)
+            ctx: MCP context
+
+        Returns:
+            Processing result
+        """
+        try:
+            engine = _get_engine(ctx)
+
+            results = {"success": 0, "failed": 0, "errors": []}
+
+            for uid in uids:
+                try:
+                    if action == "archive":
+                        # Mark read and apply label
+                        engine.mark_read(uid, "INBOX")
+                        engine.modify_labels(
+                            uid, "INBOX", ["Secretary/Auto-Cleaned"], "add"
+                        )
+                        engine.move_email(uid, "INBOX", "[Gmail]/All Mail")
+                    elif action == "mark_read":
+                        engine.mark_read(uid, "INBOX")
+                    elif action == "label":
+                        engine.modify_labels(
+                            uid, "INBOX", ["Secretary/Auto-Cleaned"], "add"
+                        )
+
+                    results["success"] += 1
+                except Exception as e:
+                    results["failed"] += 1
+                    results["errors"].append(f"UID {uid}: {e}")
+
+            return json.dumps(results, indent=2)
+
+        except ConnectionError:
+            return "Engine not running. Start secretary-engine first."
+        except Exception as e:
+            logger.error(f"Error executing clean batch: {e}")
+            return json.dumps({"error": str(e)})
+
+    @mcp.tool()
+    async def triage_priority_emails(
+        continuation_state: Optional[str] = None,
+        time_limit_seconds: int = 5,
+        ctx: Context = None,  # type: ignore
+    ) -> str:
+        """Identify high-priority emails for immediate attention.
+
+        Priority criteria:
+        - User in To: with <5 total recipients, OR
+        - User in To: with <15 recipients AND name mentioned in body
+
+        Args:
+            continuation_state: State from previous call
+            time_limit_seconds: Max processing time
+            ctx: MCP context
+
+        Returns:
+            JSON with priority emails and their signals
+        """
+        import time
+
+        try:
+            db = _get_database(ctx)
+            config = _get_config(ctx)
+            identity = config.identity
+            vip_senders = set(config.vip_senders)
+
+            start_time = time.time()
+
+            state = (
+                json.loads(continuation_state)
+                if continuation_state
+                else {
+                    "offset": 0,
+                    "processed_uids": [],
+                }
+            )
+            offset = state.get("offset", 0)
+            processed_uids = set(state.get("processed_uids", []))
+
+            emails = db.search_emails(folder="INBOX", is_unread=True, limit=100)
+
+            priority_emails = []
+            new_processed = []
+
+            for i, email in enumerate(emails[offset:]):
+                if time.time() - start_time > time_limit_seconds:
+                    return json.dumps(
                         {
-                            "uid": row.get("uid"),
-                            "folder": row.get("folder"),
-                            "from": row.get("from_addr"),
-                            "to": row.get("to_addr"),
-                            "subject": row.get("subject"),
-                            "date": row.get("date"),
-                            "similarity": round(row.get("similarity", 0), 3),
-                            "snippet": (row.get("body_text") or "")[:300],
+                            "status": "partial",
+                            "has_more": True,
+                            "priority_emails": priority_emails,
+                            "continuation_state": json.dumps(
+                                {
+                                    "offset": offset + i,
+                                    "processed_uids": list(
+                                        processed_uids | set(new_processed)
+                                    ),
+                                }
+                            ),
+                        },
+                        indent=2,
+                    )
+
+                uid = email.get("uid")
+                if uid in processed_uids:
+                    continue
+
+                new_processed.append(uid)
+
+                to_addr = (email.get("to_addr") or "").lower()
+                cc_addr = (email.get("cc_addr") or "").lower()
+                sender = (email.get("from_addr") or "").lower()
+                body = email.get("body_text") or ""
+
+                user_in_to = identity.matches_email(to_addr)
+
+                if not user_in_to:
+                    continue  # Must be in To: field
+
+                # Count recipients
+                to_count = len([a for a in to_addr.split(",") if a.strip()])
+                cc_count = len([a for a in cc_addr.split(",") if a.strip()])
+                total_recipients = to_count + cc_count
+
+                name_mentioned = identity.matches_name(body)
+                is_vip = any(vip in sender for vip in vip_senders)
+
+                # Priority criteria
+                is_priority = False
+                if total_recipients < 5:
+                    is_priority = True
+                elif total_recipients < 15 and name_mentioned:
+                    is_priority = True
+                elif is_vip:
+                    is_priority = True
+
+                if is_priority:
+                    priority_emails.append(
+                        {
+                            "uid": uid,
+                            "from": email.get("from_addr"),
+                            "to": email.get("to_addr"),
+                            "subject": email.get("subject"),
+                            "date": email.get("date"),
+                            "snippet": body[:150],
+                            "signals": {
+                                "is_from_vip": is_vip,
+                                "total_recipients": total_recipients,
+                                "name_mentioned": name_mentioned,
+                            },
                         }
                     )
 
-                return json.dumps(
-                    {
-                        "reference_email": {
-                            "uid": reference_email.get("uid"),
-                            "folder": reference_email.get("folder"),
-                            "from": reference_email.get("from_addr"),
-                            "subject": reference_email.get("subject"),
-                            "date": reference_email.get("date"),
-                        },
-                        "similar_emails_count": len(similar_emails),
-                        "similar_emails": similar_emails,
-                    },
-                    indent=2,
-                )
+            return json.dumps(
+                {
+                    "status": "complete",
+                    "has_more": False,
+                    "priority_emails": priority_emails,
+                },
+                indent=2,
+                default=str,
+            )
 
-            except Exception as e:
-                logger.error(f"Error in find_related_emails: {e}")
-                return json.dumps({"error": str(e)}, indent=2)
-
-        @mcp.tool()
-        async def get_embedding_status(ctx: Context) -> str:
-            """Check status of the embeddings system for troubleshooting."""
-            try:
-                from workspace_secretary.engine.database import DatabaseInterface
-                from workspace_secretary.engine.embeddings import EmbeddingsClient
-
-                status: dict[str, Any] = {
-                    "semantic_search_available": False,
-                    "database_backend": "unknown",
-                    "embeddings_configured": False,
-                }
-
-                database: DatabaseInterface | None = None
-                embeddings_client: EmbeddingsClient | None = None
-                config = None
-
-                try:
-                    database = ctx.request_context.lifespan_context.get("database")
-                    embeddings_client = ctx.request_context.lifespan_context.get(
-                        "embeddings_client"
-                    )
-                    config = ctx.request_context.lifespan_context.get("config")
-                except (AttributeError, KeyError):
-                    pass
-
-                if config:
-                    status["database_backend"] = config.database.backend.value
-                    status["embeddings_configured"] = config.database.embeddings.enabled
-                    if config.database.embeddings.enabled:
-                        status["embeddings_model"] = config.database.embeddings.model
-                        status["embeddings_endpoint"] = (
-                            config.database.embeddings.endpoint
-                        )
-
-                if database:
-                    status["database_supports_embeddings"] = (
-                        database.supports_embeddings()
-                    )
-
-                    if database.supports_embeddings():
-                        status["semantic_search_available"] = (
-                            embeddings_client is not None
-                        )
-
-                        try:
-                            emails_needing = database.get_emails_needing_embedding(
-                                "INBOX", limit=1000
-                            )
-                            status["inbox_emails_without_embeddings"] = len(
-                                emails_needing
-                            )
-                        except Exception:
-                            pass
-                else:
-                    status["database_supports_embeddings"] = False
-                    status["note"] = "Database not initialized in context"
-
-                return json.dumps(status, indent=2)
-
-            except Exception as e:
-                logger.error(f"Error in get_embedding_status: {e}")
-                return json.dumps({"error": str(e)}, indent=2)
+        except Exception as e:
+            logger.error(f"Error in triage_priority_emails: {e}")
+            return json.dumps({"error": str(e)})

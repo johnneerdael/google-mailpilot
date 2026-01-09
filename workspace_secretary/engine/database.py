@@ -121,6 +121,16 @@ class DatabaseInterface(ABC):
         """Clear all emails from a folder. Returns count deleted."""
         pass
 
+    @abstractmethod
+    def get_synced_folders(self) -> list[dict[str, Any]]:
+        """Get list of all synced folders with their state."""
+        pass
+
+    @abstractmethod
+    def get_thread_emails(self, uid: int, folder: str) -> list[dict[str, Any]]:
+        """Get all emails in a thread based on References/In-Reply-To headers."""
+        pass
+
     # Calendar operations
     @abstractmethod
     def upsert_calendar(
@@ -618,6 +628,59 @@ class SqliteDatabase(DatabaseInterface):
             cursor = conn.execute("DELETE FROM emails WHERE folder = ?", (folder,))
             conn.commit()
             return cursor.rowcount
+
+    def get_synced_folders(self) -> list[dict[str, Any]]:
+        """Get list of all synced folders with their state."""
+        with self._get_email_connection() as conn:
+            cursor = conn.execute(
+                "SELECT folder, uidvalidity, uidnext, highestmodseq, last_sync FROM folder_state ORDER BY folder"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_thread_emails(self, uid: int, folder: str) -> list[dict[str, Any]]:
+        """Get all emails in a thread based on References/In-Reply-To headers."""
+        with self._get_email_connection() as conn:
+            # First get the email to find its message_id and references
+            cursor = conn.execute(
+                "SELECT message_id, in_reply_to, references_header FROM emails WHERE uid = ? AND folder = ?",
+                (uid, folder),
+            )
+            row = cursor.fetchone()
+            if not row:
+                return []
+
+            message_id = row["message_id"]
+            in_reply_to = row["in_reply_to"] or ""
+            references = row["references_header"] or ""
+
+            # Collect all related message IDs
+            related_ids = set()
+            if message_id:
+                related_ids.add(message_id)
+            for ref in (in_reply_to + " " + references).split():
+                ref = ref.strip()
+                if ref:
+                    related_ids.add(ref)
+
+            if not related_ids:
+                # No thread info, return just this email
+                cursor = conn.execute(
+                    "SELECT * FROM emails WHERE uid = ? AND folder = ?",
+                    (uid, folder),
+                )
+                result = cursor.fetchone()
+                return [dict(result)] if result else []
+
+            # Find all emails that reference any of these IDs or are referenced by them
+            placeholders = ",".join("?" * len(related_ids))
+            query = f"""
+                SELECT * FROM emails 
+                WHERE message_id IN ({placeholders})
+                   OR in_reply_to IN ({placeholders})
+                ORDER BY date
+            """
+            cursor = conn.execute(query, list(related_ids) + list(related_ids))
+            return [dict(row) for row in cursor.fetchall()]
 
     # Calendar operations
     def upsert_calendar(
@@ -1207,6 +1270,66 @@ class PostgresDatabase(DatabaseInterface):
                 count = cur.rowcount
                 conn.commit()
                 return count
+
+    def get_synced_folders(self) -> list[dict[str, Any]]:
+        """Get list of all synced folders with their state."""
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT folder, uidvalidity, uidnext, highestmodseq, last_sync FROM folder_state ORDER BY folder"
+                )
+                columns = [desc[0] for desc in cur.description]
+                return [dict(zip(columns, row)) for row in cur.fetchall()]
+
+    def get_thread_emails(self, uid: int, folder: str) -> list[dict[str, Any]]:
+        """Get all emails in a thread based on References/In-Reply-To headers."""
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                # First get the email to find its message_id and references
+                cur.execute(
+                    "SELECT message_id, in_reply_to, references_header FROM emails WHERE uid = %s AND folder = %s",
+                    (uid, folder),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return []
+
+                message_id, in_reply_to, references = row
+                in_reply_to = in_reply_to or ""
+                references = references or ""
+
+                # Collect all related message IDs
+                related_ids = set()
+                if message_id:
+                    related_ids.add(message_id)
+                for ref in (in_reply_to + " " + references).split():
+                    ref = ref.strip()
+                    if ref:
+                        related_ids.add(ref)
+
+                if not related_ids:
+                    # No thread info, return just this email
+                    cur.execute(
+                        "SELECT * FROM emails WHERE uid = %s AND folder = %s",
+                        (uid, folder),
+                    )
+                    columns = [desc[0] for desc in cur.description]
+                    row = cur.fetchone()
+                    return [dict(zip(columns, row))] if row else []
+
+                # Find all emails that reference any of these IDs
+                related_list = list(related_ids)
+                cur.execute(
+                    """
+                    SELECT * FROM emails 
+                    WHERE message_id = ANY(%s)
+                       OR in_reply_to = ANY(%s)
+                    ORDER BY date
+                    """,
+                    (related_list, related_list),
+                )
+                columns = [desc[0] for desc in cur.description]
+                return [dict(zip(columns, row)) for row in cur.fetchall()]
 
     # Calendar operations
     def upsert_calendar(

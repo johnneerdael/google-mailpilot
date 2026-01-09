@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-01-09
+
+### ⚠️ BREAKING: Complete Architecture Rewrite
+
+This release fundamentally changes how the system works internally. The Engine now owns **all database writes**, while the MCP server is **read-only** against the database.
+
+### Changed
+
+- **Engine owns all database writes**: Engine now uses `DatabaseInterface` (not legacy `EmailCache`) for all persistence
+- **MCP is read-only**: MCP server reads directly from database, calls Engine API only for mutations
+- **Unified database access**: Both Engine and MCP use the same `DatabaseInterface` abstraction
+- **Database backend selection**: `config.database.backend` determines SQLite or PostgreSQL for both processes
+
+### Added
+
+- **New Engine API endpoints**:
+  - `GET /api/calendar/events` - List calendar events in time range
+  - `GET /api/calendar/availability` - Get free/busy information
+  - `POST /api/email/setup-labels` - Create Secretary label hierarchy in Gmail
+  - `POST /api/email/send` - Send email via Gmail API
+  - `POST /api/email/draft-reply` - Create draft reply to an email
+- **Calendar sync in Engine**: `sync_loop()` now syncs both email and calendar
+- **Automatic embedding generation**: Engine generates embeddings after email sync (PostgreSQL + pgvector)
+- **Graceful enrollment**: Engine starts in "no account" mode and auto-connects when OAuth tokens appear
+
+### Architecture
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   MCP Server    │────▶│  SQLite/PG DB   │◀────│     Engine      │
+│  (read-only)    │     │  (unified)      │     │  (all writes)   │
+└─────────────────┘     └─────────────────┘     └─────────────────┘
+        │                                               │
+        └──────────────▶ Engine FastAPI ◀───────────────┘
+                        (mutations only)
+```
+
+### Migration
+
+- **Automatic**: Existing SQLite caches are compatible
+- **No action required**: Config format unchanged
+
 ## [3.2.0] - 2026-01-09
 
 ### Changed

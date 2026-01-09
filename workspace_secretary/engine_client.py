@@ -119,6 +119,69 @@ class EngineClient:
             },
         )
 
+    def list_calendar_events(
+        self, time_min: str, time_max: str, calendar_id: str = "primary"
+    ) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            "/api/calendar/events",
+            params={
+                "time_min": time_min,
+                "time_max": time_max,
+                "calendar_id": calendar_id,
+            },
+        )
+
+    def get_calendar_availability(self, time_min: str, time_max: str) -> dict[str, Any]:
+        return self._request(
+            "GET",
+            "/api/calendar/availability",
+            params={"time_min": time_min, "time_max": time_max},
+        )
+
+    def setup_labels(self, dry_run: bool = False) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/email/setup-labels",
+            json={"dry_run": dry_run},
+        )
+
+    def send_email(
+        self,
+        to: list[str],
+        subject: str,
+        body: str,
+        cc: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/email/send",
+            json={
+                "to": to,
+                "subject": subject,
+                "body": body,
+                "cc": cc,
+            },
+        )
+
+    def create_draft_reply(
+        self,
+        uid: int,
+        folder: str,
+        body: str,
+        reply_all: bool = False,
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/email/draft-reply",
+            json={
+                "uid": uid,
+                "folder": folder,
+                "body": body,
+                "reply_all": reply_all,
+            },
+        )
+
 
 _engine_client: Optional[EngineClient] = None
 
