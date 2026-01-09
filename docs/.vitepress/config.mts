@@ -4,7 +4,7 @@ import { defineConfig } from 'vitepress'
 export default defineConfig({
   title: "Gmail Secretary MCP",
   description: "AI-native secretary for Gmail and Google Calendar via MCP",
-  base: process.env.VITEPRESS_BASE || "/Google-Workspace-Secretary-MCP/",
+  base: process.env.VITEPRESS_BASE || "/gmail-secretary-mcp/",
   
   themeConfig: {
     // https://vitepress.dev/reference/default-theme-config
@@ -19,8 +19,8 @@ export default defineConfig({
       {
         text: 'v2.2.0',
         items: [
-          { text: 'Changelog', link: 'https://github.com/johnneerdael/Google-Workspace-Secretary-MCP/releases' },
-          { text: 'Contributing', link: 'https://github.com/johnneerdael/Google-Workspace-Secretary-MCP' }
+          { text: 'Changelog', link: 'https://github.com/johnneerdael/gmail-secretary-mcp/releases' },
+          { text: 'Contributing', link: 'https://github.com/johnneerdael/gmail-workspace-mcp' }
         ]
       }
     ],
@@ -56,7 +56,7 @@ export default defineConfig({
     },
 
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/johnneerdael/Google-Workspace-Secretary-MCP' }
+      { icon: 'github', link: 'https://github.com/johnneerdael/gmail-secretary-mcp' }
     ],
 
     footer: {
@@ -69,7 +69,7 @@ export default defineConfig({
     },
 
     editLink: {
-      pattern: 'https://github.com/johnneerdael/Google-Workspace-Secretary-MCP/edit/main/docs/:path',
+      pattern: 'https://github.com/johnneerdael/gmail-secretary-mcp/edit/main/docs/:path',
       text: 'Edit this page on GitHub'
     }
   }
