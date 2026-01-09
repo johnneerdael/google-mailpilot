@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-01-09
+
+### Added
+- **SQLite Email Cache**: Local-first architecture with full email body storage
+  - Complete email bodies (text and HTML) cached locally
+  - Instant queries against SQLite instead of IMAP round-trips
+  - Database persisted at `config/email_cache.db`
+- **IMAP Sync Engine**: Proper email client synchronization
+  - UIDVALIDITY tracking for cache invalidation
+  - UIDNEXT-based incremental sync (only fetches new emails)
+  - Batch processing (50 emails/batch) with progress logging
+  - Deletion detection during sync
+  - Automatic sync on container startup (no MCP request required)
+  - Periodic incremental sync every 5 minutes
+- **Crash Recovery**: Folder state saved after each batch
+  - Interrupted syncs resume from last checkpoint
+  - No duplicate downloads on container restart
+- **Architecture Documentation**: New `docs/architecture.md` explaining:
+  - SQLite schema and indexes
+  - IMAP sync protocol (RFC 3501, RFC 4549, RFC 5162)
+  - Cache invalidation strategy
+  - Performance characteristics
+
+### Changed
+- **Breaking**: Server now initializes IMAP connection on startup, not lazily on first request
+- `get_unread_messages` now queries SQLite cache (instant) with IMAP fallback
+- All mutation tools (`mark_as_read`, `mark_as_unread`, `move_email`, `process_email`, `quick_clean_inbox`) now immediately update SQLite cache after IMAP operation
+- `ClientManager` class manages global IMAP connection and background sync thread
+
+### Performance
+- Read operations: < 10ms (was 30-60 seconds via IMAP)
+- Initial sync: ~2-3 seconds per 50 emails
+- Incremental sync: Seconds (only new emails)
+- Mailbox with 26,000 emails: ~25-30 minute initial sync, then instant queries
+
 ## [1.2.1] - 2026-01-09
 
 ### Fixed

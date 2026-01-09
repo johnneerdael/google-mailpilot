@@ -11,6 +11,7 @@ from workspace_secretary.imap_client import ImapClient
 from workspace_secretary.calendar_client import CalendarClient
 from workspace_secretary.gmail_client import GmailClient
 from workspace_secretary.smtp_client import SMTPClient
+from workspace_secretary.cache import EmailCache
 from workspace_secretary.models import Email
 
 logger = logging.getLogger(__name__)
@@ -61,22 +62,17 @@ def get_client_from_context(ctx: Context) -> ImapClient:
 
 
 def get_smtp_client_from_context(ctx: Context) -> SMTPClient:
-    """Get SMTP client from context.
-
-    Args:
-        ctx: MCP context
-
-    Returns:
-        SMTP client
-
-    Raises:
-        RuntimeError: If SMTP client is not available
-    """
     ctx_any: Any = ctx
     client = ctx_any.request_context.lifespan_context.get("smtp_client")  # type: ignore
     if not client:
         raise RuntimeError("SMTP client not available")
     return client  # type: ignore
+
+
+def get_email_cache_from_context(ctx: Context) -> EmailCache:
+    ctx_any: Any = ctx
+    cache = ctx_any.request_context.lifespan_context.get("email_cache")  # type: ignore
+    return cache  # type: ignore
 
 
 def get_calendar_client_from_context(ctx: Context) -> CalendarClient:

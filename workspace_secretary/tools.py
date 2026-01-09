@@ -14,11 +14,11 @@ from workspace_secretary.calendar_client import CalendarClient
 from workspace_secretary.gmail_client import GmailClient
 from workspace_secretary.resources import (
     get_client_from_context,
-    get_smtp_client_from_context,
-    get_calendar_client_from_context,
-    get_gmail_client_from_context,
-    get_oauth_mode_from_context,
     get_server_config_from_context,
+    get_gmail_client_from_context,
+    get_calendar_client_from_context,
+    get_smtp_client_from_context,
+    get_email_cache_from_context,
 )
 from workspace_secretary.models import EmailAddress, Email
 
@@ -274,6 +274,18 @@ def register_tools(
         try:
             success = client.move_email(uid, folder, target_folder)
             if success:
+                try:
+                    cache = get_email_cache_from_context(ctx)
+                    if cache:
+                        cache.move_email(uid, folder, target_folder)
+                        logging.debug(
+                            f"Cache updated: moved email {uid} from {folder} to {target_folder}"
+                        )
+                except Exception as cache_err:
+                    logging.warning(
+                        f"Failed to update cache after move_email: {cache_err}"
+                    )
+
                 return f"Email moved from {folder} to {target_folder}"
             else:
                 return "Failed to move email"
@@ -301,6 +313,17 @@ def register_tools(
         client = get_client_from_context(ctx)
         try:
             client.mark_email(uid, folder, r"\Seen", True)
+
+            try:
+                cache = get_email_cache_from_context(ctx)
+                if cache:
+                    cache.mark_as_read(uid, folder)
+                    logging.debug(f"Cache updated: marked email {uid} as read")
+            except Exception as cache_err:
+                logging.warning(
+                    f"Failed to update cache after mark_as_read: {cache_err}"
+                )
+
             return "Email marked as read"
         except Exception as e:
             logger.error(f"Error marking email as read: {e}")
@@ -326,6 +349,17 @@ def register_tools(
         client = get_client_from_context(ctx)
         try:
             client.mark_email(uid, folder, r"\Seen", False)
+
+            try:
+                cache = get_email_cache_from_context(ctx)
+                if cache:
+                    cache.mark_as_unread(uid, folder)
+                    logging.debug(f"Cache updated: marked email {uid} as unread")
+            except Exception as cache_err:
+                logging.warning(
+                    f"Failed to update cache after mark_as_unread: {cache_err}"
+                )
+
             return "Email marked as unread"
         except Exception as e:
             logger.error(f"Error marking email as unread: {e}")
@@ -552,19 +586,30 @@ def register_tools(
         """
         client = get_client_from_context(ctx)
 
-        # Process the action
         result = ""
+        cache = None
+        try:
+            cache = get_email_cache_from_context(ctx)
+        except Exception:
+            pass
+
         try:
             if action.lower() == "move":
                 if not target_folder:
                     return "Target folder must be specified for move action"
                 client.move_email(uid, folder, target_folder)
+                if cache:
+                    cache.move_email(uid, folder, target_folder)
                 result = f"Email moved from {folder} to {target_folder}"
             elif action.lower() == "read":
                 client.mark_email(uid, folder, r"\Seen", True)
+                if cache:
+                    cache.mark_as_read(uid, folder)
                 result = "Email marked as read"
             elif action.lower() == "unread":
                 client.mark_email(uid, folder, r"\Seen", False)
+                if cache:
+                    cache.mark_as_unread(uid, folder)
                 result = "Email marked as unread"
             elif action.lower() == "flag":
                 client.mark_email(uid, folder, r"\Flagged", True)
@@ -574,6 +619,8 @@ def register_tools(
                 result = "Email unflagged"
             elif action.lower() == "delete":
                 client.delete_email(uid, folder)
+                if cache:
+                    cache.delete_email(uid, folder)
                 result = "Email deleted"
             else:
                 return f"Invalid action: {action}"
@@ -715,10 +762,55 @@ def register_tools(
         Returns:
             JSON string with unread messages
         """
-        client = get_client_from_context(ctx)
+        try:
+            cache = get_email_cache_from_context(ctx)
+
+            if cache:
+                logging.debug("get_unread_messages: Using email cache")
+                emails = cache.get_unread_emails(folder=folder, limit=limit + offset)
+
+                if sort_by == "from":
+                    emails.sort(
+                        key=lambda e: e.get("from_addr", ""),
+                        reverse=(sort_order == "desc"),
+                    )
+                elif sort_by == "subject":
+                    emails.sort(
+                        key=lambda e: e.get("subject", ""),
+                        reverse=(sort_order == "desc"),
+                    )
+                else:
+                    emails.sort(
+                        key=lambda e: e.get("date", ""), reverse=(sort_order == "desc")
+                    )
+
+                emails = emails[offset : offset + limit]
+
+                if not emails:
+                    return json.dumps([], indent=2)
+
+                results = []
+                for email in emails:
+                    results.append(
+                        {
+                            "uid": email["uid"],
+                            "from": email["from_addr"],
+                            "subject": email["subject"],
+                            "date": email["date"],
+                            "snippet": (
+                                email.get("body_text") or email.get("body_html") or ""
+                            )[:100],
+                        }
+                    )
+
+                return json.dumps(results, indent=2)
+        except Exception:
+            logging.debug(
+                "get_unread_messages: Cache not available, falling back to IMAP"
+            )
 
         try:
-            # Use the refined method in ImapClient
+            client = get_client_from_context(ctx)
             emails = client.get_unread_messages(
                 folder=folder,
                 limit=limit,
@@ -730,7 +822,6 @@ def register_tools(
             if not emails:
                 return json.dumps([], indent=2)
 
-            # Format results
             results = []
             for email_obj in emails.values():
                 results.append(
@@ -1797,6 +1888,9 @@ def register_tools(
                 client.create_folder(target_folder)
 
             all_unread_uids = client.search({"UNSEEN": True}, folder="INBOX")
+            logging.debug(
+                f"quick_clean_inbox: Found {len(all_unread_uids)} unread emails"
+            )
             if not all_unread_uids:
                 return json.dumps(
                     {
@@ -1819,11 +1913,15 @@ def register_tools(
 
             for batch_start in range(0, len(uid_list), batch_size):
                 batch_uids = uid_list[batch_start : batch_start + batch_size]
+                logging.debug(
+                    f"quick_clean_inbox: Processing batch {batch_start // batch_size + 1}, fetching {len(batch_uids)} emails"
+                )
                 emails = client.fetch_emails(batch_uids, folder="INBOX")
+                logging.debug(f"quick_clean_inbox: Fetched {len(emails)} emails")
 
                 for uid, email in emails.items():
                     processed = moved_count + skipped_count
-                    if ctx and processed % 5 == 0:
+                    if ctx and processed % 1 == 0:
                         await ctx.report_progress(processed, total_to_process)
 
                     to_addresses = [str(addr).lower() for addr in email.to]
@@ -1850,10 +1948,19 @@ def register_tools(
                         client.move_email(uid, "INBOX", target_folder)
                         moved_count += 1
                         moved_emails.append(email_summary)
+
+                        try:
+                            cache = get_email_cache_from_context(ctx)
+                            if cache:
+                                cache.mark_as_read(uid, "INBOX")
+                                cache.move_email(uid, "INBOX", target_folder)
+                        except Exception:
+                            pass
                     else:
                         skipped_count += 1
                         skipped_emails.append(email_summary)
 
+            logging.debug("quick_clean_inbox: Completed successfully")
             return json.dumps(
                 {
                     "status": "success",

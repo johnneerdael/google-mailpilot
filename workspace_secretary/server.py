@@ -6,6 +6,7 @@ import os
 from contextlib import asynccontextmanager
 import secrets
 import time
+import threading
 from typing import AsyncIterator, Dict, Optional
 
 from starlette.responses import JSONResponse
@@ -19,9 +20,11 @@ from workspace_secretary.imap_client import ImapClient
 from workspace_secretary.calendar_client import CalendarClient
 from workspace_secretary.gmail_client import GmailClient
 from workspace_secretary.smtp_client import SMTPClient
+from workspace_secretary.cache import EmailCache
 from workspace_secretary.resources import register_resources
 from workspace_secretary.tools import register_tools
 from workspace_secretary.mcp_protocol import extend_server
+import asyncio
 
 # Set up logging
 logging.basicConfig(
@@ -29,6 +32,91 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("workspace_secretary")
+
+
+class ClientManager:
+    def __init__(self):
+        self.config: Optional[ServerConfig] = None
+        self.imap_client: Optional[ImapClient] = None
+        self.calendar_client: Optional[CalendarClient] = None
+        self.gmail_client: Optional[GmailClient] = None
+        self.smtp_client: Optional[SMTPClient] = None
+        self.email_cache: Optional[EmailCache] = None
+        self._initialized = False
+        self._sync_thread: Optional[threading.Thread] = None
+
+    def initialize(self, config_path: Optional[str] = None) -> None:
+        if self._initialized:
+            return
+
+        logger.info("Initializing client manager...")
+        self.config = load_config(config_path)
+
+        if not isinstance(self.config, ServerConfig):
+            raise TypeError("Invalid server configuration")
+
+        self.imap_client = ImapClient(self.config.imap, self.config.allowed_folders)
+        self.calendar_client = CalendarClient(self.config)
+        self.email_cache = EmailCache()
+
+        logger.info(
+            f"Starting server in {self.config.oauth_mode.value.upper()} mode..."
+        )
+        logger.info("Connecting to IMAP server...")
+        self.imap_client.connect()
+
+        if self.config.calendar and self.config.calendar.enabled:
+            logger.info("Connecting to Google Calendar...")
+            self.calendar_client.connect()
+
+        if self.config.oauth_mode == OAuthMode.API:
+            if self.config.imap.is_gmail and self.config.imap.oauth2:
+                logger.info("Connecting to Gmail REST API...")
+                self.gmail_client = GmailClient(self.config)
+                self.gmail_client.connect()
+        else:
+            logger.info("IMAP mode: Gmail REST API disabled, using SMTP for sending")
+            self.smtp_client = SMTPClient(self.config)
+
+        self._initialized = True
+        logger.info("Client manager initialized successfully")
+
+        self._start_background_sync()
+
+    def _start_background_sync(self) -> None:
+        def sync_loop():
+            logger.info("Background sync thread started")
+            try:
+                self._run_sync()
+                while True:
+                    time.sleep(300)
+                    logger.info("Running incremental email cache sync...")
+                    self._run_sync()
+                    logger.info("Incremental cache sync completed")
+            except Exception as e:
+                logger.error(f"Background sync error: {e}", exc_info=True)
+
+        self._sync_thread = threading.Thread(target=sync_loop, daemon=True)
+        self._sync_thread.start()
+
+    def _run_sync(self) -> None:
+        if not self.email_cache or not self.imap_client:
+            logger.error("Cannot sync: cache or IMAP client not initialized")
+            return
+
+        def progress_callback(current: int, total: int) -> None:
+            if current % 10 == 0:
+                logger.info(f"Cache sync progress: {current}/{total} emails")
+
+        self.email_cache.sync_folder(self.imap_client, "INBOX", progress_callback)
+
+    def shutdown(self) -> None:
+        if self.imap_client:
+            logger.info("Disconnecting from IMAP server...")
+            self.imap_client.disconnect()
+
+
+_client_manager = ClientManager()
 
 
 class StaticTokenVerifier:
@@ -52,48 +140,17 @@ class StaticTokenVerifier:
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict]:
-    config = getattr(server, "_config", None)
-    if not config:
-        config = load_config()
-
-    if not isinstance(config, ServerConfig):
-        raise TypeError("Invalid server configuration")
-
-    oauth_mode = config.oauth_mode
-    imap_client = ImapClient(config.imap, config.allowed_folders)
-    calendar_client = CalendarClient(config)
-    gmail_client: Optional[GmailClient] = None
-    smtp_client: Optional[SMTPClient] = None
-
-    try:
-        logger.info(f"Starting server in {oauth_mode.value.upper()} mode...")
-        logger.info("Connecting to IMAP server...")
-        imap_client.connect()
-
-        if config.calendar and config.calendar.enabled:
-            logger.info("Connecting to Google Calendar...")
-            calendar_client.connect()
-
-        if oauth_mode == OAuthMode.API:
-            if config.imap.is_gmail and config.imap.oauth2:
-                logger.info("Connecting to Gmail REST API...")
-                gmail_client = GmailClient(config)
-                gmail_client.connect()
-        else:
-            logger.info("IMAP mode: Gmail REST API disabled, using SMTP for sending")
-            smtp_client = SMTPClient(config)
-
-        yield {
-            "imap_client": imap_client,
-            "calendar_client": calendar_client,
-            "gmail_client": gmail_client,
-            "smtp_client": smtp_client,
-            "oauth_mode": oauth_mode,
-            "config": config,
-        }
-    finally:
-        logger.info("Disconnecting from IMAP server...")
-        imap_client.disconnect()
+    yield {
+        "imap_client": _client_manager.imap_client,
+        "calendar_client": _client_manager.calendar_client,
+        "gmail_client": _client_manager.gmail_client,
+        "smtp_client": _client_manager.smtp_client,
+        "oauth_mode": _client_manager.config.oauth_mode
+        if _client_manager.config
+        else OAuthMode.IMAP,
+        "config": _client_manager.config,
+        "email_cache": _client_manager.email_cache,
+    }
 
 
 def create_server(
@@ -102,21 +159,14 @@ def create_server(
     host: str = "127.0.0.1",
     port: int = 8000,
 ) -> FastMCP:
-    """Create and configure the MCP server.
-
-    Args:
-        config_path: Path to configuration file
-        debug: Enable debug mode
-        host: Host to bind to (for SSE)
-        port: Port to bind to (for SSE)
-
-    Returns:
-        Configured MCP server instance
-    """
     if debug:
         logger.setLevel(logging.DEBUG)
 
-    config = load_config(config_path)
+    _client_manager.initialize(config_path)
+    config = _client_manager.config
+
+    if not config:
+        raise RuntimeError("Failed to load configuration")
 
     auth_settings = None
     token_verifier = None
