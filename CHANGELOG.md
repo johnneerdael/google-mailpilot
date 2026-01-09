@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-01-09
+
+### Changed
+- **Docker-First Config Discovery**: `/app/config/config.yaml` is now the first default location checked
+- **Consolidated OAuth**: All OAuth logic merged into `auth_setup.py` with modern v2 endpoint
+  - Supports `--manual` (default) and `--browser` modes
+  - `--token-output` flag for Docker-friendly token management
+  - Gmail + Calendar scopes included by default
+
+### Removed
+- `browser_auth.py` — functionality merged into `auth_setup.py`
+- `gmail_auth.py` — duplicate entry point removed
+- Related test files for removed modules
+
+### Fixed
+- Config discovery now works out-of-the-box in Docker without explicit `--config` flag
+
 ## [3.1.0] - 2026-01-09
 
 ### Changed
