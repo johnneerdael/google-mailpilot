@@ -430,6 +430,38 @@ Moved emails:
 
 ---
 
+### /triage-priority - High-Priority Email Triage
+**File**: `.opencode/command/triage-priority.md`
+
+**Usage**: `/triage-priority`
+
+**What it does**:
+1. Calls `triage_priority_emails` tool
+2. Identifies emails where:
+   - User in To: with <5 recipients, OR
+   - User in To: with <15 recipients AND first/last name in body
+3. Moves matches to `Secretary/Priority`
+4. Analyzes each email and suggests actions
+
+**Output**: Priority emails with sender, subject, priority reason, content summary, and suggested action (reply, schedule, FYI).
+
+---
+
+### /triage-remaining - Process Remaining Emails
+**File**: `.opencode/command/triage-remaining.md`
+
+**Usage**: `/triage-remaining`
+
+**What it does**:
+1. Calls `triage_remaining_emails` tool
+2. Processes emails that are addressed to user but not high-priority
+3. Moves to `Secretary/Waiting`
+4. Categorizes by recommended action based on signals
+
+**Output**: Emails grouped by action (Read Later, Review This Week, Needs Response, Calendar Check).
+
+---
+
 ### /reschedule - Natural Language Reschedule
 **File**: `.opencode/command/reschedule.md`
 
