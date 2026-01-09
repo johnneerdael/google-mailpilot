@@ -15,7 +15,7 @@ export default defineConfig({
       { text: 'Getting Started', link: '/getting-started' },
       { text: 'Guide', link: '/guide/' },
       { text: 'Architecture', link: '/architecture' },
-      { text: 'API Reference', link: '/api/' },
+      { text: 'MCP Tools', link: '/api/' },
       {
         text: 'v2.2.0',
         items: [
@@ -45,7 +45,7 @@ export default defineConfig({
       ],
       '/api/': [
         {
-          text: 'API Reference',
+          text: 'MCP Tools Reference',
           items: [
             { text: 'Overview', link: '/api/' },
             { text: 'Email Tools', link: '/api/email' },

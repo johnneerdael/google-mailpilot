@@ -1,11 +1,12 @@
 # Docker Deployment
 
-This guide covers deploying Google Workspace Secretary MCP using Docker, including the v2.0 local-first architecture with SQLite caching.
+Deploy Google Workspace Secretary MCP with Docker for persistent email caching and reliable operation.
 
 ## Prerequisites
 
 - Docker and Docker Compose installed
-- A `config.yaml` file prepared (see [Configuration](configuration.md))
+- A `config.yaml` file prepared (see [Configuration](./configuration))
+- OAuth tokens in `token.json` (see [Getting Started](/getting-started))
 
 ## Quick Start
 
@@ -15,22 +16,45 @@ This guide covers deploying Google Workspace Secretary MCP using Docker, includi
 git clone https://github.com/johnneerdael/Google-Workspace-Secretary-MCP.git
 cd Google-Workspace-Secretary-MCP
 
-# Create config directory and copy sample
+# Create config directory
 mkdir -p config
-cp config.sample.yaml config/config.yaml
+
+# Copy sample config
+cp config.sample.yaml config.yaml
 ```
 
 **2. Generate a secure bearer token:**
 
-```bash
-# macOS / Linux
+::: code-group
+```bash [macOS]
 uuidgen
-
-# Windows PowerShell
-[guid]::NewGuid().ToString()
 ```
 
-Add to `config/config.yaml`:
+```bash [Linux]
+# uuidgen (install uuid-runtime if not available)
+uuidgen
+
+# Or use OpenSSL (always available)
+openssl rand -hex 32
+```
+
+```powershell [Windows]
+[guid]::NewGuid().ToString()
+```
+:::
+
+::: tip Linux Note
+On some Linux distributions, `uuidgen` requires the `uuid-runtime` package:
+```bash
+# Debian/Ubuntu
+sudo apt install uuid-runtime
+
+# RHEL/CentOS/Fedora  
+sudo dnf install util-linux
+```
+:::
+
+Add to `config.yaml`:
 
 ```yaml
 bearer_auth:
@@ -38,97 +62,88 @@ bearer_auth:
   token: "your-generated-uuid-here"
 ```
 
-**3. Start the service:**
+**3. Run OAuth setup locally first:**
 
 ```bash
-docker-compose up -d
+uv run python -m workspace_secretary.auth_setup \
+  --config config.yaml \
+  --token-output token.json
 ```
 
-**4. Monitor initial sync:**
+**4. Start the service:**
 
 ```bash
-docker-compose logs -f
+docker compose up -d
 ```
 
-On first start, you'll see the background sync progress as emails are downloaded to the SQLite cache.
+**5. Monitor initial sync:**
+
+```bash
+docker compose logs -f
+```
 
 ## Volume Mounts
 
-The Docker container uses volumes to persist critical data:
+The container requires specific volume mounts:
 
-| Host Path | Container Path | Purpose |
-|-----------|----------------|---------|
-| `./config/` | `/app/config/` | Configuration AND SQLite cache |
-| `./credentials.json` | `/app/credentials.json` | OAuth2 client credentials |
-| `./token.json` | `/app/token.json` | OAuth2 access tokens |
+| Host Path | Container Path | Mode | Purpose |
+|-----------|----------------|------|---------|
+| `./config.yaml` | `/app/config.yaml` | `:ro` | Configuration (read-only) |
+| `./token.json` | `/app/token.json` | (rw) | OAuth tokens (read-write) |
+| `./config/` | `/app/config/` | (rw) | SQLite cache storage |
 
-::: warning Critical: Mount the Entire Config Directory
-In v2.0+, the `config/` directory contains both `config.yaml` AND `email_cache.db`. Mount the directory, not individual files:
-
+::: warning Critical: Correct Mount Pattern
 ```yaml
-# ✅ Correct - mounts entire directory
+# ✅ Correct - config read-only, token read-write
 volumes:
+  - ./config.yaml:/app/config.yaml:ro
+  - ./token.json:/app/token.json
   - ./config:/app/config
 
-# ❌ Wrong - cache won't persist
+# ❌ Wrong - old pattern, config overwrites possible
 volumes:
-  - ./config.yaml:/app/config/config.yaml
+  - ./config:/app/config  # Token inside config dir
 ```
 :::
 
-## SQLite Cache Behavior
+**Why separate token.json?**
+- `config.yaml` is read-only (`:ro`) for security
+- `token.json` must be read-write for OAuth token refresh
+- Prevents accidental config overwrites during token updates
+
+## Email Cache Behavior
 
 ### Initial Sync
 
-On first startup (or after deleting `email_cache.db`), the server performs a full sync:
+On first startup, the server syncs your mailbox to SQLite:
 
-1. Connects to IMAP and lists configured folders
-2. Downloads email metadata and bodies in batches of 50
-3. Stores everything in `config/email_cache.db`
-4. Progress is logged: `Syncing INBOX: 500/2500 emails...`
+1. Connects to Gmail IMAP
+2. Downloads email metadata and bodies in batches
+3. Stores in `config/email_cache.db`
+4. Progress logged: `Syncing INBOX: 500/2500 emails...`
 
-Initial sync time depends on mailbox size:
-- ~1,000 emails: 1-2 minutes
-- ~10,000 emails: 5-10 minutes
-- ~25,000 emails: 15-30 minutes
+**Sync times by mailbox size:**
+| Emails | Time |
+|--------|------|
+| ~1,000 | 1-2 minutes |
+| ~10,000 | 5-10 minutes |
+| ~25,000 | 15-30 minutes |
 
 ### Incremental Sync
 
 After initial sync, background sync runs every 5 minutes:
-
-1. Checks UIDNEXT for new emails (RFC 3501)
-2. Downloads only new messages
-3. Detects and removes deleted emails
-4. Typical incremental sync: < 1 second
-
-### Thread Header Backfill (v2.2.0+)
-
-If you're upgrading from v2.1.x or earlier, the first sync after upgrade will backfill thread headers (`In-Reply-To`, `References`) for existing emails:
-
-```
-[BACKFILL] Found 26000 emails missing thread headers
-[BACKFILL] Progress: 1000/26000 headers fetched
-[BACKFILL] Progress: 5000/26000 headers fetched
-...
-[BACKFILL] Complete: 26000 headers updated
-```
-
-**What's happening?**
-- The server fetches ONLY headers (not full bodies) from IMAP
-- This is fast: ~1000 headers/second on a good connection
-- After backfill, thread queries become instant via SQLite
-
-**Backfill is automatic and one-time.** Future syncs download thread headers with every new email.
-
-See [Threading Guide](/guide/threading) for technical details on RFC 5256 support.
+- Checks for new emails via UIDNEXT
+- Downloads only new messages
+- Removes deleted emails
+- Typical sync: < 1 second
 
 ### Cache Management
 
 **Reset the cache** (re-download all emails):
 ```bash
-docker-compose stop
+docker compose stop
 rm config/email_cache.db
-docker-compose start
+docker compose start
 ```
 
 **View cache stats**:
@@ -137,49 +152,46 @@ docker exec workspace-secretary sqlite3 /app/config/email_cache.db \
   "SELECT folder, COUNT(*) as emails FROM emails GROUP BY folder;"
 ```
 
-**Check sync state**:
-```bash
-docker exec workspace-secretary sqlite3 /app/config/email_cache.db \
-  "SELECT * FROM folder_state;"
-```
-
 ## Authentication in Docker
 
-### OAuth2 Setup
+### OAuth Setup Inside Container
 
-When running in Docker, the OAuth redirect needs special handling:
+If you didn't run OAuth setup locally, run it inside the container:
 
-**1. Start container:**
-```bash
-docker-compose up -d
-```
-
-**2. Run auth setup inside container:**
 ```bash
 docker exec -it workspace-secretary \
-  uv run python -m workspace_secretary.auth_setup --config /app/config/config.yaml
+  python -m workspace_secretary.auth_setup \
+  --config /app/config.yaml \
+  --token-output /app/token.json
 ```
 
-**3. Follow the OAuth flow:**
-- Copy the URL printed to your browser
-- Login and approve access
-- The browser redirects to `localhost:8080`
-- Port 8080 is mapped to the container, which captures the token
+The `--manual` flag is default: paste the redirect URL rather than needing localhost access.
 
-**4. Restart if needed:**
+### Token Refresh
+
+Tokens auto-refresh. If refresh fails:
+
 ```bash
-docker-compose restart
+# Re-run auth setup
+docker exec -it workspace-secretary \
+  python -m workspace_secretary.auth_setup \
+  --config /app/config.yaml \
+  --token-output /app/token.json
+
+# Restart container
+docker compose restart
 ```
 
 ## Environment Variables
 
-Override settings via environment variables in `docker-compose.yml`:
+Override settings via environment variables:
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `WORKSPACE_TIMEZONE` | IANA timezone for calendar ops | From config.yaml |
+| `WORKSPACE_TIMEZONE` | IANA timezone | From config.yaml |
 | `LOG_LEVEL` | Logging verbosity | `INFO` |
-| `OAUTH_MODE` | `api` or `imap` | From config.yaml |
+| `WORKING_HOURS_START` | Working hours start | From config.yaml |
+| `WORKING_HOURS_END` | Working hours end | From config.yaml |
 
 Example:
 ```yaml
@@ -190,12 +202,10 @@ environment:
 
 ## Health Checks
 
-The container includes a health check that verifies:
-- HTTP server is responding on port 8000
-- IMAP connection is active (if configured)
+The container includes health checks:
 
-Check health status:
 ```bash
+# Check health status
 docker inspect workspace-secretary --format='{{.State.Health.Status}}'
 ```
 
@@ -203,12 +213,11 @@ docker inspect workspace-secretary --format='{{.State.Health.Status}}'
 
 ### Resource Limits
 
-For large mailboxes (10k+ emails), consider setting memory limits:
+For large mailboxes (10k+ emails):
 
 ```yaml
 services:
   workspace-secretary:
-    # ... other config ...
     deploy:
       resources:
         limits:
@@ -219,17 +228,15 @@ services:
 
 ### Restart Policy
 
-The default `restart: always` ensures the service recovers from crashes:
-
 ```yaml
 services:
   workspace-secretary:
     restart: always
 ```
 
-### Logging
+### Log Rotation
 
-Configure log rotation to prevent disk fill:
+Prevent disk fill:
 
 ```yaml
 services:
@@ -241,55 +248,117 @@ services:
         max-file: "3"
 ```
 
+## Reverse Proxy Setup
+
+### Traefik
+
+```yaml
+# docker-compose.traefik.yml
+services:
+  workspace-secretary:
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.secretary.rule=Host(`secretary.example.com`)"
+      - "traefik.http.routers.secretary.tls.certresolver=letsencrypt"
+      - "traefik.http.services.secretary.loadbalancer.server.port=8000"
+```
+
+### Caddy
+
+```yaml
+# docker-compose.caddy.yml with Caddyfile
+secretary.example.com {
+    reverse_proxy workspace-secretary:8000
+}
+```
+
+::: warning Caddy Let's Encrypt Caveats
+Caddy's automatic HTTPS has requirements:
+
+**Must be true:**
+- Ports 80/443 reachable from internet (HTTP-01 challenge)
+- DNS A/AAAA record points to your server
+- No firewall blocking ACME challenges
+
+**Common failures:**
+- ISP blocks port 80
+- Behind NAT without port forwarding
+- CDN/proxy interfering with challenges
+- IPv6 AAAA record exists but IPv6 routing broken
+
+**For wildcards or DNS challenges:**
+See [Caddy DNS Challenge documentation](https://caddyserver.com/docs/automatic-https#dns-challenge) for provider-specific setup.
+:::
+
 ## Connecting Clients
 
-Once running, the server exposes a **Streamable HTTP** endpoint at:
+The server exposes a **Streamable HTTP** endpoint at:
 
 ```
 http://localhost:8000/mcp
 ```
 
-With bearer auth enabled, clients must include the header:
+With bearer auth:
 ```
 Authorization: Bearer your-generated-uuid-here
 ```
 
-See the [Client Setup Guide](clients.md) for Claude Desktop, VS Code, Cursor, and other MCP clients.
+See the [Client Setup Guide](./clients) for Claude Desktop, VS Code, Cursor, and other MCP clients.
+
+## PostgreSQL (Semantic Search)
+
+For AI-powered semantic search, use PostgreSQL with pgvector:
+
+```bash
+docker compose -f docker-compose.postgres.yml up -d
+```
+
+See [Semantic Search](./semantic-search) for configuration details.
 
 ## Troubleshooting
 
 ### Sync appears stuck
 
-Check logs for IMAP errors:
 ```bash
-docker-compose logs --tail=100 | grep -i error
+docker compose logs --tail=100 | grep -i error
 ```
 
 Common causes:
-- Invalid IMAP credentials
-- Gmail App Password not configured
+- Invalid OAuth tokens (re-run auth setup)
 - Network connectivity issues
+- Gmail rate limiting
 
 ### Cache corruption
 
-If you see SQLite errors, reset the cache:
 ```bash
-docker-compose stop
+docker compose stop
 rm config/email_cache.db
-docker-compose start
+docker compose start
 ```
 
-### High memory usage during initial sync
+### High memory during initial sync
 
-Large mailboxes may use significant memory during initial sync. This is temporary and normalizes after sync completes. If needed, increase container memory limits.
+Large mailboxes use more memory during sync. This normalizes after completion. Increase container memory limits if needed.
 
 ### Bearer auth not working
 
-Verify your config has the correct format:
 ```yaml
 bearer_auth:
   enabled: true
   token: "exact-token-from-client-config"
 ```
 
-The token must match exactly (case-sensitive) between `config.yaml` and your MCP client configuration.
+Token must match exactly (case-sensitive).
+
+### Container can't write token.json
+
+Ensure `token.json` exists and is writable:
+
+```bash
+touch token.json
+chmod 644 token.json
+```
+
+---
+
+**Next**: Configure [Reverse Proxy Security](./security) for production deployments.

@@ -4,15 +4,20 @@ Complete configuration reference for Google Workspace Secretary MCP.
 
 ## Configuration File
 
-The server requires a `config.yaml` file. Copy `config.sample.yaml` as a starting point:
+The server requires a `config.yaml` file (read-only) and a `token.json` file (read-write for OAuth tokens).
 
 ```bash
-mkdir -p config
-cp config.sample.yaml config/config.yaml
+# Copy sample config
+cp config.sample.yaml config.yaml
+
+# After OAuth setup, token.json is created automatically
 ```
 
-::: tip v2.0+ Note
-The `config/` directory now also contains `email_cache.db` (SQLite cache). See [Architecture](/architecture) for details on the local-first caching system.
+::: warning Critical: Separate Token Storage
+OAuth tokens are stored in `token.json`, NOT in config.yaml. This allows:
+- `config.yaml` mounted read-only (`:ro`) for security
+- `token.json` mounted read-write for token refresh
+- No risk of config overwrites during token updates
 :::
 
 ## Required Fields
@@ -20,7 +25,7 @@ The `config/` directory now also contains `email_cache.db` (SQLite cache). See [
 ### Bearer Authentication
 
 ::: warning Strongly Recommended
-Enable bearer auth to protect your email from unauthorized access. Without it, anyone who can reach port 8000 has full access to your email.
+Enable bearer auth to protect your email from unauthorized access. Without it, anyone who can reach the server has full access to your email.
 :::
 
 ```yaml
@@ -32,35 +37,33 @@ bearer_auth:
 **Generate a unique token:**
 
 ::: code-group
-```bash [macOS / Linux]
+```bash [macOS]
 uuidgen
+```
+
+```bash [Linux]
+# uuidgen (install uuid-runtime if not available)
+uuidgen
+
+# Or use OpenSSL (always available)
+openssl rand -hex 32
 ```
 
 ```powershell [Windows]
 [guid]::NewGuid().ToString()
 ```
-
-```bash [OpenSSL (any system)]
-openssl rand -hex 32
-```
 :::
 
-**Best practices:**
-- Use a UUID or random hex string (not a simple password)
-- Never reuse tokens across services
-- Store securely (don't commit to git)
+::: tip Linux Note
+On some Linux distributions, `uuidgen` requires the `uuid-runtime` package:
+```bash
+# Debian/Ubuntu
+sudo apt install uuid-runtime
 
-### OAuth Mode
-
-```yaml
-oauth_mode: api  # or "imap"
+# RHEL/CentOS/Fedora
+sudo dnf install util-linux
 ```
-
-**Options:**
-- `api` (default): Uses Gmail REST API. Requires your own GCP OAuth credentials.
-- `imap`: Uses IMAP/SMTP protocols. Works with third-party OAuth credentials (Thunderbird, GNOME).
-
-See [OAuth Workaround](./oauth_workaround) for using third-party credentials.
+:::
 
 ### User Identity
 
@@ -68,15 +71,20 @@ See [OAuth Workaround](./oauth_workaround) for using third-party credentials.
 identity:
   email: your-email@gmail.com
   full_name: "Your Full Name"
-  aliases:
-    - alternate@gmail.com
-    - work@company.com
+  aliases: []  # Empty list if you have no aliases
 ```
 
 **Fields:**
-- `email` (required): Your primary email address
+- `email` (required): Your primary Gmail address
 - `full_name` (optional): Used to detect if you're mentioned in email body
-- `aliases` (optional): Additional email addresses you use
+- `aliases` (required): Additional email addresses, or `[]` if none
+
+::: warning Always Include aliases
+Even if you have no aliases, you must include the field:
+```yaml
+aliases: []  # Required - empty list if no aliases
+```
+:::
 
 **Used by:**
 - `get_daily_briefing`: Signals `is_addressed_to_me` and `mentions_my_name`
@@ -86,26 +94,34 @@ identity:
 
 ```yaml
 imap:
-  host: imap.gmail.com  # IMAP server hostname
-  port: 993             # IMAP port (993 for SSL)
+  host: imap.gmail.com
+  port: 993
   username: your-email@gmail.com
-  use_ssl: true         # Use SSL/TLS encryption
-  
-  # OAuth2 (recommended for Gmail)
-  oauth2:
-    client_id: YOUR_CLIENT_ID.apps.googleusercontent.com
-    client_secret: YOUR_CLIENT_SECRET
-  
-  # OR password auth (less secure)
-  # password: your-app-specific-password
+  use_ssl: true
 ```
 
-**For Gmail**: Use OAuth2 for best security. Create credentials in [Google Cloud Console](https://console.cloud.google.com/).
+OAuth credentials are stored in `token.json` after running auth setup—not in config.yaml.
+
+::: tip Gmail-Only
+This server is designed for Gmail. While built on IMAP/SMTP protocols, it uses Gmail-specific features (labels, OAuth, threading) that won't work with other providers.
+:::
+
+### SMTP Configuration
+
+```yaml
+smtp:
+  host: smtp.gmail.com
+  port: 587
+  username: your-email@gmail.com
+  use_tls: true
+```
+
+Uses the same OAuth token from `token.json` for authentication.
 
 ### Timezone
 
 ```yaml
-timezone: America/Los_Angeles  # IANA timezone format
+timezone: Europe/Amsterdam  # IANA timezone format
 ```
 
 **Valid formats**: [IANA Time Zone Database](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) names:
@@ -118,7 +134,7 @@ timezone: America/Los_Angeles  # IANA timezone format
 ```yaml
 working_hours:
   start: "09:00"  # HH:MM format, 24-hour clock
-  end: "17:00"    # HH:MM format, 24-hour clock
+  end: "17:00"
   workdays: [1, 2, 3, 4, 5]  # 1=Monday, 7=Sunday
 ```
 
@@ -126,6 +142,7 @@ working_hours:
 - Times must be in `HH:MM` format (e.g., `09:00`, not `9:00 AM`)
 - Workdays: `1`=Monday through `7`=Sunday
 - Tools like `suggest_reschedule()` only suggest times within these constraints
+- Agents will still ask before declining meetings outside working hours
 
 ### VIP Senders
 
@@ -136,9 +153,67 @@ vip_senders:
   - important-client@example.com
 ```
 
+Or if you have no VIPs:
+
+```yaml
+vip_senders: []
+```
+
 **Rules**:
 - Exact email addresses (case-insensitive)
-- Emails from these senders get `is_from_vip=true` in daily briefings
+- Emails from these senders get `is_from_vip=true` in signals
+
+## Database Configuration
+
+Secretary MCP supports two database backends for email caching.
+
+### SQLite (Default)
+
+No configuration needed—SQLite is automatic:
+
+```yaml
+database:
+  backend: sqlite  # Default, can be omitted
+```
+
+**Cache location**: `config/email_cache.db` (same directory as config.yaml)
+
+**When to use SQLite:**
+- Single-user deployments
+- Local development
+- Simple setups without semantic search
+
+### PostgreSQL with pgvector
+
+For semantic search capabilities (search by meaning, find related emails):
+
+```yaml
+database:
+  backend: postgres
+  
+  postgres:
+    host: postgres          # Docker service name, or localhost
+    port: 5432
+    database: secretary
+    user: secretary
+    password: ${POSTGRES_PASSWORD}
+    ssl_mode: prefer
+  
+  embeddings:
+    enabled: true
+    endpoint: https://api.openai.com/v1/embeddings
+    model: text-embedding-3-small
+    api_key: ${OPENAI_API_KEY}
+    dimensions: 1536
+    batch_size: 100
+```
+
+**When to use PostgreSQL:**
+- Need semantic search ("find emails about budget concerns")
+- Want `find_related_emails` for context gathering
+- Multi-instance deployments with shared database
+
+See [Semantic Search](./semantic-search) for complete setup guide.
 
 ## Optional Fields
 
@@ -149,90 +224,47 @@ Restrict which folders the AI can access:
 ```yaml
 allowed_folders:
   - INBOX
-  - Sent
-  - Archive
+  - "[Gmail]/Sent Mail"
   - "[Gmail]/All Mail"
 ```
 
 **Default**: If omitted, all folders are accessible.
 
+::: tip Gmail Folder Names
+Gmail uses `[Gmail]/` prefix for system folders:
+- `[Gmail]/Sent Mail`
+- `[Gmail]/Drafts`
+- `[Gmail]/All Mail`
+- `[Gmail]/Trash`
+:::
+
 ### Calendar Configuration
 
 ```yaml
 calendar:
-  enabled: true  # Enable calendar tools
-  verified_client: your-email@gmail.com  # Email for calendar operations
+  enabled: true
 ```
 
 **Default**: Calendar tools disabled unless explicitly enabled.
 
-### Cache Configuration (v2.0+)
-
-The SQLite email cache requires no configuration—it's automatic:
-
-```
-config/
-├── config.yaml       # Your configuration
-└── email_cache.db    # Auto-created SQLite cache
-```
-
-**Cache behavior:**
-- **Location**: `config/email_cache.db` (same directory as config.yaml)
-- **Initial sync**: Downloads all emails from configured folders on first start
-- **Incremental sync**: Every 5 minutes, fetches only new/changed emails
-- **Persistence**: Survives container restarts when `config/` is volume-mounted
-
-**Reset the cache:**
-```bash
-rm config/email_cache.db
-# Restart the server to re-sync
-```
-
-See [Architecture](/architecture) for technical details on the caching system.
-
-### SMTP Configuration
-
-For sending emails:
-
-```yaml
-smtp:
-  host: smtp.gmail.com
-  port: 587
-  username: your-email@gmail.com
-  use_tls: true
-  # password or oauth2 (same as IMAP)
-```
-
-**Default**: Uses IMAP credentials if omitted.
-
 ## Environment Variables
 
-All fields can be overridden via environment variables. Useful for Docker deployments.
-
-### Core Variables
-
-| Variable | Config Path | Default | Example |
-|----------|-------------|---------|---------|
-| `IMAP_HOST` | `imap.host` | - | `imap.gmail.com` |
-| `IMAP_PORT` | `imap.port` | `993` | `993` |
-| `IMAP_USERNAME` | `imap.username` | - | `user@gmail.com` |
-| `IMAP_PASSWORD` | `imap.password` | - | `app-password` |
-| `IMAP_USE_SSL` | `imap.use_ssl` | `true` | `true` |
-| `WORKSPACE_TIMEZONE` | `timezone` | `UTC` | `America/New_York` |
-| `WORKING_HOURS_START` | `working_hours.start` | `09:00` | `08:30` |
-| `WORKING_HOURS_END` | `working_hours.end` | `17:00` | `18:00` |
-| `WORKING_HOURS_DAYS` | `working_hours.workdays` | `1,2,3,4,5` | `1,2,3,4,5` |
-| `VIP_SENDERS` | `vip_senders` | - | `boss@co.com,ceo@co.com` |
-| `IMAP_ALLOWED_FOLDERS` | `allowed_folders` | - | `INBOX,Sent,Archive` |
-
-### OAuth2 Variables
+All fields can be overridden via environment variables:
 
 | Variable | Config Path | Example |
 |----------|-------------|---------|
-| `OAUTH2_CLIENT_ID` | `imap.oauth2.client_id` | `123.apps.googleusercontent.com` |
-| `OAUTH2_CLIENT_SECRET` | `imap.oauth2.client_secret` | `GOCSPX-...` |
+| `IMAP_HOST` | `imap.host` | `imap.gmail.com` |
+| `IMAP_PORT` | `imap.port` | `993` |
+| `IMAP_USERNAME` | `imap.username` | `user@gmail.com` |
+| `WORKSPACE_TIMEZONE` | `timezone` | `America/New_York` |
+| `WORKING_HOURS_START` | `working_hours.start` | `09:00` |
+| `WORKING_HOURS_END` | `working_hours.end` | `17:00` |
+| `WORKING_HOURS_DAYS` | `working_hours.workdays` | `1,2,3,4,5` |
+| `VIP_SENDERS` | `vip_senders` | `boss@co.com,ceo@co.com` |
+| `POSTGRES_PASSWORD` | `database.postgres.password` | (secret) |
+| `OPENAI_API_KEY` | `database.embeddings.api_key` | `sk-...` |
 
-### Docker Example
+### Docker Environment Example
 
 ```yaml
 # docker-compose.yml
@@ -243,42 +275,18 @@ services:
       - WORKSPACE_TIMEZONE=America/Los_Angeles
       - WORKING_HOURS_START=09:00
       - WORKING_HOURS_END=17:00
-      - WORKING_HOURS_DAYS=1,2,3,4,5
       - VIP_SENDERS=boss@company.com,ceo@company.com
-      - IMAP_USERNAME=user@gmail.com
-      - OAUTH2_CLIENT_ID=YOUR_ID.apps.googleusercontent.com
-      - OAUTH2_CLIENT_SECRET=YOUR_SECRET
 ```
-
-## Migration from v0.1.x
-
-Version 0.2.0 introduced **breaking changes**. You must add these required fields:
-
-```yaml
-# Add to your existing config.yaml:
-
-timezone: "UTC"  # Or your preferred timezone
-
-working_hours:
-  start: "09:00"
-  end: "17:00"
-  workdays: [1, 2, 3, 4, 5]
-
-vip_senders: []  # Empty list if you don't have VIPs
-```
-
-**API Changes**:
-- `get_daily_briefing()` now returns `email_candidates` (not `priority_emails`)
-- `suggest_reschedule()` respects `working_hours` and `timezone`
 
 ## Validation
 
 The server validates your config on startup:
 
-- **Timezone**: Must be a valid IANA timezone (raises error if invalid)
+- **Timezone**: Must be valid IANA timezone
 - **Working Hours**: Times must be `HH:MM` format
 - **Workdays**: Must be integers 1-7
 - **VIP Senders**: Normalized to lowercase for matching
+- **Aliases**: Must be present (use `[]` if empty)
 
 **Example error**:
 ```
@@ -292,57 +300,36 @@ Order of precedence (highest to lowest):
 2. `config.yaml` file
 3. Default values
 
-## Security Best Practices
-
-### OAuth2 (Recommended)
-
-✅ Use OAuth2 for Gmail/Google Workspace:
-- More secure than app passwords
-- Supports token refresh
-- Can be revoked via Google Account settings
-
-### App Passwords (Less Secure)
-
-If OAuth2 isn't available:
-```yaml
-imap:
-  password: your-app-specific-password  # Generate in Google Account settings
-```
-
-❌ **Never commit credentials to version control!**
-
-### Credentials Management
-
-**For Docker:**
-```bash
-# Use Docker secrets or environment variables
-docker run -e IMAP_PASSWORD="$GMAIL_APP_PASSWORD" ...
-```
-
-**For local development:**
-```bash
-# Use .env file (add to .gitignore)
-export IMAP_PASSWORD="..."
-```
-
-## Example Configurations
-
-### Gmail with OAuth2
+## Complete Example
 
 ```yaml
+# config.yaml - mount as read-only (:ro)
+
+bearer_auth:
+  enabled: true
+  token: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+identity:
+  email: john@gmail.com
+  full_name: "John Smith"
+  aliases: []  # No aliases
+
 imap:
   host: imap.gmail.com
   port: 993
-  username: user@gmail.com
+  username: john@gmail.com
   use_ssl: true
-  oauth2:
-    client_id: 123456.apps.googleusercontent.com
-    client_secret: GOCSPX-abcdef123456
+
+smtp:
+  host: smtp.gmail.com
+  port: 587
+  username: john@gmail.com
+  use_tls: true
 
 timezone: America/New_York
 
 working_hours:
-  start: "08:00"
+  start: "09:00"
   end: "18:00"
   workdays: [1, 2, 3, 4, 5]
 
@@ -352,31 +339,10 @@ vip_senders:
 
 calendar:
   enabled: true
-  verified_client: user@gmail.com
-```
 
-### Generic IMAP with Password
-
-```yaml
-imap:
-  host: mail.example.com
-  port: 993
-  username: john@example.com
-  password: my-secure-password
-  use_ssl: true
-
-timezone: Europe/London
-
-working_hours:
-  start: "09:00"
-  end: "17:00"
-  workdays: [1, 2, 3, 4, 5]
-
-vip_senders: []
-
-allowed_folders:
-  - INBOX
-  - Sent
+# Optional: PostgreSQL for semantic search
+database:
+  backend: sqlite  # or 'postgres' for semantic search
 ```
 
 ## Troubleshooting
@@ -400,13 +366,33 @@ working_hours:
   start: "09:00"  # Not "9:00 AM"
 ```
 
-### OAuth2 Token Expires
+### OAuth Token Refresh Fails
 
 **Problem**: `401 Unauthorized` after some time
 
-**Solution**: The server auto-refreshes tokens. If it fails, re-run auth setup:
+**Solution**: Re-run auth setup to get fresh tokens:
 ```bash
-docker exec -it workspace-secretary uv run python -m workspace_secretary.auth_setup --config /app/config/config.yaml
+# Local
+uv run python -m workspace_secretary.auth_setup \
+  --config config.yaml \
+  --token-output token.json
+
+# Docker
+docker exec -it workspace-secretary \
+  python -m workspace_secretary.auth_setup \
+  --config /app/config.yaml \
+  --token-output /app/token.json
+```
+
+### "aliases" Field Missing
+
+**Problem**: Validation error about missing aliases
+
+**Solution**: Always include aliases, even if empty:
+```yaml
+identity:
+  email: john@gmail.com
+  aliases: []  # Required!
 ```
 
 ---

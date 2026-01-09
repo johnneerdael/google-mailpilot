@@ -2,125 +2,309 @@
 
 Email and search tools for reading, searching, and managing emails.
 
-::: tip v2.0+ Performance
-Read operations now query the local SQLite cache first, providing **sub-millisecond response times**. The cache is kept in sync with IMAP via background sync every 5 minutes. See [Architecture](/architecture) for details.
-:::
-
-::: tip OAUTH_MODE Affects Email Tools
-The backend implementation varies based on your `oauth_mode` setting:
-- **`api` mode** (default): Uses Gmail REST API for all operations
-- **`imap` mode**: Uses IMAP/SMTP protocols (for third-party OAuth credentials)
-
-Tool names and parameters remain identical—only the underlying implementation differs.
+::: tip Cache-First Performance
+Read operations query the local SQLite cache first, providing **sub-millisecond response times**. The cache syncs with Gmail IMAP every 5 minutes automatically.
 :::
 
 ## gmail_search
 
-Search emails using Gmail query syntax (API mode) or IMAP search (IMAP mode).
+Search emails using Gmail-style query syntax.
 
 **Parameters:**
-- `query` (string, required): Search query
-  - API mode: Full Gmail query syntax (`from:boss@company.com has:attachment`)
-  - IMAP mode: Converted to IMAP SEARCH (basic keywords, from, subject, date)
-- `max_results` (number, optional): Max results (default: 50)
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Search query (Gmail syntax) |
+| `max_results` | number | No | Max results (default: 50) |
 
-**Returns:** Array of email objects with `id`, `thread_id`, `subject`, `from`, `date`, `snippet`
+**Query Syntax Examples:**
+```
+from:boss@company.com
+subject:invoice
+has:attachment
+after:2026-01-01 before:2026-01-31
+from:vip@company.com is:unread
+```
 
-**Example:**
+**Returns:**
 ```json
 {
-  "id": "msg_12345",
-  "thread_id": "thread_abc",
-  "subject": "Q1 Budget Review",
-  "from": "boss@company.com",
-  "date": "2026-01-08T14:30:00Z",
-  "snippet": "Please review the attached budget..."
+  "results": [
+    {
+      "uid": 12345,
+      "thread_id": "thread_abc",
+      "subject": "Q1 Budget Review",
+      "from": "boss@company.com",
+      "date": "2026-01-08T14:30:00Z",
+      "snippet": "Please review the attached budget..."
+    }
+  ]
 }
 ```
 
-::: warning IMAP Mode Limitations
-In IMAP mode, complex Gmail queries like `label:important OR category:updates` are simplified. Basic `from:`, `subject:`, `after:`, `before:` work reliably.
-:::
+**Classification:** Read-only ✅
 
-## gmail_get_thread
+## search_emails
 
-Retrieve entire conversation thread.
+Search emails using structured criteria.
 
 **Parameters:**
-- `thread_id` (string, required): Thread ID from search results
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `keyword` | string | No | Text to search in subject/body |
+| `from` | string | No | Sender email filter |
+| `subject` | string | No | Subject line filter |
+| `since_date` | string | No | ISO date (YYYY-MM-DD) |
+| `limit` | number | No | Max results (default: 50) |
 
-**Returns:** 
-- `thread_id`: Thread identifier
-- `messages`: Array of all messages in thread (chronological)
-- Each message includes: `id`, `from`, `to`, `cc`, `subject`, `date`, `body`, `attachments`
+**Returns:** Array of email objects with `uid`, `subject`, `from`, `date`, `snippet`
 
-## send_email
-
-Send an email message.
-
-**Parameters:**
-- `to` (string, required): Recipient email
-- `subject` (string, required): Email subject
-- `body` (string, required): Email body (plain text or HTML)
-- `cc` (string, optional): CC recipients
-- `bcc` (string, optional): BCC recipients
-- `reply_to_message_id` (string, optional): Message ID for threading
-
-**Backend:**
-- API mode: Gmail REST API `messages.send`
-- IMAP mode: SMTP with OAuth2 XOAUTH2 authentication
+**Classification:** Read-only ✅
 
 ## get_unread_messages
 
 Fetch recent unread emails with basic metadata.
 
 **Parameters:**
-- `limit` (number, optional): Max emails to return (default: 20)
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `limit` | number | No | Max emails (default: 20) |
 
 **Returns:**
-Array of email objects with:
-- `uid`: Unique message ID
-- `subject`: Email subject
-- `from`: Sender email
-- `date`: Date string
-- `snippet`: First 700 chars of body
+```json
+{
+  "messages": [
+    {
+      "uid": 12345,
+      "subject": "Meeting Tomorrow",
+      "from": "colleague@company.com",
+      "date": "2026-01-09T09:00:00Z",
+      "snippet": "Hi, can we meet at 3pm..."
+    }
+  ],
+  "total_unread": 15
+}
+```
 
-## search_emails (Legacy)
-
-::: warning Deprecated
-Use `gmail_search` instead. This tool uses IMAP search directly and may be removed in future versions.
-:::
-
-Search emails using keywords or advanced criteria.
-
-**Parameters:**
-- `keyword` (string, optional): Text to search for
-- `from` (string, optional): Sender email filter
-- `subject` (string, optional): Subject filter
-- `since_date` (string, optional): ISO date (YYYY-MM-DD)
-- `limit` (number, optional): Max results (default: 50)
+**Classification:** Read-only ✅
 
 ## get_email_details
 
 Get full email content including attachments metadata.
 
 **Parameters:**
-- `message_id` (string, required): Email UID
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uid` | number | Yes | Email UID |
+| `folder` | string | No | Folder name (default: INBOX) |
 
 **Returns:**
-- `subject`, `from`, `to`, `cc`, `bcc`, `date`
-- `body`: Full email body
-- `attachments`: Array of `{filename, size, content_type, attachment_id}`
+```json
+{
+  "uid": 12345,
+  "subject": "Q1 Report",
+  "from": "reports@company.com",
+  "to": ["you@gmail.com"],
+  "cc": ["team@company.com"],
+  "date": "2026-01-09T10:00:00Z",
+  "body": "Full email body text...",
+  "attachments": [
+    {
+      "filename": "Q1-Report.pdf",
+      "size": 245678,
+      "content_type": "application/pdf",
+      "attachment_id": "att_abc123"
+    }
+  ]
+}
+```
+
+**Classification:** Read-only ✅
+
+## gmail_get_thread / get_thread
+
+Retrieve entire conversation thread.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `thread_id` | string | Yes | Thread ID from search results |
+
+**Returns:**
+```json
+{
+  "thread_id": "thread_abc",
+  "subject": "Re: Project Update",
+  "messages": [
+    {
+      "uid": 12340,
+      "from": "colleague@company.com",
+      "to": ["you@gmail.com"],
+      "date": "2026-01-07T14:00:00Z",
+      "body": "Here's the initial update..."
+    },
+    {
+      "uid": 12345,
+      "from": "you@gmail.com",
+      "to": ["colleague@company.com"],
+      "date": "2026-01-08T09:30:00Z",
+      "body": "Thanks, I'll review..."
+    }
+  ]
+}
+```
+
+**Classification:** Read-only ✅
 
 ## summarize_thread
 
-Get a token-efficient summary of an email thread.
+Get a token-efficient summary of an email thread for AI context.
 
 **Parameters:**
-- `thread_id` (string, required): Thread ID
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `thread_id` | string | Yes | Thread ID |
 
-**Returns:** Summarized thread with truncated messages for AI context efficiency.
+**Returns:**
+```json
+{
+  "thread_id": "thread_abc",
+  "participants": ["you@gmail.com", "colleague@company.com"],
+  "message_count": 5,
+  "date_range": "Jan 7-9, 2026",
+  "key_points": [
+    "Project timeline discussed",
+    "Budget approval pending",
+    "Next meeting scheduled for Friday"
+  ],
+  "latest_message": {
+    "from": "colleague@company.com",
+    "date": "2026-01-09T10:00:00Z",
+    "snippet": "Sounds good, see you Friday..."
+  }
+}
+```
 
-## More Tools
+**Classification:** Read-only ✅
 
-See full tool list in the [README](https://github.com/johnneerdael/Google-Workspace-Secretary-MCP#-available-tools).
+## send_email
+
+Send an email message.
+
+::: danger Mutation Tool
+**Always show draft to user before calling.** See [AGENTS.md](/guide/agents#human-in-the-loop) for the draft-review-send pattern.
+:::
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `to` | string | Yes | Recipient email |
+| `subject` | string | Yes | Email subject |
+| `body` | string | Yes | Email body (plain text or HTML) |
+| `cc` | string | No | CC recipients (comma-separated) |
+| `bcc` | string | No | BCC recipients |
+| `reply_to_message_id` | string | No | Message ID for threading |
+
+**Classification:** Mutation 🔴 (requires user confirmation)
+
+## create_draft_reply
+
+Create a draft reply in Gmail Drafts folder.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uid` | number | Yes | Original email UID |
+| `body` | string | Yes | Draft reply body |
+| `folder` | string | No | Folder of original (default: INBOX) |
+
+**Returns:**
+```json
+{
+  "status": "draft_created",
+  "draft_id": "draft_xyz",
+  "in_reply_to": 12345,
+  "message": "Draft saved to Gmail Drafts folder"
+}
+```
+
+**Classification:** Staging ✅ (safe - creates draft, doesn't send)
+
+## mark_as_read / mark_as_unread
+
+Change email read status.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uid` | number | Yes | Email UID |
+| `folder` | string | No | Folder name (default: INBOX) |
+
+**Classification:** Mutation 🔴 (confirm for bulk operations)
+
+## move_email
+
+Move email to different folder.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uid` | number | Yes | Email UID |
+| `destination` | string | Yes | Target folder name |
+| `source` | string | No | Source folder (default: INBOX) |
+
+**Classification:** Mutation 🔴 (requires confirmation)
+
+## modify_gmail_labels
+
+Add or remove Gmail labels.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uid` | number | Yes | Email UID |
+| `add_labels` | array | No | Labels to add |
+| `remove_labels` | array | No | Labels to remove |
+
+**Classification:** Mutation 🔴 (requires confirmation)
+
+## Semantic Search Tools
+
+Available when PostgreSQL + pgvector is configured:
+
+### semantic_search_emails
+
+Search emails by meaning, not keywords.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Natural language search |
+| `folder` | string | No | Folder to search (default: INBOX) |
+| `limit` | number | No | Max results (default: 20) |
+| `similarity_threshold` | float | No | Min similarity 0-1 (default: 0.7) |
+
+**Example queries:**
+- "emails about budget concerns"
+- "discussions about project delays"
+- "messages asking for my opinion"
+
+**Classification:** Read-only ✅
+
+### find_related_emails
+
+Find emails similar to a reference email.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uid` | number | Yes | Reference email UID |
+| `folder` | string | No | Folder (default: INBOX) |
+| `limit` | number | No | Max results (default: 10) |
+
+**Use case:** Gather context before drafting a reply.
+
+**Classification:** Read-only ✅
+
+---
+
+**Next:** [Calendar Tools](./calendar) | [Intelligence Tools](./intelligence)
