@@ -126,6 +126,15 @@ The AI:
 3. Parses and presents the total
 :::
 
+## What's New in v3.2.0
+
+**Standardized Docker Paths & OAuth Consolidation**:
+
+- 📁 **Config Path**: `/app/config/config.yaml` is now the default (Docker-first)
+- 🔐 **Single OAuth Entry**: `auth_setup.py` handles all OAuth flows (browser_auth removed)
+- 📅 **Calendar Scope**: OAuth now includes Gmail + Calendar scopes by default
+- 🛠️ **Token Output**: `--token-output` flag for Docker-friendly token management
+
 ## What's New in v3.1.0
 
 **Single Container Architecture** — Simplified deployment with supervisor-managed processes:

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "workspace-secretary"
-version = "3.1.0"
+version = "3.2.0"
 description = "Google Workspace Secretary MCP server for interactive email and calendar processing"
 readme = "README.md"
 requires-python = ">=3.10"
