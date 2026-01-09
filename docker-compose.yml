@@ -1,6 +1,6 @@
 services:
   workspace-secretary:
-    image: ghcr.io/jneerdaekl/workspace-secretary:latest
+    image: ghcr.io/johnneerdael/mail-automation-mcp:latest
     container_name: workspace-secretary
     restart: always
     ports:
@@ -13,14 +13,5 @@ services:
       # Persist tasks if needed (optional if using external storage)
       - ./tasks.json:/app/tasks.json
     command: uv run python -m workspace_secretary.server --transport http --host 0.0.0.0 --port 8000
-    environment:
-      # Optional environment variables to override config
-      - IMAP_HOST=${IMAP_HOST}
-      - IMAP_USER=${IMAP_USER}
-      - IMAP_PASSWORD=${IMAP_PASSWORD}
-      - SMTP_HOST=${SMTP_HOST}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    # Keep the container running if it's a long-running server
     stdin_open: true
     tty: true
