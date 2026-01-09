@@ -1,3 +1,3 @@
 """IMAP Model Context Protocol server for interactive email processing."""
 
-__version__ = "2.3.0"
+__version__ = "4.2.0"

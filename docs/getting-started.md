@@ -13,7 +13,7 @@ Get up and running with Gmail Secretary MCP in minutes.
 ## Prerequisites
 
 - **Docker and Docker Compose** installed ([Install Docker Desktop](https://www.docker.com/products/docker-desktop/))
-- **Google Cloud Project** with Gmail API enabled and OAuth2 credentials
+- **Google Cloud Project** with OAuth2 credentials (for IMAP/SMTP authentication and Calendar API)
 - **Claude Desktop** or another MCP-compatible AI client
 
 ## Quick Start
@@ -226,8 +226,9 @@ curl http://localhost:8000/health
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create or select a project
-3. Enable **Gmail API** and **Google Calendar API**:
-   - APIs & Services → Library → Search and enable both
+3. Enable **Google Calendar API**:
+   - APIs & Services → Library → Search and enable it
+   - Note: Gmail uses IMAP/SMTP (no Gmail API needed)
 
 4. Configure OAuth Consent Screen:
    - APIs & Services → OAuth consent screen

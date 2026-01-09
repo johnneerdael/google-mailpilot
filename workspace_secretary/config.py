@@ -281,15 +281,11 @@ class SqliteConfig:
     """SQLite database configuration."""
 
     email_cache_path: str = "config/email_cache.db"
-    calendar_cache_path: str = "config/calendar_cache.db"
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SqliteConfig":
         return cls(
             email_cache_path=data.get("email_cache_path", "config/email_cache.db"),
-            calendar_cache_path=data.get(
-                "calendar_cache_path", "config/calendar_cache.db"
-            ),
         )
 
 

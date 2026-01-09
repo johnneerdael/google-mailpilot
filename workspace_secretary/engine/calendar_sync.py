@@ -1,8 +1,7 @@
 """Google Calendar client for the AI Secretary."""
 
 import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
-from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -122,134 +121,72 @@ class CalendarClient:
 
         return service.freebusy().query(body=body).execute()
 
+    def list_calendars(self) -> List[Dict[str, Any]]:
+        """List all calendars the user has access to."""
+        service = self._ensure_connected()
 
-class CalendarSync:
-    def __init__(self, client: CalendarClient, cache: "CalendarCache"):
-        self.client = client
-        self.cache = cache
+        calendars_result = service.calendarList().list().execute()
+        return calendars_result.get("items", [])
 
-    def sync_calendar(self, calendar_id: str = "primary") -> dict[str, Any]:
-        service = self.client._ensure_connected()
+    def get_calendar(self, calendar_id: str = "primary") -> Dict[str, Any]:
+        """Get calendar details including conferenceProperties."""
+        service = self._ensure_connected()
 
-        sync_token = self.cache.get_sync_token(calendar_id)
+        return service.calendars().get(calendarId=calendar_id).execute()
 
-        if sync_token:
-            return self._incremental_sync(service, calendar_id, sync_token)
-        else:
-            return self._full_sync(service, calendar_id)
+    def get_event(self, calendar_id: str, event_id: str) -> Dict[str, Any]:
+        """Get a single event by ID."""
+        service = self._ensure_connected()
 
-    def _full_sync(self, service: Any, calendar_id: str) -> dict[str, Any]:
-        logger.info(f"Starting full calendar sync for {calendar_id}")
+        return service.events().get(calendarId=calendar_id, eventId=event_id).execute()
 
-        self.cache.clear_calendar(calendar_id)
+    def update_event(
+        self,
+        calendar_id: str,
+        event_id: str,
+        event_data: Dict[str, Any],
+        conference_data_version: int = 0,
+    ) -> Dict[str, Any]:
+        """Update/patch an existing event."""
+        service = self._ensure_connected()
 
-        try:
-            cal_info = service.calendars().get(calendarId=calendar_id).execute()
-            self.cache.upsert_calendar(
-                calendar_id=calendar_id,
-                summary=cal_info.get("summary", calendar_id),
-                description=cal_info.get("description"),
-                timezone=cal_info.get("timeZone"),
-                access_role=cal_info.get("accessRole"),
+        event = (
+            service.events()
+            .patch(
+                calendarId=calendar_id,
+                eventId=event_id,
+                body=event_data,
+                conferenceDataVersion=conference_data_version,
             )
-        except Exception as e:
-            logger.warning(f"Could not fetch calendar info: {e}")
+            .execute()
+        )
 
-        total_events = 0
-        page_token = None
-        next_sync_token = None
+        logger.info(f"Updated event: {event.get('htmlLink')}")
+        return event
 
-        while True:
-            events_result = (
-                service.events()
-                .list(
-                    calendarId=calendar_id,
-                    pageToken=page_token,
-                    maxResults=250,
-                    singleEvents=False,
-                    showDeleted=False,
-                )
-                .execute()
-            )
+    def delete_event(self, calendar_id: str, event_id: str) -> None:
+        """Delete an event."""
+        service = self._ensure_connected()
 
-            for event in events_result.get("items", []):
-                self.cache.upsert_event(event, calendar_id)
-                total_events += 1
+        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        logger.info(f"Deleted event {event_id} from {calendar_id}")
 
-            page_token = events_result.get("nextPageToken")
-            if not page_token:
-                next_sync_token = events_result.get("nextSyncToken")
-                break
+    def freebusy_query(
+        self,
+        time_min: str,
+        time_max: str,
+        calendar_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Query free/busy information for multiple calendars."""
+        service = self._ensure_connected()
 
-        if next_sync_token:
-            self.cache.update_sync_token(calendar_id, next_sync_token)
+        if calendar_ids is None:
+            calendar_ids = ["primary"]
 
-        logger.info(f"Full sync complete: {total_events} events synced")
-        return {"status": "full_sync", "events_synced": total_events}
+        body = {
+            "timeMin": time_min,
+            "timeMax": time_max,
+            "items": [{"id": cal_id} for cal_id in calendar_ids],
+        }
 
-    def _incremental_sync(
-        self, service: Any, calendar_id: str, sync_token: str
-    ) -> dict[str, Any]:
-        logger.info(f"Starting incremental calendar sync for {calendar_id}")
-
-        added = 0
-        updated = 0
-        deleted = 0
-        page_token = None
-        next_sync_token = None
-
-        try:
-            while True:
-                events_result = (
-                    service.events()
-                    .list(
-                        calendarId=calendar_id,
-                        syncToken=sync_token,
-                        pageToken=page_token,
-                        maxResults=250,
-                        showDeleted=True,
-                    )
-                    .execute()
-                )
-
-                for event in events_result.get("items", []):
-                    event_id = event.get("id")
-                    if not event_id:
-                        continue
-
-                    if event.get("status") == "cancelled":
-                        self.cache.delete_event(event_id)
-                        deleted += 1
-                    else:
-                        existing = self.cache.get_event(event_id)
-                        self.cache.upsert_event(event, calendar_id)
-                        if existing:
-                            updated += 1
-                        else:
-                            added += 1
-
-                page_token = events_result.get("nextPageToken")
-                if not page_token:
-                    next_sync_token = events_result.get("nextSyncToken")
-                    break
-
-            if next_sync_token:
-                self.cache.update_sync_token(calendar_id, next_sync_token)
-
-            logger.info(f"Incremental sync: +{added} ~{updated} -{deleted}")
-            return {
-                "status": "incremental_sync",
-                "added": added,
-                "updated": updated,
-                "deleted": deleted,
-            }
-
-        except Exception as e:
-            if "Sync token" in str(e) or "410" in str(e):
-                logger.warning("Sync token invalid, falling back to full sync")
-                return self._full_sync(service, calendar_id)
-            raise
-
-
-if TYPE_CHECKING:
-    from workspace_secretary.engine.calendar_cache import CalendarCache
+        return service.freebusy().query(body=body).execute()

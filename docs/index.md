@@ -39,7 +39,7 @@ features:
     
   - icon: 📅
     title: Calendar Integration
-    details: Full Google Calendar sync with timezone-aware scheduling, availability lookup, and meeting suggestions within working hours.
+    details: Real-time Google Calendar API access with timezone-aware scheduling, availability lookup, and meeting suggestions within working hours.
 ---
 
 ## Quick Start
@@ -126,6 +126,34 @@ The AI:
 3. Parses and presents the total
 :::
 
+## What's New in v4.2.0
+
+**Calendar API Passthrough** — Simplified architecture with real-time calendar access:
+
+- 🗓️ **Direct API Access**: Calendar operations now go directly to Google Calendar API (no local caching)
+- ⚡ **Real-Time Data**: All calendar queries return live data, no sync staleness
+- 🧹 **Simplified Architecture**: Removed calendar database tables and sync complexity
+- 🔧 **New Endpoints**: Added 6 new calendar API endpoints for fine-grained control
+
+### New Calendar API Endpoints
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/calendar/list` | List all user's calendars |
+| `GET /api/calendar/{id}` | Get calendar details |
+| `GET /api/calendar/{id}/events/{event_id}` | Get single event |
+| `PATCH /api/calendar/{id}/events/{event_id}` | Update event |
+| `DELETE /api/calendar/{id}/events/{event_id}` | Delete event |
+| `POST /api/calendar/freebusy` | Query free/busy for multiple calendars |
+
+### Removed
+
+- `calendar_cache.py` — Calendar caching layer removed
+- `gmail_client.py` — Deprecated Gmail REST API client removed
+- `CalendarSync` class — No longer needed without caching
+- Calendar database tables (calendars, events, attendees)
+- `calendar_cache_path` config option (ignored if present)
+
 ## What's New in v4.1.0
 
 **CONDSTORE & IDLE Support** — Efficient incremental sync with push notifications:
@@ -152,7 +180,7 @@ The AI:
 - 🔄 **Engine Owns All Writes**: Engine now uses `DatabaseInterface` for all database mutations
 - 📖 **MCP is Read-Only**: MCP reads directly from database, calls Engine API only for mutations
 - 🗄️ **Unified Database**: Both Engine and MCP use the same `DatabaseInterface` abstraction
-- 📅 **Integrated Calendar Sync**: Calendar sync now part of Engine's background sync loop
+- 📅 **Integrated Calendar Sync**: Calendar operations now use direct API passthrough (no local caching)
 - 🧠 **Auto Embeddings**: Engine generates embeddings automatically after email sync (PostgreSQL)
 - 🚀 **Graceful Enrollment**: Engine starts in "no account" mode, auto-connects when OAuth tokens appear
 

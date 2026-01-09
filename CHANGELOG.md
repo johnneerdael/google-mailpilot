@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-01-09
+
+### Changed
+
+- **Calendar API Passthrough**: Calendar operations now go directly to Google Calendar API
+  - Removed local calendar database caching
+  - All calendar queries are real-time against Google API
+  - Simpler architecture, no sync staleness issues
+
+### Added
+
+- **New Calendar API Endpoints**:
+  - `GET /api/calendar/list` - List all user's calendars
+  - `GET /api/calendar/{calendar_id}` - Get calendar details
+  - `GET /api/calendar/{calendar_id}/events/{event_id}` - Get single event
+  - `PATCH /api/calendar/{calendar_id}/events/{event_id}` - Update event
+  - `DELETE /api/calendar/{calendar_id}/events/{event_id}` - Delete event
+  - `POST /api/calendar/freebusy` - Query free/busy for multiple calendars
+
+### Removed
+
+- `calendar_cache.py` - Calendar caching layer removed
+- `gmail_client.py` - Deprecated Gmail REST API client removed
+- `CalendarSync` class - No longer needed without caching
+- Calendar database tables (calendars, events, attendees)
+- `calendar_cache_path` config option (ignored if present)
+
+### Migration
+
+- **Automatic**: No action required
+- Calendar operations work immediately without sync delay
+- Existing `calendar_cache_path` in config is ignored (not an error)
+
 ## [4.1.2] - 2026-01-09
 
 ### Changed

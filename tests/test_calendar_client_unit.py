@@ -51,7 +51,7 @@ def test_create_calendar_event(mock_calendar_service):
     client.create_event(event_data)
 
     mock_calendar_service.events().insert.assert_called_with(
-        calendarId="primary", body=event_data
+        calendarId="primary", body=event_data, conferenceDataVersion=0
     )
 
 

@@ -1,0 +1,163 @@
+# Gmail Secretary MCP Configuration
+# Complete example with all available options
+#
+# IMPORTANT: This file is mounted READ-ONLY in Docker.
+# OAuth tokens are stored separately in token.json (read-write).
+
+# =============================================================================
+# SECURITY: Bearer Token Authentication (STRONGLY RECOMMENDED)
+# =============================================================================
+# Enable bearer auth to secure your MCP endpoint. Without this, anyone who can
+# reach port 8000 can access your email.
+#
+# Generate a unique token:
+#   macOS:        uuidgen
+#   Linux:        uuidgen (install uuid-runtime if needed) OR openssl rand -hex 32
+#   Windows:      [guid]::NewGuid().ToString()
+#
+bearer_auth:
+  enabled: true  # Set to true in production!
+  token: "REPLACE-WITH-YOUR-GENERATED-UUID"
+  # Example: token: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+
+# =============================================================================
+# REQUIRED: User Identity Configuration
+# =============================================================================
+# Used to detect if emails are addressed directly to you
+identity:
+  email: your-email@gmail.com
+  full_name: "Your Full Name"
+  # List alternate email addresses, or empty list if none
+  aliases: []
+  # Example with aliases:
+  # aliases:
+  #   - alternate@gmail.com
+  #   - work@company.com
+
+# =============================================================================
+# REQUIRED: IMAP Configuration (Gmail)
+# =============================================================================
+# OAuth tokens are stored in token.json after running auth_setup.
+# Do NOT put client_id/client_secret here - they're passed to auth_setup directly.
+imap:
+  host: imap.gmail.com
+  port: 993
+  username: your-email@gmail.com
+  use_ssl: true
+
+# =============================================================================
+# REQUIRED: SMTP Configuration (Gmail)
+# =============================================================================
+# Uses the same OAuth token from token.json for authentication.
+smtp:
+  host: smtp.gmail.com
+  port: 587
+  username: your-email@gmail.com
+  use_tls: true
+
+# =============================================================================
+# REQUIRED: Timezone Configuration
+# =============================================================================
+# Use IANA timezone format (e.g., America/Los_Angeles, Europe/London, Asia/Tokyo)
+# NOT abbreviations like PST, GMT, etc.
+timezone: America/Los_Angeles
+
+# =============================================================================
+# REQUIRED: Working Hours Configuration
+# =============================================================================
+# Used by scheduling tools to suggest meeting times only within your working hours
+working_hours:
+  start: "09:00"  # Must be in HH:MM format (24-hour)
+  end: "17:00"    # Must be in HH:MM format (24-hour)
+  workdays: [1, 2, 3, 4, 5]  # 1=Monday, 7=Sunday
+
+# =============================================================================
+# REQUIRED: VIP Senders
+# =============================================================================
+# Emails from these addresses get is_from_vip=true signal in daily briefings.
+# Use exact email addresses (case-insensitive), or empty list if none.
+vip_senders: []
+# Example with VIPs:
+# vip_senders:
+#   - boss@company.com
+#   - ceo@company.com
+#   - important-client@example.com
+
+# =============================================================================
+# OPTIONAL: Database Backend
+# =============================================================================
+# Choose between SQLite (default) or PostgreSQL with pgvector for semantic search.
+#
+# SQLite (default - no configuration needed):
+#   - Cache stored at: config/email_cache.db
+#   - Good for single-user deployments
+#   - No semantic search capability
+#
+database:
+  backend: sqlite  # Options: "sqlite" (default) or "postgres"
+
+  # -----------------------------------------------------------------------------
+  # PostgreSQL Configuration (only used when backend: postgres)
+  # -----------------------------------------------------------------------------
+  # Required for semantic search (search by meaning, find related emails).
+  # Use docker-compose.postgres.yml which includes pgvector.
+  #
+  # The database and pgvector extension are created automatically on first connect.
+  #
+  # postgres:
+  #   host: postgres              # Docker service name, or localhost for local dev
+  #   port: 5432
+  #   database: secretary
+  #   user: secretary
+  #   password: ${POSTGRES_PASSWORD}  # Use environment variable for secrets
+  #   ssl_mode: prefer            # Options: disable, allow, prefer, require, verify-ca, verify-full
+
+  # -----------------------------------------------------------------------------
+  # Embeddings Configuration (only used when backend: postgres)
+  # -----------------------------------------------------------------------------
+  # Required for semantic search. Uses any OpenAI-compatible embeddings API.
+  #
+  # embeddings:
+  #   enabled: true
+  #   endpoint: https://api.openai.com/v1/embeddings
+  #   model: text-embedding-3-small
+  #   api_key: ${OPENAI_API_KEY}  # Use environment variable for secrets
+  #   dimensions: 1536            # Must match your model's output dimensions
+  #   batch_size: 100             # Emails processed per API call
+
+  # -----------------------------------------------------------------------------
+  # Alternative Embeddings Providers
+  # -----------------------------------------------------------------------------
+  # Any OpenAI-compatible endpoint works:
+  #
+  # Azure OpenAI:
+  #   endpoint: https://your-resource.openai.azure.com/openai/deployments/your-deployment/embeddings?api-version=2024-02-01
+  #   model: text-embedding-3-small
+  #   api_key: ${AZURE_OPENAI_KEY}
+  #
+  # Local Ollama:
+  #   endpoint: http://ollama:11434/api/embeddings
+  #   model: nomic-embed-text
+  #   api_key: ""                 # Ollama doesn't need a key
+  #   dimensions: 768             # Match Ollama model output
+  #
+  # vLLM / LocalAI / LiteLLM:
+  #   endpoint: http://localhost:8080/v1/embeddings
+  #   model: BAAI/bge-small-en-v1.5
+  #   api_key: ${LOCAL_API_KEY}
+  #   dimensions: 384
+
+# =============================================================================
+# OPTIONAL: Restrict Email Folders
+# =============================================================================
+# If not specified, all folders are accessible
+# allowed_folders:
+#   - INBOX
+#   - "[Gmail]/Sent Mail"
+#   - "[Gmail]/All Mail"
+
+# =============================================================================
+# OPTIONAL: Calendar Configuration
+# =============================================================================
+calendar:
+  enabled: false  # Set to true to enable calendar tools

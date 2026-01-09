@@ -139,6 +139,61 @@ class EngineClient:
             params={"time_min": time_min, "time_max": time_max},
         )
 
+    def list_calendars(self) -> dict[str, Any]:
+        return self._request("GET", "/api/calendar/list")
+
+    def get_calendar(self, calendar_id: str = "primary") -> dict[str, Any]:
+        return self._request("GET", f"/api/calendar/{calendar_id}")
+
+    def get_calendar_event(self, calendar_id: str, event_id: str) -> dict[str, Any]:
+        return self._request("GET", f"/api/calendar/{calendar_id}/events/{event_id}")
+
+    def update_calendar_event(
+        self,
+        calendar_id: str,
+        event_id: str,
+        summary: Optional[str] = None,
+        description: Optional[str] = None,
+        location: Optional[str] = None,
+        start_time: Optional[str] = None,
+        end_time: Optional[str] = None,
+        attendees: Optional[list[str]] = None,
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = {}
+        if summary is not None:
+            data["summary"] = summary
+        if description is not None:
+            data["description"] = description
+        if location is not None:
+            data["location"] = location
+        if start_time is not None:
+            data["start_time"] = start_time
+        if end_time is not None:
+            data["end_time"] = end_time
+        if attendees is not None:
+            data["attendees"] = attendees
+        return self._request(
+            "PATCH",
+            f"/api/calendar/{calendar_id}/events/{event_id}",
+            json=data,
+        )
+
+    def delete_calendar_event(self, calendar_id: str, event_id: str) -> dict[str, Any]:
+        return self._request("DELETE", f"/api/calendar/{calendar_id}/events/{event_id}")
+
+    def freebusy_query(
+        self, time_min: str, time_max: str, calendar_ids: Optional[list[str]] = None
+    ) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            "/api/calendar/freebusy",
+            json={
+                "time_min": time_min,
+                "time_max": time_max,
+                "calendar_ids": calendar_ids,
+            },
+        )
+
     def setup_labels(self, dry_run: bool = False) -> dict[str, Any]:
         return self._request(
             "POST",

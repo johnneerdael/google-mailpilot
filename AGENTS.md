@@ -160,17 +160,17 @@ Agents analyze signals in context:
 
 ---
 
-## 📁 Gmail-Only Architecture
+## 📁 Gmail Architecture
 
-This system is designed exclusively for **Gmail + Google Calendar** via Google Workspace APIs.
+This system is designed for **Gmail via IMAP/SMTP + Google Calendar API**.
 
 ### Supported Operations
-- Gmail API for email (`gmail_search`, `gmail_get_thread`, `modify_gmail_labels`)
+- IMAP for email reading/sync (RFC-compliant with CONDSTORE, IDLE)
+- SMTP for email sending
 - Google Calendar API for scheduling (`get_calendar_availability`, `create_calendar_event`)
 - Smart Labels: `Secretary/Priority`, `Secretary/Action-Required`, `Secretary/Processed`, `Secretary/Calendar`, `Secretary/Newsletter`, `Secretary/Waiting`
 
 ### Not Supported
-- Generic IMAP flows (legacy `search_emails` exists but prefer `gmail_search`)
 - Non-Gmail providers (Outlook, Yahoo, etc.)
 - Exchange Server protocols
 

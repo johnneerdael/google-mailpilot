@@ -1,6 +1,6 @@
-# Architecture v4.0.0
+# Architecture v4.2.0
 
-This document describes the **read/write split architecture** introduced in v4.0.0.
+This document describes the **read/write split architecture** introduced in v4.0.0, with calendar API passthrough added in v4.2.0.
 
 ## Overview
 
@@ -14,22 +14,21 @@ The Gmail Secretary MCP uses a **dual-process architecture** with strict separat
 │  secretary-engine (daemon)                                          │
 │                                                                     │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┐  │
-│  │ IMAP Client │  │ Calendar    │  │ Gmail API   │  │ Embeddings│  │
+│  │ IMAP Client │  │ Calendar    │  │ SMTP Client │  │ Embeddings│  │
 │  │ (OAuth2)    │  │ API         │  │ (send/draft)│  │ Generator │  │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └─────┬─────┘  │
 │         │                │                │               │         │
-│         ▼                ▼                ▼               ▼         │
+│         ▼                │                ▼               ▼         │
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │              DatabaseInterface (WRITE)                      │   │
 │  │  • upsert_email(), save_folder_state()                      │   │
-│  │  • upsert_event(), update_sync_token()                      │   │
 │  │  • upsert_embedding() (PostgreSQL only)                     │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                              │                                      │
 │                              ▼                                      │
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │              FastAPI Internal API (Unix Socket)             │   │
-│  │  /api/email/move, /api/email/send, /api/calendar/event      │   │
+│  │  /api/email/move, /api/email/send, /api/calendar/events     │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────────────┘
                                │
@@ -43,7 +42,7 @@ The Gmail Secretary MCP uses a **dual-process architecture** with strict separat
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │              DatabaseInterface (READ-ONLY)                  │   │
 │  │  • get_email_by_uid(), search_emails()                      │   │
-│  │  • get_events(), semantic_search()                          │   │
+│  │  • semantic_search() (PostgreSQL only)                      │   │
 │  │  • get_thread_emails(), get_synced_folders()                │   │
 │  └─────────────────────────────────────────────────────────────┘   │
 │                                                                     │
@@ -58,12 +57,12 @@ The Gmail Secretary MCP uses a **dual-process architecture** with strict separat
 
 ### Why This Architecture?
 
-| Problem (v3.x) | Solution (v4.0) |
-|----------------|-----------------|
+| Problem (v3.x) | Solution (v4.0+) |
+|----------------|------------------|
 | Engine used `EmailCache` (SQLite-only) | Engine uses `DatabaseInterface` (SQLite or PostgreSQL) |
 | MCP had its own database connection | MCP reads from **same database** as Engine |
 | Unclear who owns mutations | **Engine owns ALL writes**, MCP is read-only |
-| Calendar not in sync loop | Calendar sync integrated into Engine's `sync_loop()` |
+| Calendar synced to local DB | Calendar uses **API passthrough** (v4.2.0) |
 | Embeddings generated ad-hoc | Engine generates embeddings automatically after sync |
 
 ### Data Flow
@@ -82,7 +81,7 @@ WRITE PATH (via Engine):
 
 | Component | Owns | Does NOT Do |
 |-----------|------|-------------|
-| **Engine** | IMAP connection, OAuth tokens, Calendar API, Gmail API (send/draft), Database writes, Embedding generation | Serve MCP protocol, Handle AI client auth |
+| **Engine** | IMAP connection, OAuth tokens, Calendar API, SMTP (send/draft), Database writes, Embedding generation | Serve MCP protocol, Handle AI client auth |
 | **MCP Server** | MCP protocol, Bearer auth, Tool definitions, Database reads | IMAP connection, OAuth, Database writes, Send emails |
 
 ## Database Backends
@@ -96,11 +95,10 @@ database:
   backend: sqlite
   sqlite:
     email_cache_path: config/email_cache.db
-    calendar_cache_path: config/calendar_cache.db
 ```
 
 **Characteristics:**
-- Two separate files (email + calendar)
+- Single database file for email cache
 - WAL mode for concurrent reads
 - FTS5 for full-text search
 - Zero external dependencies
@@ -152,13 +150,19 @@ The Engine exposes a FastAPI server on Unix socket (`/tmp/secretary-engine.sock`
 | `/api/email/draft-reply` | POST | Create draft reply in Gmail |
 | `/api/email/setup-labels` | POST | Create Secretary label hierarchy |
 
-### Calendar Mutations
+### Calendar Operations (API Passthrough)
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/calendar/events` | GET | List events in time range |
+| `/api/calendar/events` | GET | List events in time range (direct API call) |
 | `/api/calendar/availability` | GET | Get free/busy information |
 | `/api/calendar/event` | POST | Create calendar event |
+| `/api/calendar/list` | GET | List all calendars |
+| `/api/calendar/{id}` | GET | Get calendar details |
+| `/api/calendar/{id}/events/{event_id}` | GET | Get single event |
+| `/api/calendar/{id}/events/{event_id}` | PATCH | Update event |
+| `/api/calendar/{id}/events/{event_id}` | DELETE | Delete event |
+| `/api/calendar/freebusy` | POST | Free/busy query |
 | `/api/calendar/respond` | POST | Accept/decline/tentative meeting |
 
 ## Sync Strategy
@@ -184,16 +188,25 @@ async def sync_emails():
         database.save_folder_state(folder, uidvalidity, max_uid + 1)
 ```
 
-### Calendar Sync (Engine)
+### Calendar API (v4.2.0 - API Passthrough)
+
+Calendar operations go directly to Google Calendar API without local caching:
 
 ```python
-async def sync_calendar():
-    # Uses CalendarSync with DatabaseInterface as cache
-    calendar_sync.sync_calendar("primary")
-    
-    # Sync token-based incremental sync
-    # Falls back to full sync on 410 (token expired)
+async def get_calendar_events():
+    # Direct API call - no local database
+    return calendar_client.list_events(
+        time_min=time_min,
+        time_max=time_max,
+        calendar_id="primary"
+    )
 ```
+
+**Why no calendar caching?**
+- Calendar dataset is small (hundreds of events vs 50k+ emails)
+- Google Calendar API is fast enough for direct queries
+- Removes sync complexity and staleness issues
+- Events always reflect current state
 
 ### Embedding Generation (Engine, PostgreSQL only)
 
@@ -233,17 +246,24 @@ CREATE TABLE emails (
     uid INTEGER,
     folder TEXT,
     message_id TEXT,
+    gmail_thread_id BIGINT,      -- X-GM-THRID
+    gmail_msgid BIGINT,          -- X-GM-MSGID
+    gmail_labels JSONB,          -- Full Gmail label set
     subject TEXT,
     from_addr TEXT,
     to_addr TEXT,        -- JSON array
     cc_addr TEXT,        -- JSON array
     date TEXT,
+    internal_date TEXT,  -- IMAP INTERNALDATE
     body_text TEXT,
     body_html TEXT,
     flags TEXT,          -- JSON array
+    modseq BIGINT,       -- CONDSTORE sequence
     is_unread INTEGER,
     is_important INTEGER,
     size INTEGER,
+    has_attachments INTEGER,
+    attachment_filenames TEXT,  -- JSON array
     in_reply_to TEXT,
     references_header TEXT,
     PRIMARY KEY (uid, folder)
@@ -260,48 +280,6 @@ CREATE TABLE folder_state (
 CREATE VIRTUAL TABLE emails_fts USING fts5(
     subject, body_text, from_addr, to_addr,
     content='emails', content_rowid='rowid'
-);
-```
-
-### Calendar Cache
-
-```sql
-CREATE TABLE calendars (
-    calendar_id TEXT PRIMARY KEY,
-    summary TEXT,
-    description TEXT,
-    timezone TEXT,
-    access_role TEXT,
-    sync_token TEXT,
-    last_sync TEXT
-);
-
-CREATE TABLE events (
-    event_id TEXT PRIMARY KEY,
-    calendar_id TEXT,
-    summary TEXT,
-    description TEXT,
-    location TEXT,
-    start_time TEXT,
-    end_time TEXT,
-    all_day INTEGER,
-    status TEXT,
-    organizer_email TEXT,
-    recurrence TEXT,
-    html_link TEXT,
-    hangout_link TEXT,
-    raw_json TEXT,
-    FOREIGN KEY (calendar_id) REFERENCES calendars(calendar_id)
-);
-
-CREATE TABLE attendees (
-    event_id TEXT,
-    email TEXT,
-    display_name TEXT,
-    response_status TEXT,
-    is_organizer INTEGER,
-    is_self INTEGER,
-    PRIMARY KEY (event_id, email)
 );
 ```
 
@@ -343,7 +321,7 @@ Both processes run in one container via supervisord:
 ```yaml
 services:
   secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.0.0
+    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.2.0
     volumes:
       - ./config:/app/config
     ports:
@@ -359,14 +337,14 @@ Separate containers sharing Unix socket:
 ```yaml
 services:
   engine:
-    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.0.0
+    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.2.0
     command: ["python", "-m", "workspace_secretary.engine"]
     volumes:
       - ./config:/app/config
       - socket:/tmp
 
   mcp:
-    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.0.0
+    image: ghcr.io/johnneerdael/gmail-secretary-mcp:4.2.0
     command: ["python", "-m", "workspace_secretary"]
     volumes:
       - ./config:/app/config:ro
@@ -385,7 +363,6 @@ volumes:
 **Automatic and seamless:**
 
 1. Existing SQLite cache files are compatible
-2. No config changes required
-3. Engine will use existing `email_cache.db` and `calendar_cache.db`
-
-The only visible change: Engine now handles calendar sync automatically (was manual in v3.x).
+2. No config changes required (calendar_cache_path is ignored if present)
+3. Engine will use existing `email_cache.db`
+4. Calendar now uses API passthrough (no local cache needed)

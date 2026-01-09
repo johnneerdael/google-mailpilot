@@ -1,6 +1,6 @@
 # Gmail Secretary
 
-[![Version](https://img.shields.io/badge/version-4.1.2-blue.svg)](https://github.com/johnneerdael/Google-Workspace-Secretary-MCP/releases)
+[![Version](https://img.shields.io/badge/version-4.2.0-blue.svg)](https://github.com/johnneerdael/Google-Workspace-Secretary-MCP/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![RFC Compliant](https://img.shields.io/badge/RFC-IMAP4rev1%20%7C%20CONDSTORE%20%7C%20IDLE-green.svg)](#-rfc-compliance)
 
@@ -101,16 +101,16 @@ Dual-process design separating sync from AI interface:
 ┌──────────────────────────┐        ┌──────────────────────────┐
 │   SQLite / PostgreSQL    │        │     Secretary Engine     │
 │  • Email cache (FTS5)    │◀───────│  • IMAP sync (CONDSTORE) │
-│  • Calendar events       │        │  • IDLE monitor          │
-│  • Gmail labels (JSONB)  │        │  • OAuth2 management     │
-│  • Embeddings (pgvector) │        │  • Gmail API mutations   │
-└──────────────────────────┘        └──────────────────────────┘
+│  • Gmail labels (JSONB)  │        │  • IDLE monitor          │
+│  • Embeddings (pgvector) │        │  • OAuth2 management     │
+└──────────────────────────┘        │  • SMTP send/draft       │
+                                    └──────────────────────────┘
                                               │
                                               ▼
                                     ┌──────────────────┐
                                     │   Gmail IMAP     │
-                                    │   Gmail API      │
-                                    │   Google Calendar│
+                                    │   Gmail SMTP     │
+                                    │   Calendar API   │
                                     └──────────────────┘
 ```
 

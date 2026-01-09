@@ -152,50 +152,6 @@ class DatabaseInterface(ABC):
         """Get all emails in a thread based on References/In-Reply-To headers."""
         pass
 
-    # Calendar operations
-    @abstractmethod
-    def upsert_calendar(
-        self,
-        calendar_id: str,
-        summary: str,
-        description: Optional[str] = None,
-        timezone: Optional[str] = None,
-        access_role: Optional[str] = None,
-    ) -> None:
-        """Insert or update a calendar."""
-        pass
-
-    @abstractmethod
-    def upsert_event(self, event: dict[str, Any], calendar_id: str) -> None:
-        """Insert or update a calendar event."""
-        pass
-
-    @abstractmethod
-    def delete_event(self, event_id: str) -> None:
-        """Delete a calendar event."""
-        pass
-
-    @abstractmethod
-    def get_events(
-        self,
-        calendar_id: str = "primary",
-        time_min: Optional[str] = None,
-        time_max: Optional[str] = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        """Get calendar events with optional time range filter."""
-        pass
-
-    @abstractmethod
-    def get_sync_token(self, calendar_id: str) -> Optional[str]:
-        """Get calendar sync token."""
-        pass
-
-    @abstractmethod
-    def update_sync_token(self, calendar_id: str, sync_token: str) -> None:
-        """Update calendar sync token."""
-        pass
-
     # Embedding operations (optional - only for PostgreSQL with pgvector)
     def supports_embeddings(self) -> bool:
         """Check if this backend supports vector embeddings."""
@@ -247,18 +203,15 @@ class SqliteDatabase(DatabaseInterface):
     def __init__(
         self,
         email_cache_path: str = "config/email_cache.db",
-        calendar_cache_path: str = "config/calendar_cache.db",
     ):
         import sqlite3
 
         self.email_db_path = Path(email_cache_path)
-        self.calendar_db_path = Path(calendar_cache_path)
         self._sqlite3 = sqlite3
 
     def initialize(self) -> None:
-        """Initialize both email and calendar databases."""
+        """Initialize email database."""
         self._init_email_db()
-        self._init_calendar_db()
 
     def _init_email_db(self) -> None:
         """Initialize email database schema."""
@@ -349,82 +302,10 @@ class SqliteDatabase(DatabaseInterface):
             conn.commit()
             logger.info(f"Email database initialized at {self.email_db_path}")
 
-    def _init_calendar_db(self) -> None:
-        """Initialize calendar database schema."""
-        self.calendar_db_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with self._get_calendar_connection() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS calendars (
-                    id TEXT PRIMARY KEY,
-                    summary TEXT,
-                    description TEXT,
-                    timezone TEXT,
-                    access_role TEXT,
-                    sync_token TEXT,
-                    last_sync TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS events (
-                    id TEXT PRIMARY KEY,
-                    calendar_id TEXT NOT NULL,
-                    summary TEXT,
-                    description TEXT,
-                    location TEXT,
-                    start_time TEXT,
-                    end_time TEXT,
-                    all_day INTEGER DEFAULT 0,
-                    status TEXT,
-                    organizer_email TEXT,
-                    recurrence TEXT,
-                    recurring_event_id TEXT,
-                    html_link TEXT,
-                    hangout_link TEXT,
-                    created TEXT,
-                    updated TEXT,
-                    etag TEXT,
-                    raw_json TEXT,
-                    FOREIGN KEY (calendar_id) REFERENCES calendars(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS attendees (
-                    event_id TEXT NOT NULL,
-                    email TEXT NOT NULL,
-                    display_name TEXT,
-                    response_status TEXT,
-                    is_organizer INTEGER DEFAULT 0,
-                    is_self INTEGER DEFAULT 0,
-                    PRIMARY KEY (event_id, email),
-                    FOREIGN KEY (event_id) REFERENCES events(id) ON DELETE CASCADE
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_events_calendar ON events(calendar_id);
-                CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_time);
-                CREATE INDEX IF NOT EXISTS idx_events_end ON events(end_time);
-                CREATE INDEX IF NOT EXISTS idx_attendees_email ON attendees(email);
-                """
-            )
-            conn.commit()
-            logger.info(f"Calendar database initialized at {self.calendar_db_path}")
-
     @contextmanager
     def _get_email_connection(self) -> Iterator[Any]:
         """Get email database connection."""
         conn = self._sqlite3.connect(str(self.email_db_path))
-        conn.row_factory = self._sqlite3.Row
-        try:
-            yield conn
-        finally:
-            conn.close()
-
-    @contextmanager
-    def _get_calendar_connection(self) -> Iterator[Any]:
-        """Get calendar database connection."""
-        conn = self._sqlite3.connect(str(self.calendar_db_path))
         conn.row_factory = self._sqlite3.Row
         try:
             yield conn
@@ -771,174 +652,6 @@ class SqliteDatabase(DatabaseInterface):
             cursor = conn.execute(query, list(related_ids) + list(related_ids))
             return [dict(row) for row in cursor.fetchall()]
 
-    # Calendar operations
-    def upsert_calendar(
-        self,
-        calendar_id: str,
-        summary: str,
-        description: Optional[str] = None,
-        timezone: Optional[str] = None,
-        access_role: Optional[str] = None,
-    ) -> None:
-        with self._get_calendar_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO calendars (id, summary, description, timezone, access_role, last_sync)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    summary = excluded.summary,
-                    description = excluded.description,
-                    timezone = excluded.timezone,
-                    access_role = excluded.access_role,
-                    last_sync = excluded.last_sync
-                """,
-                (
-                    calendar_id,
-                    summary,
-                    description,
-                    timezone,
-                    access_role,
-                    datetime.utcnow().isoformat(),
-                ),
-            )
-            conn.commit()
-
-    def upsert_event(self, event: dict[str, Any], calendar_id: str) -> None:
-        import json
-
-        event_id = event.get("id")
-        if not event_id:
-            return
-
-        start = event.get("start", {})
-        end = event.get("end", {})
-        start_time = start.get("dateTime") or start.get("date")
-        end_time = end.get("dateTime") or end.get("date")
-        all_day = "date" in start and "dateTime" not in start
-
-        organizer = event.get("organizer", {})
-        recurrence = (
-            json.dumps(event.get("recurrence")) if event.get("recurrence") else None
-        )
-
-        with self._get_calendar_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO events (
-                    id, calendar_id, summary, description, location,
-                    start_time, end_time, all_day, status, organizer_email,
-                    recurrence, recurring_event_id, html_link, hangout_link,
-                    created, updated, etag, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                    summary = excluded.summary,
-                    description = excluded.description,
-                    location = excluded.location,
-                    start_time = excluded.start_time,
-                    end_time = excluded.end_time,
-                    all_day = excluded.all_day,
-                    status = excluded.status,
-                    organizer_email = excluded.organizer_email,
-                    recurrence = excluded.recurrence,
-                    recurring_event_id = excluded.recurring_event_id,
-                    html_link = excluded.html_link,
-                    hangout_link = excluded.hangout_link,
-                    updated = excluded.updated,
-                    etag = excluded.etag,
-                    raw_json = excluded.raw_json
-                """,
-                (
-                    event_id,
-                    calendar_id,
-                    event.get("summary"),
-                    event.get("description"),
-                    event.get("location"),
-                    start_time,
-                    end_time,
-                    1 if all_day else 0,
-                    event.get("status"),
-                    organizer.get("email"),
-                    recurrence,
-                    event.get("recurringEventId"),
-                    event.get("htmlLink"),
-                    event.get("hangoutLink"),
-                    event.get("created"),
-                    event.get("updated"),
-                    event.get("etag"),
-                    json.dumps(event),
-                ),
-            )
-
-            # Update attendees
-            conn.execute("DELETE FROM attendees WHERE event_id = ?", (event_id,))
-            for attendee in event.get("attendees", []):
-                conn.execute(
-                    """
-                    INSERT INTO attendees (event_id, email, display_name, response_status, is_organizer, is_self)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        event_id,
-                        attendee.get("email"),
-                        attendee.get("displayName"),
-                        attendee.get("responseStatus"),
-                        1 if attendee.get("organizer") else 0,
-                        1 if attendee.get("self") else 0,
-                    ),
-                )
-            conn.commit()
-
-    def delete_event(self, event_id: str) -> None:
-        with self._get_calendar_connection() as conn:
-            conn.execute("DELETE FROM attendees WHERE event_id = ?", (event_id,))
-            conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
-            conn.commit()
-
-    def get_events(
-        self,
-        calendar_id: str = "primary",
-        time_min: Optional[str] = None,
-        time_max: Optional[str] = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        import json
-
-        query = "SELECT * FROM events WHERE calendar_id = ?"
-        params: list[Any] = [calendar_id]
-
-        if time_min:
-            query += " AND end_time >= ?"
-            params.append(time_min)
-        if time_max:
-            query += " AND start_time <= ?"
-            params.append(time_max)
-
-        query += " ORDER BY start_time ASC LIMIT ?"
-        params.append(limit)
-
-        with self._get_calendar_connection() as conn:
-            rows = conn.execute(query, params).fetchall()
-            events = []
-            for row in rows:
-                event = json.loads(row["raw_json"]) if row["raw_json"] else dict(row)
-                events.append(event)
-            return events
-
-    def get_sync_token(self, calendar_id: str) -> Optional[str]:
-        with self._get_calendar_connection() as conn:
-            row = conn.execute(
-                "SELECT sync_token FROM calendars WHERE id = ?", (calendar_id,)
-            ).fetchone()
-            return row["sync_token"] if row else None
-
-    def update_sync_token(self, calendar_id: str, sync_token: str) -> None:
-        with self._get_calendar_connection() as conn:
-            conn.execute(
-                "UPDATE calendars SET sync_token = ?, last_sync = ? WHERE id = ?",
-                (sync_token, datetime.utcnow().isoformat(), calendar_id),
-            )
-            conn.commit()
-
 
 class PostgresDatabase(DatabaseInterface):
     """PostgreSQL database backend with pgvector for semantic search."""
@@ -1049,60 +762,6 @@ class PostgresDatabase(DatabaseInterface):
                     """
                 )
 
-                # Create calendar tables
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS calendars (
-                        id TEXT PRIMARY KEY,
-                        summary TEXT,
-                        description TEXT,
-                        timezone TEXT,
-                        access_role TEXT,
-                        sync_token TEXT,
-                        last_sync TIMESTAMPTZ
-                    )
-                    """
-                )
-
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS events (
-                        id TEXT PRIMARY KEY,
-                        calendar_id TEXT NOT NULL REFERENCES calendars(id),
-                        summary TEXT,
-                        description TEXT,
-                        location TEXT,
-                        start_time TIMESTAMPTZ,
-                        end_time TIMESTAMPTZ,
-                        all_day BOOLEAN DEFAULT FALSE,
-                        status TEXT,
-                        organizer_email TEXT,
-                        recurrence JSONB,
-                        recurring_event_id TEXT,
-                        html_link TEXT,
-                        hangout_link TEXT,
-                        created TIMESTAMPTZ,
-                        updated TIMESTAMPTZ,
-                        etag TEXT,
-                        raw_json JSONB
-                    )
-                    """
-                )
-
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS attendees (
-                        event_id TEXT NOT NULL REFERENCES events(id) ON DELETE CASCADE,
-                        email TEXT NOT NULL,
-                        display_name TEXT,
-                        response_status TEXT,
-                        is_organizer BOOLEAN DEFAULT FALSE,
-                        is_self BOOLEAN DEFAULT FALSE,
-                        PRIMARY KEY (event_id, email)
-                    )
-                    """
-                )
-
                 # Create indexes
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder)"
@@ -1130,12 +789,6 @@ class PostgresDatabase(DatabaseInterface):
                 )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_emails_internal_date ON emails(internal_date)"
-                )
-                cur.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_events_calendar ON events(calendar_id)"
-                )
-                cur.execute(
-                    "CREATE INDEX IF NOT EXISTS idx_events_start ON events(start_time)"
                 )
 
                 # Create HNSW index for vector similarity search
@@ -1495,186 +1148,6 @@ class PostgresDatabase(DatabaseInterface):
                 columns = [desc[0] for desc in cur.description]
                 return [dict(zip(columns, row)) for row in cur.fetchall()]
 
-    # Calendar operations
-    def upsert_calendar(
-        self,
-        calendar_id: str,
-        summary: str,
-        description: Optional[str] = None,
-        timezone: Optional[str] = None,
-        access_role: Optional[str] = None,
-    ) -> None:
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO calendars (id, summary, description, timezone, access_role, last_sync)
-                    VALUES (%s, %s, %s, %s, %s, NOW())
-                    ON CONFLICT(id) DO UPDATE SET
-                        summary = EXCLUDED.summary,
-                        description = EXCLUDED.description,
-                        timezone = EXCLUDED.timezone,
-                        access_role = EXCLUDED.access_role,
-                        last_sync = NOW()
-                    """,
-                    (calendar_id, summary, description, timezone, access_role),
-                )
-                conn.commit()
-
-    def upsert_event(self, event: dict[str, Any], calendar_id: str) -> None:
-        import json
-
-        event_id = event.get("id")
-        if not event_id:
-            return
-
-        start = event.get("start", {})
-        end = event.get("end", {})
-        start_time = start.get("dateTime") or start.get("date")
-        end_time = end.get("dateTime") or end.get("date")
-        all_day = "date" in start and "dateTime" not in start
-
-        organizer = event.get("organizer", {})
-        recurrence = (
-            json.dumps(event.get("recurrence")) if event.get("recurrence") else None
-        )
-
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO events (
-                        id, calendar_id, summary, description, location,
-                        start_time, end_time, all_day, status, organizer_email,
-                        recurrence, recurring_event_id, html_link, hangout_link,
-                        created, updated, etag, raw_json
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT(id) DO UPDATE SET
-                        summary = EXCLUDED.summary,
-                        description = EXCLUDED.description,
-                        location = EXCLUDED.location,
-                        start_time = EXCLUDED.start_time,
-                        end_time = EXCLUDED.end_time,
-                        all_day = EXCLUDED.all_day,
-                        status = EXCLUDED.status,
-                        organizer_email = EXCLUDED.organizer_email,
-                        recurrence = EXCLUDED.recurrence,
-                        recurring_event_id = EXCLUDED.recurring_event_id,
-                        html_link = EXCLUDED.html_link,
-                        hangout_link = EXCLUDED.hangout_link,
-                        updated = EXCLUDED.updated,
-                        etag = EXCLUDED.etag,
-                        raw_json = EXCLUDED.raw_json
-                    """,
-                    (
-                        event_id,
-                        calendar_id,
-                        event.get("summary"),
-                        event.get("description"),
-                        event.get("location"),
-                        start_time,
-                        end_time,
-                        all_day,
-                        event.get("status"),
-                        organizer.get("email"),
-                        recurrence,
-                        event.get("recurringEventId"),
-                        event.get("htmlLink"),
-                        event.get("hangoutLink"),
-                        event.get("created"),
-                        event.get("updated"),
-                        event.get("etag"),
-                        json.dumps(event),
-                    ),
-                )
-
-                # Update attendees
-                cur.execute("DELETE FROM attendees WHERE event_id = %s", (event_id,))
-                for attendee in event.get("attendees", []):
-                    cur.execute(
-                        """
-                        INSERT INTO attendees (event_id, email, display_name, response_status, is_organizer, is_self)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            event_id,
-                            attendee.get("email"),
-                            attendee.get("displayName"),
-                            attendee.get("responseStatus"),
-                            attendee.get("organizer", False),
-                            attendee.get("self", False),
-                        ),
-                    )
-                conn.commit()
-
-    def delete_event(self, event_id: str) -> None:
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("DELETE FROM events WHERE id = %s", (event_id,))
-                conn.commit()
-
-    def get_events(
-        self,
-        calendar_id: str = "primary",
-        time_min: Optional[str] = None,
-        time_max: Optional[str] = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        import json
-
-        conditions = ["calendar_id = %s"]
-        params: list[Any] = [calendar_id]
-
-        if time_min:
-            conditions.append("end_time >= %s")
-            params.append(time_min)
-        if time_max:
-            conditions.append("start_time <= %s")
-            params.append(time_max)
-
-        params.append(limit)
-
-        query = f"""
-            SELECT * FROM events 
-            WHERE {" AND ".join(conditions)}
-            ORDER BY start_time ASC LIMIT %s
-        """
-
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-                columns = [desc[0] for desc in cur.description]
-                events = []
-                for row in cur.fetchall():
-                    row_dict = dict(zip(columns, row))
-                    if row_dict.get("raw_json"):
-                        events.append(
-                            json.loads(row_dict["raw_json"])
-                            if isinstance(row_dict["raw_json"], str)
-                            else row_dict["raw_json"]
-                        )
-                    else:
-                        events.append(row_dict)
-                return events
-
-    def get_sync_token(self, calendar_id: str) -> Optional[str]:
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT sync_token FROM calendars WHERE id = %s", (calendar_id,)
-                )
-                row = cur.fetchone()
-                return row[0] if row else None
-
-    def update_sync_token(self, calendar_id: str, sync_token: str) -> None:
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE calendars SET sync_token = %s, last_sync = NOW() WHERE id = %s",
-                    (sync_token, calendar_id),
-                )
-                conn.commit()
-
     # Embedding operations (pgvector specific)
     def supports_embeddings(self) -> bool:
         return True
@@ -1827,7 +1300,6 @@ def create_database(config: Any) -> DatabaseInterface:
     if config.backend == DatabaseBackend.SQLITE:
         return SqliteDatabase(
             email_cache_path=config.sqlite.email_cache_path,
-            calendar_cache_path=config.sqlite.calendar_cache_path,
         )
     elif config.backend == DatabaseBackend.POSTGRES:
         if not config.postgres:

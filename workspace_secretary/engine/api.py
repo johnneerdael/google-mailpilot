@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from workspace_secretary.config import load_config, ServerConfig
 from workspace_secretary.engine.imap_sync import ImapClient
-from workspace_secretary.engine.calendar_sync import CalendarClient, CalendarSync
+from workspace_secretary.engine.calendar_sync import CalendarClient
 from workspace_secretary.engine.database import DatabaseInterface, create_database
 
 if TYPE_CHECKING:
@@ -45,7 +45,6 @@ class EngineState:
         self.imap_client: Optional[ImapClient] = None
         self.idle_client: Optional[ImapClient] = None
         self.calendar_client: Optional[CalendarClient] = None
-        self.calendar_sync: Optional[CalendarSync] = None
         self.database: Optional[DatabaseInterface] = None
         self.sync_task: Optional[asyncio.Task] = None
         self.idle_task: Optional[asyncio.Task] = None
@@ -215,12 +214,6 @@ async def try_enroll() -> bool:
             state.calendar_client = CalendarClient(state.config)
             try:
                 state.calendar_client.connect()
-                # Initialize CalendarSync with database as cache
-                # DatabaseInterface has all methods CalendarCache needs
-                state.calendar_sync = CalendarSync(
-                    state.calendar_client,
-                    state.database,  # type: ignore[arg-type]
-                )
                 logger.info("Calendar connected successfully")
             except Exception as e:
                 logger.warning(f"Calendar connection failed (non-fatal): {e}")
@@ -246,7 +239,6 @@ async def try_enroll() -> bool:
                 pass
             state.idle_client = None
         state.calendar_client = None
-        state.calendar_sync = None
         state.database = None
         return False
 
@@ -386,11 +378,6 @@ async def sync_loop():
                 logger.debug("Running email sync...")
                 await sync_emails()
 
-            # Calendar sync
-            if state.calendar_sync:
-                logger.debug("Running calendar sync...")
-                await sync_calendar()
-
             # Generate embeddings if supported (PostgreSQL with pgvector)
             if state.database and state.database.supports_embeddings():
                 logger.debug("Generating embeddings for new emails...")
@@ -524,24 +511,6 @@ async def sync_emails():
 
         except Exception as e:
             logger.error(f"Error syncing folder {folder}: {e}")
-
-
-async def sync_calendar():
-    """Sync calendar events to database."""
-    if not state.calendar_sync:
-        return
-
-    try:
-        # Sync primary calendar
-        state.calendar_sync.sync_calendar("primary")
-
-        # Sync additional calendars if configured
-        if state.config and state.config.calendar:
-            for cal_id in getattr(state.config.calendar, "additional_calendars", []):
-                state.calendar_sync.sync_calendar(cal_id)
-
-    except Exception as e:
-        logger.error(f"Calendar sync error: {e}")
 
 
 async def generate_embeddings():
@@ -697,8 +666,6 @@ async def trigger_sync():
 
     try:
         await sync_emails()
-        if state.calendar_sync:
-            await sync_calendar()
         return {"status": "ok", "message": "Sync triggered"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -1132,22 +1099,6 @@ async def create_calendar_event(req: CalendarEventRequest):
             event_data, req.calendar_id, conference_data_version=conference_version
         )
 
-        # Also save to database
-        if state.database and event:
-            state.database.upsert_event(
-                event={
-                    "event_id": event.get("id"),
-                    "summary": req.summary,
-                    "start_time": req.start_time,
-                    "end_time": req.end_time,
-                    "description": req.description,
-                    "location": req.location,
-                    "status": "confirmed",
-                    "raw_json": event,
-                },
-                calendar_id=req.calendar_id,
-            )
-
         return {"status": "ok", "event": event}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -1192,6 +1143,147 @@ async def respond_to_meeting(req: MeetingResponseRequest):
         )
 
         return {"status": "ok", "event": updated}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/calendar/list")
+async def list_calendars():
+    if not state.enrolled:
+        return {
+            "status": "no_account",
+            "message": "No account configured. Run auth_setup to add an account.",
+        }
+
+    if not state.calendar_client or not state.calendar_client.service:
+        return {"status": "error", "message": "Calendar not connected"}
+
+    try:
+        calendars = state.calendar_client.list_calendars()
+        return {"status": "ok", "calendars": calendars}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/calendar/{calendar_id}")
+async def get_calendar(calendar_id: str):
+    if not state.enrolled:
+        return {
+            "status": "no_account",
+            "message": "No account configured. Run auth_setup to add an account.",
+        }
+
+    if not state.calendar_client or not state.calendar_client.service:
+        return {"status": "error", "message": "Calendar not connected"}
+
+    try:
+        calendar = state.calendar_client.get_calendar(calendar_id)
+        return {"status": "ok", "calendar": calendar}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.get("/api/calendar/{calendar_id}/events/{event_id}")
+async def get_calendar_event(calendar_id: str, event_id: str):
+    if not state.enrolled:
+        return {
+            "status": "no_account",
+            "message": "No account configured. Run auth_setup to add an account.",
+        }
+
+    if not state.calendar_client or not state.calendar_client.service:
+        return {"status": "error", "message": "Calendar not connected"}
+
+    try:
+        event = state.calendar_client.get_event(calendar_id, event_id)
+        return {"status": "ok", "event": event}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+class CalendarEventUpdateRequest(BaseModel):
+    summary: Optional[str] = None
+    description: Optional[str] = None
+    location: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    attendees: Optional[list[str]] = None
+
+
+@app.patch("/api/calendar/{calendar_id}/events/{event_id}")
+async def update_calendar_event(
+    calendar_id: str, event_id: str, req: CalendarEventUpdateRequest
+):
+    if not state.enrolled:
+        return {
+            "status": "no_account",
+            "message": "No account configured. Run auth_setup to add an account.",
+        }
+
+    if not state.calendar_client or not state.calendar_client.service:
+        return {"status": "error", "message": "Calendar not connected"}
+
+    event_data: dict[str, Any] = {}
+    if req.summary is not None:
+        event_data["summary"] = req.summary
+    if req.description is not None:
+        event_data["description"] = req.description
+    if req.location is not None:
+        event_data["location"] = req.location
+    if req.start_time is not None:
+        event_data["start"] = {"dateTime": req.start_time}
+    if req.end_time is not None:
+        event_data["end"] = {"dateTime": req.end_time}
+    if req.attendees is not None:
+        event_data["attendees"] = [{"email": email} for email in req.attendees]
+
+    try:
+        event = state.calendar_client.update_event(calendar_id, event_id, event_data)
+        return {"status": "ok", "event": event}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@app.delete("/api/calendar/{calendar_id}/events/{event_id}")
+async def delete_calendar_event(calendar_id: str, event_id: str):
+    if not state.enrolled:
+        return {
+            "status": "no_account",
+            "message": "No account configured. Run auth_setup to add an account.",
+        }
+
+    if not state.calendar_client or not state.calendar_client.service:
+        return {"status": "error", "message": "Calendar not connected"}
+
+    try:
+        state.calendar_client.delete_event(calendar_id, event_id)
+        return {"status": "ok", "message": f"Event {event_id} deleted"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+class FreeBusyRequest(BaseModel):
+    time_min: str
+    time_max: str
+    calendar_ids: Optional[list[str]] = None
+
+
+@app.post("/api/calendar/freebusy")
+async def freebusy_query(req: FreeBusyRequest):
+    if not state.enrolled:
+        return {
+            "status": "no_account",
+            "message": "No account configured. Run auth_setup to add an account.",
+        }
+
+    if not state.calendar_client or not state.calendar_client.service:
+        return {"status": "error", "message": "Calendar not connected"}
+
+    try:
+        result = state.calendar_client.freebusy_query(
+            req.time_min, req.time_max, req.calendar_ids
+        )
+        return {"status": "ok", "freebusy": result}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
