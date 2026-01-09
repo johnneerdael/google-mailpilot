@@ -1,0 +1,3 @@
+{$MCP_DOMAIN} {
+    reverse_proxy workspace-secretary:8000
+}

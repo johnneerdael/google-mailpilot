@@ -112,45 +112,30 @@ def create_server(
     Returns:
         Configured MCP server instance
     """
-    # Set up logging level
     if debug:
         logger.setLevel(logging.DEBUG)
 
-    # Load configuration
     config = load_config(config_path)
 
-    # Bearer Token Authentication
-    # We only enable auth if it's explicitly requested via env var or always generate if HTTP transport?
-    # The prompt implies we should always have it for HTTP.
-    # Let's check for an existing token in env, or generate one.
-    auth_token = os.environ.get("IMAP_MCP_TOKEN")
-    if not auth_token:
-        auth_token = secrets.token_urlsafe(32)
-        logger.warning(
-            f"No IMAP_MCP_TOKEN found in environment. Generated temporary token: {auth_token}"
+    auth_settings = None
+    token_verifier = None
+
+    if config.bearer_auth.enabled:
+        auth_token = config.bearer_auth.token or os.environ.get("IMAP_MCP_TOKEN")
+        if not auth_token:
+            auth_token = secrets.token_urlsafe(32)
+        logger.info(f"Bearer authentication enabled. Token: {auth_token}")
+
+        token_verifier = StaticTokenVerifier(auth_token)
+        auth_settings = AuthSettings(
+            issuer_url="http://localhost/",  # type: ignore
+            resource_server_url="http://localhost/",  # type: ignore
+            required_scopes=[],
         )
-    else:
-        logger.info("Using configured IMAP_MCP_TOKEN from environment.")
 
-    # Create token verifier
-    token_verifier = StaticTokenVerifier(auth_token)
-
-    # Create AuthSettings - required if using token_verifier in FastMCP init
-    # Note: FastMCP checks: if token_verifier AND NOT auth_settings -> ValueError.
-    # We need dummy auth settings to satisfy the check, even if we use our own verifier.
-    # The issuer_url is required by pydantic model.
-    auth_settings = AuthSettings(
-        issuer_url="http://localhost/",  # type: ignore
-        resource_server_url="http://localhost/",  # type: ignore
-        required_scopes=[],
-    )
-
-    # Create MCP server with all the necessary capabilities
     server = FastMCP(
         "IMAP",
         instructions="IMAP Model Context Protocol server for email processing",
-        # description="IMAP Model Context Protocol server for email processing", # description not supported
-        # version="0.1.0", # version not supported in FastMCP init
         lifespan=server_lifespan,
         host=host,
         port=port,

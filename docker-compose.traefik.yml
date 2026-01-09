@@ -1,0 +1,41 @@
+services:
+  traefik:
+    image: traefik:v3.2
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.insecure=false"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+
+  workspace-secretary:
+    image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
+    container_name: workspace-secretary
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./config:/app/config
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.mcp.rule=Host(`${MCP_DOMAIN}`)"
+      - "traefik.http.routers.mcp.entrypoints=websecure"
+      - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.mcp.loadbalancer.server.port=8000"
+    command: ["--config", "/app/config.yaml", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
+
+volumes:
+  letsencrypt:

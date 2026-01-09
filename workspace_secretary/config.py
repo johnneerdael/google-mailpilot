@@ -275,6 +275,21 @@ class UserIdentityConfig:
 
 
 @dataclass
+class BearerAuthConfig:
+    """Bearer token authentication configuration."""
+
+    enabled: bool = False
+    token: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "BearerAuthConfig":
+        return cls(
+            enabled=data.get("enabled", False),
+            token=data.get("token"),
+        )
+
+
+@dataclass
 class ServerConfig:
     """MCP server configuration."""
 
@@ -286,6 +301,7 @@ class ServerConfig:
     allowed_folders: Optional[List[str]] = None
     calendar: Optional[CalendarConfig] = None
     vip_senders: List[str] = field(default_factory=list)
+    bearer_auth: BearerAuthConfig = field(default_factory=BearerAuthConfig)
 
     def __post_init__(self):
         """Validate server configuration."""
@@ -339,6 +355,7 @@ class ServerConfig:
             allowed_folders=data.get("allowed_folders"),
             calendar=CalendarConfig.from_dict(data.get("calendar", {})),
             vip_senders=data.get("vip_senders", []),
+            bearer_auth=BearerAuthConfig.from_dict(data.get("bearer_auth", {})),
         )
 
 

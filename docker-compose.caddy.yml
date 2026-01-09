@@ -1,0 +1,25 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+  workspace-secretary:
+    image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
+    container_name: workspace-secretary
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+      - ./config:/app/config
+    command: ["--config", "/app/config.yaml", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -62,3 +62,10 @@ allowed_folders:
 calendar:
   enabled: true
   verified_client: your-email@gmail.com
+
+# OPTIONAL: Bearer Token Authentication
+# Enable to require authentication for MCP clients connecting via HTTP
+# Recommended when exposing the server to the internet
+bearer_auth:
+  enabled: false
+  # token: "your-secret-token"  # If not set, a random token is generated on startup
