@@ -1,5 +1,4 @@
 services:
-  # MCP Server - exposes tools to AI clients via HTTP
   workspace-secretary:
     image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
     container_name: workspace-secretary
@@ -7,34 +6,9 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config.yaml:/app/config/config.yaml:ro
       - ./token.json:/app/token.json
-      - ./config:/app/config
-      - engine-socket:/tmp
+      - ./data:/app/data
     environment:
       - LOG_LEVEL=INFO
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
-    command: ["--config", "/app/config.yaml", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
-    depends_on:
-      - secretary-engine
-
-  # Engine - maintains persistent IMAP connection and handles mutations
-  secretary-engine:
-    image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
-    container_name: secretary-engine
-    restart: always
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./token.json:/app/token.json
-      - ./config:/app/config
-      - engine-socket:/tmp
-    environment:
-      - LOG_LEVEL=INFO
-      - CONFIG_PATH=/app/config.yaml
-      - CACHE_DB_PATH=/app/config/email_cache.db
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
-      - SYNC_INTERVAL=300
-    command: ["python", "-m", "workspace_secretary.engine"]
-
-volumes:
-  engine-socket:
+      - MCP_ARGS=--config /app/config/config.yaml --transport http --host 0.0.0.0 --port 8000

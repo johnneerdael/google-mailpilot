@@ -4,11 +4,13 @@ FROM python:3.12-slim-bookworm
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PATH="/root/.local/bin:$PATH"
+    PATH="/root/.local/bin:$PATH" \
+    MCP_ARGS="--config /app/config/config.yaml --transport http --host 0.0.0.0 --port 8000"
 
-# Install system dependencies
+# Install system dependencies including supervisor
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    supervisor \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv for package management
@@ -29,9 +31,11 @@ COPY . .
 # Install the project itself
 RUN uv sync --frozen --no-dev
 
-# Set the entrypoint to run the MCP server
-# We use the virtual environment created by uv
-ENTRYPOINT ["uv", "run", "python", "-m", "workspace_secretary.server"]
+# Copy supervisor config
+COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 
-# Default command if none provided (can be overridden)
-CMD ["--config", "/app/config/config.yaml"]
+# Expose MCP server port
+EXPOSE 8000
+
+# Run both engine and MCP server via supervisor
+CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]

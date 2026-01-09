@@ -92,14 +92,13 @@ Add the generated token to your `config.yaml` under `bearer_auth.token`.
 
 ### Step 3: Create Docker Compose
 
-The system runs as **two services**:
+The container runs both the **MCP Server** and **Engine** internally via supervisor:
 - **MCP Server** - Exposes tools to AI clients via HTTP
 - **Engine** - Maintains persistent IMAP connection, handles sync and mutations
 
 ```yaml
 # docker-compose.yml
 services:
-  # MCP Server - exposes tools to AI clients via HTTP
   workspace-secretary:
     image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
     container_name: workspace-secretary
@@ -107,44 +106,15 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config.yaml:/app/config/config.yaml:ro
       - ./token.json:/app/token.json
-      - ./config:/app/config
-      - engine-socket:/tmp
+      - ./data:/app/data
     environment:
       - LOG_LEVEL=INFO
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
-    command: ["--config", "/app/config.yaml", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
-    depends_on:
-      - secretary-engine
-
-  # Engine - maintains persistent IMAP connection and handles mutations
-  secretary-engine:
-    image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
-    container_name: secretary-engine
-    restart: always
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./token.json:/app/token.json
-      - ./config:/app/config
-      - engine-socket:/tmp
-    environment:
-      - LOG_LEVEL=INFO
-      - CONFIG_PATH=/app/config.yaml
-      - CACHE_DB_PATH=/app/config/email_cache.db
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
-      - SYNC_INTERVAL=300
-    command: ["python", "-m", "workspace_secretary.engine"]
-
-volumes:
-  engine-socket:
 ```
 
-::: tip Why Two Services?
-- **Engine** keeps IMAP connection alive (no reconnect per request)
-- **Engine** syncs emails in background every 5 minutes
-- **MCP Server** is stateless, communicates with engine via Unix socket
-- Separation allows independent scaling and restarts
+::: tip Single Container, Two Processes
+The container internally runs both the MCP server and the sync engine via supervisor. The engine keeps IMAP connection alive and syncs every 5 minutes. No need for multiple containers.
 :::
 
 ### Step 4: Run OAuth Setup
@@ -255,34 +225,13 @@ services:
   workspace-secretary:
     image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config.yaml:/app/config/config.yaml:ro
       - ./token.json:/app/token.json
-      - ./config:/app/config
-      - engine-socket:/tmp
-    environment:
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
+      - ./data:/app/data
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.mcp.rule=Host(`mcp.yourdomain.com`)"
       - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
-    command: ["--config", "/app/config.yaml", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
-    depends_on:
-      - secretary-engine
-
-  secretary-engine:
-    image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./token.json:/app/token.json
-      - ./config:/app/config
-      - engine-socket:/tmp
-    environment:
-      - CONFIG_PATH=/app/config.yaml
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
-    command: ["python", "-m", "workspace_secretary.engine"]
-
-volumes:
-  engine-socket:
 ```
 
 ### With Caddy
@@ -301,31 +250,12 @@ services:
   workspace-secretary:
     image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config.yaml:/app/config/config.yaml:ro
       - ./token.json:/app/token.json
-      - ./config:/app/config
-      - engine-socket:/tmp
-    environment:
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
-    command: ["--config", "/app/config.yaml", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
-    depends_on:
-      - secretary-engine
-
-  secretary-engine:
-    image: ghcr.io/johnneerdael/google-workspace-secretary-mcp:latest
-    volumes:
-      - ./config.yaml:/app/config.yaml:ro
-      - ./token.json:/app/token.json
-      - ./config:/app/config
-      - engine-socket:/tmp
-    environment:
-      - CONFIG_PATH=/app/config.yaml
-      - ENGINE_SOCKET=/tmp/secretary-engine.sock
-    command: ["python", "-m", "workspace_secretary.engine"]
+      - ./data:/app/data
 
 volumes:
   caddy_data:
-  engine-socket:
 ```
 
 **Caddyfile:**
@@ -380,8 +310,6 @@ database:
     api_key: ${OPENAI_API_KEY}
     dimensions: 1536
 ```
-
-The database and pgvector extension are created automatically on first start.
 
 See [Semantic Search Guide](/guide/semantic-search) for details.
 
