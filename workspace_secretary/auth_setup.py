@@ -348,7 +348,6 @@ def setup_gmail_oauth2(
     config_path: Optional[str] = None,
     config_output: Optional[str] = None,
     manual_mode: bool = True,
-    token_output: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Set up OAuth2 authentication for Gmail."""
     if credentials_file and not (client_id and client_secret):
@@ -420,20 +419,21 @@ def setup_gmail_oauth2(
             yaml.dump(config_data, f, default_flow_style=False)
             logger.info(f"Saved updated configuration to {config_output}")
 
-    if token_output:
-        token_file = Path(token_output)
-        token_file.parent.mkdir(parents=True, exist_ok=True)
+    token_output_path = Path("/app/config/token.json")
+    token_output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        token_data = {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "token_expiry": token_expiry,
-        }
-        with open(token_file, "w") as f:
-            json.dump(token_data, f, indent=2)
-            logger.info(f"Saved tokens to {token_output}")
+    token_data = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_expiry": token_expiry,
+    }
+    with open(token_output_path, "w") as f:
+        json.dump(token_data, f, indent=2)
+        logger.info(f"Saved tokens to {token_output_path}")
 
-        _notify_engine_to_enroll()
+    _notify_engine_to_enroll()
 
     print("\n" + "=" * 60)
     print("OAuth2 Setup Complete!")
@@ -476,11 +476,7 @@ def main() -> None:
         help="Path to save the updated config file (default: don't write config)",
         default=None,
     )
-    parser.add_argument(
-        "--token-output",
-        help="Path to save token.json file separately",
-        default=None,
-    )
+
     parser.add_argument(
         "--manual",
         action="store_true",
@@ -504,7 +500,6 @@ def main() -> None:
         config_path=args.config,
         config_output=args.output,
         manual_mode=manual_mode,
-        token_output=args.token_output,
     )
 
 

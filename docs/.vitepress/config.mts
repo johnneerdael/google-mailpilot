@@ -17,7 +17,7 @@ export default defineConfig({
       { text: 'Architecture', link: '/architecture' },
       { text: 'MCP Tools', link: '/api/' },
       {
-        text: 'v4.0.0',
+        text: 'v4.2.1',
         items: [
           { text: 'Changelog', link: 'https://github.com/johnneerdael/gmail-secretary-mcp/releases' },
           { text: 'Contributing', link: 'https://github.com/johnneerdael/gmail-workspace-mcp' }

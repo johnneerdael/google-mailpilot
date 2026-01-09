@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.1] - 2026-01-09
+
+### Fixed
+
+- **OAuth Token Storage**: `auth_setup` now saves `client_id` and `client_secret` in `token.json`
+  - Previously only saved access/refresh tokens, causing "Missing client_id or client_secret" error
+  - Engine can now refresh tokens properly after initial OAuth flow
+
+### Changed
+
+- **Improved Setup UX**: Startup warning now shows both authentication options
+  - Option 1: OAuth2 via `auth_setup` (recommended)
+  - Option 2: App Password via `app_password`
+- **Hardcoded Config Paths**: Removed user-configurable output paths to prevent misconfiguration
+  - `auth_setup`: Token always saves to `/app/config/token.json`
+  - `app_password`: Config always saves to `/app/config/config.yaml`
+
+### DevOps
+
+- **Docs Workflow**: GitHub Actions now builds documentation on tag push (not just main branch)
+  - Version in docs automatically updated on release
+
 ## [4.2.0] - 2026-01-09
 
 ### Changed

@@ -92,11 +92,6 @@ def main():
         "--config",
         help="Path to existing config file to update",
     )
-    parser.add_argument(
-        "--output",
-        help="Path to save the updated config file (default: config.yaml)",
-        default="config.yaml",
-    )
 
     args = parser.parse_args()
 
@@ -126,7 +121,7 @@ def main():
             username=username,
             password=password,
             config_path=args.config,
-            config_output=args.output,
+            config_output="/app/config/config.yaml",
         )
         logger.info("Gmail app password setup completed successfully")
     except Exception as e:

@@ -92,7 +92,13 @@ class ImapConfig:
         # Log warning if credentials missing - server will start but remain unenrolled
         if is_gmail and not oauth2_config and not password:
             logger.warning(
-                "Gmail credentials not configured - run auth_setup to authenticate"
+                "Gmail credentials not configured. Choose one method:\n\n"
+                "  Option 1 - OAuth2 (recommended):\n"
+                "    docker exec -it workspace-secretary uv run python -m workspace_secretary.auth_setup \\\n"
+                "      --client-id='YOUR_CLIENT_ID' \\\n"
+                "      --client-secret='YOUR_CLIENT_SECRET'\n\n"
+                "  Option 2 - App Password:\n"
+                "    docker exec -it workspace-secretary uv run python -m workspace_secretary.app_password"
             )
         elif not is_gmail and not password:
             logger.warning(

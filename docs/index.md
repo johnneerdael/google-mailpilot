@@ -124,6 +124,14 @@ The AI:
 3. Parses and presents the total
 :::
 
+## What's New in v4.2.1
+
+**Authentication UX Improvements** — Easier setup with better error messages:
+
+- 🔐 **Fixed OAuth Token Storage**: `auth_setup` now saves `client_id` and `client_secret` in `token.json` (fixes "Missing client_id or client_secret" error)
+- 📋 **Better Setup Instructions**: Startup warning now shows both OAuth2 and App Password options
+- 🔒 **Hardcoded Config Paths**: Removed user-configurable output paths to prevent misconfiguration
+
 ## What's New in v4.2.0
 
 **Calendar API Passthrough** — Simplified architecture with real-time calendar access:
