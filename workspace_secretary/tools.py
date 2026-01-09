@@ -1822,6 +1822,10 @@ def register_tools(
                 emails = client.fetch_emails(batch_uids, folder="INBOX")
 
                 for uid, email in emails.items():
+                    processed = moved_count + skipped_count
+                    if ctx and processed % 5 == 0:
+                        await ctx.report_progress(processed, total_to_process)
+
                     to_addresses = [str(addr).lower() for addr in email.to]
                     cc_addresses = [str(addr).lower() for addr in (email.cc or [])]
                     all_recipients = to_addresses + cc_addresses
@@ -1922,6 +1926,10 @@ def register_tools(
                 emails = client.fetch_emails(batch_uids, folder="INBOX")
 
                 for uid, email in emails.items():
+                    processed = priority_count + skipped_count
+                    if ctx and processed % 5 == 0:
+                        await ctx.report_progress(processed, total_to_process)
+
                     to_addresses = [str(addr).lower() for addr in email.to]
                     total_to_recipients = len(to_addresses)
 
@@ -2053,6 +2061,9 @@ def register_tools(
                 emails = client.fetch_emails(batch_uids, folder="INBOX")
 
                 for uid, email in emails.items():
+                    if ctx and remaining_count % 5 == 0:
+                        await ctx.report_progress(remaining_count, total_to_process)
+
                     to_addresses = [str(addr).lower() for addr in email.to]
                     cc_addresses = [str(addr).lower() for addr in (email.cc or [])]
 
