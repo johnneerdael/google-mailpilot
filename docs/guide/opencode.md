@@ -227,12 +227,46 @@ Good morning! Here's your briefing for Wednesday, Jan 8:
 
 ---
 
-### @bulk-cleaner - Confidence-Gated Cleanup
+### @bulk-cleaner - Autonomous Bulk Cleanup
 **File**: `.opencode/agent/bulk-cleaner.md`
 
-**Purpose**: Analyze low-priority emails and propose batch cleanup actions. **Does not execute mutations** (proposals only).
+**Purpose**: Autonomously gather ALL cleanup candidates using time-boxed continuation, then return complete results for approval. **Does not execute mutations** (proposals only).
 
-**Architecture Note**: This subagent has mutation tools set to `false`. It identifies cleanup candidates and returns proposals to the primary **secretary** agent for execution.
+**Architecture Note**: This subagent has mutation tools set to `false`. It runs the continuation loop autonomously and returns the complete aggregated list to the primary **secretary** agent for user approval and execution.
+
+**CRITICAL: Autonomous Continuation Loop**
+
+The `quick_clean_inbox` tool is time-boxed (5s per call) to avoid MCP timeouts. The @bulk-cleaner subagent MUST:
+
+1. **Call `quick_clean_inbox()`** without continuation_state to start
+2. **If `has_more=true`**, automatically call again with `continuation_state` from response
+3. **Repeat** until `status="complete"` or `has_more=false`
+4. **Aggregate ALL candidates** from all batches into a single list
+5. **Return complete results** to @secretary (NOT partial results)
+6. **NEVER prompt user** during the continuation loop
+
+```python
+# Subagent internal loop (pseudo-code)
+all_candidates = []
+continuation_state = None
+
+while True:
+    result = quick_clean_inbox(continuation_state=continuation_state)
+    all_candidates.extend(result["candidates"])
+    
+    if result["status"] == "complete" or not result["has_more"]:
+        break
+    continuation_state = result["continuation_state"]
+
+# Return aggregated results to primary agent
+return {"total": len(all_candidates), "candidates": all_candidates}
+```
+
+**Why This Pattern?**
+- Each batch completes in ~5s (never hits MCP timeout)
+- User sees COMPLETE picture before approving (not partial every 5s)
+- Single approval prompt at the end
+- Subagent handles complexity; primary agent stays simple
 
 **Confidence Detection Patterns**:
 
@@ -249,7 +283,7 @@ Good morning! Here's your briefing for Wednesday, Jan 8:
 **Low Confidence (<50%)**:
 - Ambiguous cases requiring human judgment
 
-**Approval Prompt Example** (High Confidence):
+**Approval Prompt Example** (after autonomous collection):
 ```
 I've identified 47 newsletter emails with high confidence (>90%). Review and approve:
 
@@ -398,65 +432,75 @@ User: "What's in the invoice attachment?"
 
 ---
 
-### /clean-inbox - Automatic Inbox Cleanup
+### /clean-inbox - Automatic Inbox Cleanup (Autonomous Loop)
 **File**: `.opencode/command/clean-inbox.md`
 
 **Usage**: `/clean-inbox`
 
 **What it does**:
-1. Calls `quick_clean_inbox` tool (processes ALL unread emails in batches of 20)
-2. For each email, checks two conditions:
-   - User NOT in To: or CC: fields
-   - User's email/name NOT mentioned in body
-3. If BOTH conditions true → marks as read + moves to `Secretary/Auto-Cleaned`
-4. Returns summary of moved vs skipped emails
+1. Delegates to @bulk-cleaner subagent
+2. @bulk-cleaner runs autonomous continuation loop:
+   - Calls `quick_clean_inbox()` (processes for 5s, returns partial)
+   - If `has_more=true`, automatically calls again with `continuation_state`
+   - Repeats until `status="complete"` or `has_more=false`
+   - Aggregates ALL candidates from all batches
+3. @bulk-cleaner returns complete aggregated list to @secretary
+4. @secretary presents complete list to user for approval
+5. User approves → @secretary calls `execute_clean_batch(uids=[...])`
 
-**UNIQUE**: This is the **only command that does NOT require confirmation** because:
-- It only affects emails where the user is provably not a direct recipient
-- Emails are moved (not deleted) - fully recoverable
-- Each email is checked exactly once (no loops)
+**Safety Guarantees**:
+- Only identifies emails where user is **NOT** in To: or CC: fields
+- Only identifies emails where user's email/name is **NOT** mentioned in body
+- Emails are moved (not deleted) - fully recoverable to `Secretary/Auto-Cleaned`
+- Time-boxed (5s per batch) prevents MCP timeout
+- **Single approval prompt** after ALL data is gathered (not every 5 seconds)
 
 **Example Output**:
 ```
-Processed 45 unread emails:
-- Moved: 12 emails to Secretary/Auto-Cleaned
-- Skipped: 33 emails (you were addressed)
+Processed 145 unread emails across 3 batches:
+- Cleanup candidates: 47 emails
+- Skipped: 98 emails (you were addressed)
 
-Moved emails:
-- From: notifications@github.com | Subject: [repo] New issue opened
-- From: noreply@jira.com | Subject: PROJ-123 was updated
+High Confidence (35 emails):
+1. From: newsletter@company.com | Subject: Weekly Digest
+2. From: no-reply@github.com | Subject: Repository Activity
 ...
+
+Action: Mark as read + Move to Secretary/Auto-Cleaned
+Approve this batch? (yes/no)
 ```
 
 ---
 
-### /triage-priority - High-Priority Email Triage
+### /triage-priority - High-Priority Email Triage (Autonomous Loop)
 **File**: `.opencode/command/triage-priority.md`
 
 **Usage**: `/triage-priority`
 
 **What it does**:
-1. Calls `triage_priority_emails` tool
-2. Identifies emails where:
-   - User in To: with <5 recipients, OR
-   - User in To: with <15 recipients AND first/last name in body
-3. Moves matches to `Secretary/Priority`
-4. Analyzes each email and suggests actions
+1. Delegates to @triage subagent
+2. @triage runs autonomous continuation loop with `triage_priority_emails` tool
+3. Aggregates all priority emails across batches
+4. Returns complete list to @secretary for presentation
+
+**Priority Criteria**:
+- User in To: with <5 recipients, OR
+- User in To: with <15 recipients AND first/last name in body
 
 **Output**: Priority emails with sender, subject, priority reason, content summary, and suggested action (reply, schedule, FYI).
 
 ---
 
-### /triage-remaining - Process Remaining Emails
+### /triage-remaining - Process Remaining Emails (Autonomous Loop)
 **File**: `.opencode/command/triage-remaining.md`
 
 **Usage**: `/triage-remaining`
 
 **What it does**:
-1. Calls `triage_remaining_emails` tool
-2. Processes emails that are addressed to user but not high-priority
-3. Moves to `Secretary/Waiting`
-4. Categorizes by recommended action based on signals
+1. Delegates to @triage subagent
+2. @triage runs autonomous continuation loop with `triage_remaining_emails` tool
+3. Aggregates all remaining emails across batches
+4. Returns complete list to @secretary for presentation
 
 **Output**: Emails grouped by action (Read Later, Review This Week, Needs Response, Calendar Check).
 
@@ -537,28 +581,51 @@ User: /morning
 
 ---
 
-### Workflow 2: Automatic Inbox Cleanup
+### Workflow 2: Automatic Inbox Cleanup (Autonomous Loop)
 ```
 User: /clean-inbox
 
 @secretary: [Delegates to @bulk-cleaner]
-@bulk-cleaner: [Calls quick_clean_inbox tool]
-@bulk-cleaner: "✅ Inbox cleanup complete!
-                
-                Processed 45 unread emails:
-                - Moved: 12 emails to Secretary/Auto-Cleaned
-                - Skipped: 33 emails (you were addressed)
-                
-                Moved emails (first 5):
-                - From: notifications@github.com | Subject: [repo] New issue
-                - From: noreply@jira.com | Subject: PROJ-123 updated
-                - From: team-announce@company.com | Subject: Office Hours Change
-                ...
-                
-                Skipped emails remain in INBOX for your attention."
+
+@bulk-cleaner: [Starts autonomous continuation loop]
+  → Calls quick_clean_inbox() - processes batch 1 (5s)
+  → has_more=true, calls again with continuation_state
+  → Calls quick_clean_inbox(continuation_state=...) - batch 2 (5s)
+  → has_more=true, continues...
+  → Calls quick_clean_inbox(continuation_state=...) - batch 3 (5s)
+  → has_more=false, aggregates ALL results
+  → Returns complete list to @secretary
+
+@secretary: [Receives complete aggregated results]
+@secretary: "✅ Inbox analysis complete!
+             
+             Processed 145 unread emails across 3 batches:
+             - Cleanup candidates: 47 emails
+             - Skipped: 98 emails (you were addressed)
+             
+             High Confidence (35 emails):
+             1. From: newsletter@company.com | Subject: Weekly Digest
+             2. From: no-reply@github.com | Subject: Repository Activity
+             ... [33 more]
+             
+             Medium Confidence (12 emails):
+             1. From: team@company.com | CC: you@gmail.com | Subject: FYI
+             ... [11 more]
+             
+             Action: Mark as read + Move to Secretary/Auto-Cleaned
+             Approve this batch? (yes/no)"
+
+User: yes
+
+@secretary: [Calls execute_clean_batch(uids=[...all 47 UIDs...])]
+@secretary: "✅ 47 emails moved to Secretary/Auto-Cleaned"
 ```
 
-**Note**: This is the only workflow that does NOT require confirmation. The `quick_clean_inbox` tool has built-in safety guarantees (only moves emails where you're not addressed AND not mentioned).
+**Key Points**:
+- @bulk-cleaner runs the continuation loop **autonomously** (no user prompts during gathering)
+- User sees **complete results** after ALL batches are processed
+- Single approval prompt at the end (not every 5 seconds)
+- Only after approval does @secretary call `execute_clean_batch()`
 
 ---
 

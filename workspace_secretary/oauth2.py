@@ -14,61 +14,77 @@ from workspace_secretary.config import OAuth2Config
 
 logger = logging.getLogger(__name__)
 
-# Gmail OAuth2 endpoints
 GMAIL_TOKEN_URI = "https://oauth2.googleapis.com/token"
 GMAIL_AUTH_BASE_URL = "https://accounts.google.com/o/oauth2/auth"
 GMAIL_SCOPES = ["https://mail.google.com/"]
 
 
-def get_access_token(oauth2_config: OAuth2Config) -> Tuple[str, int]:
-    """Get a valid access token for Gmail.
+class OAuthValidationResult:
+    def __init__(self, valid: bool, can_refresh: bool, error: Optional[str] = None):
+        self.valid = valid
+        self.can_refresh = can_refresh
+        self.error = error
 
-    Uses the refresh token to get a new access token if needed.
+    @property
+    def needs_auth(self) -> bool:
+        return not self.valid and not self.can_refresh
 
-    Args:
-        oauth2_config: OAuth2 configuration
 
-    Returns:
-        Tuple of (access_token, expiry_timestamp)
+def validate_oauth_config(
+    oauth2_config: Optional[OAuth2Config],
+) -> OAuthValidationResult:
+    """Check if OAuth config has valid/refreshable tokens without making API calls."""
+    if not oauth2_config:
+        return OAuthValidationResult(False, False, "No OAuth2 config provided")
 
-    Raises:
-        ValueError: If unable to get an access token
-    """
-    # Check if we already have a valid access token
-    current_time = int(time.time())
+    if not oauth2_config.client_id or not oauth2_config.client_secret:
+        return OAuthValidationResult(False, False, "Missing client_id or client_secret")
 
-    # Handle token_expiry as either int timestamp or datetime string
-    token_expiry = 0
-    if oauth2_config.token_expiry:
+    if oauth2_config.refresh_token:
+        return OAuthValidationResult(False, True, None)
+
+    if oauth2_config.access_token:
+        current_time = int(time.time())
+        token_expiry = _parse_token_expiry(oauth2_config.token_expiry)
+        if token_expiry > current_time + 300:
+            return OAuthValidationResult(True, False, None)
+        return OAuthValidationResult(
+            False, False, "Access token expired, no refresh token"
+        )
+
+    return OAuthValidationResult(
+        False, False, "No tokens available - authentication required"
+    )
+
+
+def _parse_token_expiry(token_expiry) -> int:
+    if not token_expiry:
+        return 0
+    try:
+        return int(token_expiry)
+    except (ValueError, TypeError):
         try:
-            # Try to convert to int directly
-            token_expiry = int(oauth2_config.token_expiry)
+            from datetime import datetime
+
+            expiry_dt = datetime.fromisoformat(str(token_expiry).replace("Z", "+00:00"))
+            return int(expiry_dt.timestamp())
         except (ValueError, TypeError):
-            # If it's a datetime string, try to parse it
-            try:
-                # Handle ISO format datetime strings
-                from datetime import datetime
+            return 0
 
-                expiry_dt = datetime.fromisoformat(
-                    str(oauth2_config.token_expiry).replace("Z", "+00:00")
-                )
-                token_expiry = int(expiry_dt.timestamp())
-            except (ValueError, TypeError):
-                # If parsing fails, force token refresh
-                token_expiry = 0
 
-    if (
-        oauth2_config.access_token and token_expiry > current_time + 300  # 5 min buffer
-    ):
+def get_access_token(oauth2_config: OAuth2Config) -> Tuple[str, int]:
+    """Get a valid access token, refreshing if needed."""
+    current_time = int(time.time())
+    token_expiry = _parse_token_expiry(oauth2_config.token_expiry)
+
+    if oauth2_config.access_token and token_expiry > current_time + 300:
         return oauth2_config.access_token, token_expiry
 
-    # Otherwise, use refresh token to get a new access token
     if not oauth2_config.refresh_token:
         raise ValueError("Refresh token is required for OAuth2 authentication")
 
     logger.info("Refreshing Gmail access token")
 
-    # Exchange refresh token for access token
     data = {
         "client_id": oauth2_config.client_id,
         "client_secret": oauth2_config.client_secret,
@@ -85,10 +101,9 @@ def get_access_token(oauth2_config: OAuth2Config) -> Tuple[str, int]:
 
     token_data = response.json()
     access_token = token_data["access_token"]
-    expires_in = token_data.get("expires_in", 3600)  # Default to 1 hour
+    expires_in = token_data.get("expires_in", 3600)
     expiry = int(time.time()) + expires_in
 
-    # Update the config with the new token
     oauth2_config.access_token = access_token
     oauth2_config.token_expiry = expiry
 

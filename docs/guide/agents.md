@@ -308,6 +308,131 @@ async def morning_routine():
     return combine_insights(briefing, unread_count, vip_status)
 ```
 
+## ⏱️ Time-Boxed Batch Processing Pattern
+
+**CRITICAL**: Batch tools (`quick_clean_inbox`, `triage_priority_emails`, `triage_remaining_emails`) are **time-boxed** to ~5 seconds per call to avoid MCP timeouts. Agents MUST implement autonomous continuation loops.
+
+### Why Time-Boxing?
+
+MCP has strict timeout limits. Processing 500 emails in one call would timeout. Instead:
+- Each call processes emails for ~5 seconds
+- Returns partial results with `continuation_state`
+- Agent continues automatically until complete
+
+### The Autonomous Continuation Pattern
+
+```python
+async def bulk_cleanup_agent():
+    """
+    Subagent that autonomously gathers ALL cleanup candidates
+    before returning to the orchestrator for user approval.
+    """
+    all_candidates = []
+    continuation_state = None
+    
+    # Autonomous loop - NO user interaction during gathering
+    while True:
+        result = await call_tool(
+            "quick_clean_inbox",
+            continuation_state=continuation_state
+        )
+        
+        # Aggregate candidates from this batch
+        all_candidates.extend(result["candidates"])
+        
+        # Check if done
+        if result["status"] == "complete" or not result["has_more"]:
+            break
+        
+        # Continue with state from response
+        continuation_state = result["continuation_state"]
+    
+    # Return COMPLETE aggregated results (not partial)
+    return {
+        "total_candidates": len(all_candidates),
+        "candidates": all_candidates,
+        "status": "complete"
+    }
+```
+
+### Orchestrator Pattern
+
+```python
+async def secretary_orchestrator(user_request):
+    """
+    Primary agent that delegates to subagents and handles user approval.
+    """
+    if user_request == "/clean-inbox":
+        # Step 1: Delegate to subagent (runs autonomous loop)
+        cleanup_result = await bulk_cleanup_agent()
+        
+        # Step 2: Present COMPLETE results to user (single prompt)
+        approval = await present_to_user(
+            f"Found {cleanup_result['total_candidates']} emails to clean. "
+            f"Approve? (yes/no)"
+        )
+        
+        # Step 3: Execute only if approved
+        if approval == "yes":
+            uids = [c["uid"] for c in cleanup_result["candidates"]]
+            await call_tool("execute_clean_batch", uids=uids)
+            return "✅ Cleanup complete!"
+        else:
+            return "❌ Cancelled."
+```
+
+### Response Format
+
+All time-boxed tools return:
+
+```json
+{
+  "status": "partial",          // or "complete"
+  "has_more": true,             // false when done
+  "candidates": [...],          // this batch's results
+  "continuation_state": "...",  // pass to next call (JSON string)
+  "time_limit_reached": true,   // why this batch ended
+  "processed_count": 45         // emails processed so far
+}
+```
+
+### Anti-Patterns (FORBIDDEN)
+
+❌ **Prompting user after each batch**:
+```python
+# WRONG - User gets prompted every 5 seconds!
+while has_more:
+    result = quick_clean_inbox(...)
+    show_to_user(result)      # BAD: partial results
+    user_approves()           # BAD: approval per batch
+```
+
+❌ **Running loop in orchestrator instead of subagent**:
+```python
+# WRONG - Orchestrator should delegate, not loop
+async def secretary(request):
+    while has_more:
+        result = quick_clean_inbox(...)  # Should be in subagent
+```
+
+✅ **Correct: Subagent loops, orchestrator approves once**:
+```python
+# RIGHT
+subagent_result = await bulk_cleanup_agent()  # Runs full loop
+user_approves(subagent_result)                # Single prompt
+execute_clean_batch(subagent_result["uids"])  # Execute once
+```
+
+### Tools Using This Pattern
+
+| Tool | Purpose | Continuation Field |
+|------|---------|-------------------|
+| `quick_clean_inbox` | Identify cleanup candidates | `continuation_state` |
+| `triage_priority_emails` | Find high-priority emails | `continuation_state` |
+| `triage_remaining_emails` | Process remaining emails | `continuation_state` |
+| `execute_clean_batch` | Execute approved cleanup | N/A (single call) |
+```
+
 ## 📚 Best Practices Summary
 
 1. **✅ DO**: Always confirm mutations (send, delete, move)

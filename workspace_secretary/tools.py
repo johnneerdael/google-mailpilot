@@ -959,133 +959,178 @@ def register_tools(
             logger.error(f"Error getting unread messages: {e}")
             return json.dumps({"error": str(e)}, indent=2)
 
-    # Process meeting invite and generate a draft reply
-    @mcp.tool()
-    async def process_meeting_invite(
-        folder: str,
-        uid: int,
-        ctx: Context,
-        availability_mode: str = "random",
-    ) -> dict:
-        """Process a meeting invite email and create a draft reply.
+    if oauth_mode == OAuthMode.API:
 
-        This tool orchestrates the full workflow:
-        1. Identifies if the email is a meeting invite
-        2. Checks calendar availability for the meeting time
-        3. Generates an appropriate reply (accept/decline)
-        4. Creates a MIME message for the reply
-        5. Saves the reply as a draft
+        @mcp.tool()
+        async def process_meeting_invite(
+            folder: str,
+            uid: int,
+            ctx: Context,
+            availability_mode: str = "random",
+        ) -> dict:
+            """Process a meeting invite email and create a draft reply (API mode).
 
-        Args:
-            folder: Folder containing the invite email
-            uid: UID of the invite email
-            ctx: MCP context
-            availability_mode: Mode for availability check (random, always_available,
-                              always_busy, business_hours, weekdays)
+            Workflow: identify invite → check calendar → draft accept/decline reply.
+            Requires calendar.events scope to accept/decline invites.
+            """
+            from workspace_secretary.workflows.invite_parser import (
+                identify_meeting_invite_details,
+            )
+            from workspace_secretary.workflows.calendar_mock import (
+                check_mock_availability,
+            )
+            from workspace_secretary.workflows.meeting_reply import (
+                generate_meeting_reply_content,
+            )
+            from workspace_secretary.smtp_client import create_reply_mime
+            from workspace_secretary.models import EmailAddress
 
-        Returns:
-            Dictionary with the processing result:
-              - status: "success", "not_invite", or "error"
-              - message: Description of the result
-              - draft_uid: UID of the saved draft (if successful)
-              - draft_folder: Folder where the draft was saved (if successful)
-              - availability: Whether the time slot was available
-        """
-        from workspace_secretary.workflows.invite_parser import (
-            identify_meeting_invite_details,
-        )
-        from workspace_secretary.workflows.calendar_mock import check_mock_availability
-        from workspace_secretary.workflows.meeting_reply import (
-            generate_meeting_reply_content,
-        )
-        from workspace_secretary.smtp_client import create_reply_mime
-        from workspace_secretary.models import EmailAddress
+            client = get_client_from_context(ctx)
+            result: Dict[str, Any] = {
+                "status": "error",
+                "message": "An error occurred during processing",
+                "draft_uid": None,
+                "draft_folder": None,
+                "availability": None,
+            }
 
-        client = get_client_from_context(ctx)
-        result = {
-            "status": "error",
-            "message": "An error occurred during processing",
-            "draft_uid": None,
-            "draft_folder": None,
-            "availability": None,
-        }
+            try:
+                email_obj = client.fetch_email(uid, folder)
+                if not email_obj:
+                    result["message"] = (
+                        f"Email with UID {uid} not found in folder {folder}"
+                    )
+                    return result
 
-        try:
-            # Step 1: Fetch the original email
-            logger.info(f"Fetching email UID {uid} from folder {folder}")
-            email_obj = client.fetch_email(uid, folder)
+                invite_result = identify_meeting_invite_details(email_obj)
+                if not invite_result["is_invite"]:
+                    result["status"] = "not_invite"
+                    result["message"] = "The email is not a meeting invite"
+                    return result
 
-            if not email_obj:
-                result["message"] = f"Email with UID {uid} not found in folder {folder}"
+                invite_details = invite_result["details"]
+
+                availability_result = check_mock_availability(
+                    invite_details.get("start_time"),
+                    invite_details.get("end_time"),
+                    availability_mode,
+                )
+                result["availability"] = availability_result["available"]
+
+                reply_content = generate_meeting_reply_content(
+                    invite_details, availability_result
+                )
+
+                reply_from = EmailAddress(name="Me", address=client.config.username)
+                mime_message = create_reply_mime(
+                    original_email=email_obj,
+                    reply_to=reply_from,
+                    body=reply_content["reply_body"],
+                    subject=reply_content["reply_subject"],
+                    reply_all=False,
+                )
+
+                draft_uid = client.save_draft_mime(mime_message)
+                if draft_uid:
+                    action = "accept" if availability_result["available"] else "decline"
+                    result["status"] = "success"
+                    result["message"] = (
+                        f"Processed invite and saved {action} reply as draft"
+                    )
+                    result["draft_uid"] = str(draft_uid)
+                    result["draft_folder"] = client._get_drafts_folder()
+                else:
+                    result["message"] = "Failed to save draft"
+
                 return result
 
-            # Step 2: Identify if it's a meeting invite
-            logger.info(
-                f"Analyzing email for meeting invite details: {email_obj.subject}"
-            )
-            invite_result = identify_meeting_invite_details(email_obj)
-
-            if not invite_result["is_invite"]:
-                result["status"] = "not_invite"
-                result["message"] = "The email is not a meeting invite"
+            except Exception as e:
+                logger.error(f"Error processing meeting invite: {e}")
+                result["message"] = f"Error: {str(e)}"
                 return result
 
-            invite_details = invite_result["details"]
+    else:
 
-            # Step 3: Check calendar availability
-            logger.info(
-                f"Checking calendar availability for meeting: {invite_details['subject']}"
-            )
-            availability_result = check_mock_availability(
-                invite_details.get("start_time"),
-                invite_details.get("end_time"),
-                availability_mode,
-            )
-
-            result["availability"] = availability_result["available"]
-
-            # Step 4: Generate reply content
-            logger.info(
-                f"Generating {'accept' if availability_result['available'] else 'decline'} reply"
-            )
-            reply_content = generate_meeting_reply_content(
-                invite_details, availability_result
+        @mcp.tool()
+        async def process_meeting_invite(
+            folder: str,
+            uid: int,
+            ctx: Context,
+        ) -> dict:
+            """Process a meeting invite email (IMAP mode). Creates task and moves to Secretary/Calendar."""
+            from workspace_secretary.workflows.invite_parser import (
+                identify_meeting_invite_details,
             )
 
-            # Step 5: Create MIME message
-            # Determine sender (reply_from)
-            reply_from = EmailAddress(name="Me", address=client.config.username)
+            client = get_client_from_context(ctx)
+            result: Dict[str, Any] = {
+                "status": "error",
+                "message": "An error occurred during processing",
+                "task_created": False,
+                "moved_to_folder": None,
+                "invite_details": None,
+            }
 
-            mime_message = create_reply_mime(
-                original_email=email_obj,
-                reply_to=reply_from,
-                body=reply_content["reply_body"],
-                subject=reply_content["reply_subject"],
-                reply_all=False,
-            )
+            try:
+                email_obj = client.fetch_email(uid, folder)
+                if not email_obj:
+                    result["message"] = (
+                        f"Email with UID {uid} not found in folder {folder}"
+                    )
+                    return result
 
-            # Step 6: Save as draft
-            logger.info("Saving reply as draft")
-            draft_uid = client.save_draft_mime(mime_message)
+                invite_result = identify_meeting_invite_details(email_obj)
+                if not invite_result["is_invite"]:
+                    result["status"] = "not_invite"
+                    result["message"] = "The email is not a meeting invite"
+                    return result
 
-            if draft_uid:
+                invite_details = invite_result["details"]
+                result["invite_details"] = invite_details
+
+                task_desc = (
+                    f"MEETING INVITE: {invite_details.get('subject', 'Unknown')} "
+                    f"from {str(email_obj.from_)}"
+                )
+                if invite_details.get("start_time"):
+                    task_desc += f" at {invite_details['start_time']}"
+
+                import os
+
+                tasks_file = os.path.join(os.getcwd(), "tasks.md")
+                task_entry = f"- [ ] {task_desc} (Priority: high)\n"
+                try:
+                    with open(tasks_file, "a") as f:
+                        f.write(task_entry)
+                    result["task_created"] = True
+                except Exception as task_err:
+                    logger.warning(f"Failed to create task: {task_err}")
+
+                calendar_folder = "Secretary/Calendar"
+                if not client.folder_exists(calendar_folder):
+                    client.create_folder(calendar_folder)
+
+                client.move_email(uid, folder, calendar_folder)
+                result["moved_to_folder"] = calendar_folder
+
+                try:
+                    cache = get_email_cache_from_context(ctx)
+                    if cache:
+                        cache.move_email(uid, folder, calendar_folder)
+                except Exception:
+                    pass
+
                 result["status"] = "success"
                 result["message"] = (
-                    f"Processed invite and saved {'accept' if availability_result['available'] else 'decline'} "
-                    f"reply as draft (UID: {draft_uid})"
+                    f"Meeting invite identified. Created task and moved to {calendar_folder}. "
+                    "Manual action required to accept/decline (IMAP mode limitation)."
                 )
-                result["draft_uid"] = str(draft_uid)
-                result["draft_folder"] = client._get_drafts_folder()
-            else:
-                result["status"] = "error"
-                result["message"] = "Failed to save draft"
+                return result
 
-            return result
-
-        except Exception as e:
-            logger.error(f"Error processing meeting invite: {e}")
-            result["message"] = f"Error: {str(e)}"
-            return result
+            except Exception as e:
+                logger.error(f"Error processing meeting invite (IMAP): {e}")
+                result["message"] = f"Error: {str(e)}"
+                return result
 
     # --- Calendar Tools ---
 
@@ -1115,65 +1160,67 @@ def register_tools(
             logger.error(f"Error listing calendar events: {e}")
             return json.dumps({"error": str(e)}, indent=2)
 
-    @mcp.tool()
-    async def create_calendar_event(
-        summary: str,
-        start_time: str,
-        end_time: str,
-        description: Optional[str] = None,
-        location: Optional[str] = None,
-        calendar_id: str = "primary",
-        meeting_type: Optional[str] = None,
-        ctx: Context = None,  # type: ignore
-    ) -> str:
-        """Create a new event on Google Calendar.
-
-        Args:
-            summary: Title of the event
-            start_time: ISO format start time (e.g. 2024-01-01T10:00:00Z)
-            end_time: ISO format end time
-            description: Detailed description
-            location: Event location
-            calendar_id: Calendar identifier
-            meeting_type: Optional meeting type ('google_meet' or None)
-            ctx: MCP context
-
-        Returns:
-            JSON representation of created event
-        """
-        client = get_calendar_client_from_context(ctx)
-        event_data = {
-            "summary": summary,
-            "start": {"dateTime": start_time},
-            "end": {"dateTime": end_time},
-        }
-        if description:
-            event_data["description"] = description
-        if location:
-            event_data["location"] = location
-
-        conference_version = 0
-        if meeting_type == "google_meet":
-            conference_version = 1
-            import uuid
-
-            event_data["conferenceData"] = {
-                "createRequest": {
-                    "requestId": str(uuid.uuid4()),
-                    "conferenceSolutionKey": {"type": "hangoutsMeet"},
-                }
-            }
-
-        try:
-            event = client.create_event(
-                event_data, calendar_id, conference_data_version=conference_version
-            )
-            return json.dumps(event, indent=2)
-        except Exception as e:
-            logger.error(f"Error creating calendar event: {e}")
-            return json.dumps({"error": str(e)}, indent=2)
-
     if oauth_mode == OAuthMode.API:
+
+        @mcp.tool()
+        async def create_calendar_event(
+            summary: str,
+            start_time: str,
+            end_time: str,
+            description: Optional[str] = None,
+            location: Optional[str] = None,
+            calendar_id: str = "primary",
+            meeting_type: Optional[str] = None,
+            ctx: Context = None,  # type: ignore
+        ) -> str:
+            """Create a new event on Google Calendar.
+
+            NOTE: This tool is only available in API mode (requires calendar.events scope).
+
+            Args:
+                summary: Title of the event
+                start_time: ISO format start time (e.g. 2024-01-01T10:00:00Z)
+                end_time: ISO format end time
+                description: Detailed description
+                location: Event location
+                calendar_id: Calendar identifier
+                meeting_type: Optional meeting type ('google_meet' or None)
+                ctx: MCP context
+
+            Returns:
+                JSON representation of created event
+            """
+            client = get_calendar_client_from_context(ctx)
+            event_data = {
+                "summary": summary,
+                "start": {"dateTime": start_time},
+                "end": {"dateTime": end_time},
+            }
+            if description:
+                event_data["description"] = description
+            if location:
+                event_data["location"] = location
+
+            conference_version = 0
+            if meeting_type == "google_meet":
+                conference_version = 1
+                import uuid
+
+                event_data["conferenceData"] = {
+                    "createRequest": {
+                        "requestId": str(uuid.uuid4()),
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    }
+                }
+
+            try:
+                event = client.create_event(
+                    event_data, calendar_id, conference_data_version=conference_version
+                )
+                return json.dumps(event, indent=2)
+            except Exception as e:
+                logger.error(f"Error creating calendar event: {e}")
+                return json.dumps({"error": str(e)}, indent=2)
 
         @mcp.tool()
         async def gmail_search(
@@ -2111,28 +2158,25 @@ def register_tools(
     @mcp.tool()
     async def quick_clean_inbox(
         ctx: Context = None,  # type: ignore
-        batch_size: int = 20,
+        continuation_state: Optional[str] = None,
+        time_limit_seconds: float = 5.0,
     ) -> str:
-        """Automatically clean inbox by moving emails where user is not directly addressed.
+        """Identify emails where user is not directly addressed (time-boxed).
 
-        This tool processes ALL unread emails in batches, checking each exactly once.
-        Emails are moved to Secretary/Auto-Cleaned if:
-        1. User's email is NOT in the To: or CC: fields, AND
-        2. User's email/name is NOT mentioned in the body
-
-        UNIQUE: This is the only mutation tool that does NOT require user confirmation,
-        because it only affects emails where the user is provably not a direct recipient.
-
-        Args:
-            ctx: MCP context
-            batch_size: Number of emails to process per batch (default: 20)
-
-        Returns:
-            JSON with processing results including moved and skipped counts
+        Processes emails for up to time_limit_seconds, then returns partial results.
+        Pass continuation_state from previous response to resume processing.
         """
+        import time as time_module
+        from workspace_secretary.batch_utils import BatchState
+
         client = get_client_from_context(ctx)
         config = get_server_config_from_context(ctx)
         identity = config.identity
+
+        state = BatchState.from_dict(
+            json.loads(continuation_state) if continuation_state else None
+        )
+        already_processed = set(state.processed_uids)
 
         try:
             target_folder = "Secretary/Auto-Cleaned"
@@ -2140,41 +2184,54 @@ def register_tools(
                 client.create_folder(target_folder)
 
             all_unread_uids = client.search({"UNSEEN": True}, folder="INBOX")
-            logging.debug(
-                f"quick_clean_inbox: Found {len(all_unread_uids)} unread emails"
-            )
+            total_unread = len(all_unread_uids)
+
             if not all_unread_uids:
                 return json.dumps(
                     {
-                        "status": "success",
-                        "message": "No unread emails to process",
-                        "total_processed": 0,
-                        "moved": 0,
-                        "skipped": 0,
+                        "status": "complete",
+                        "candidates": [],
+                        "has_more": False,
+                        "total_unread": 0,
                     },
                     indent=2,
                 )
 
-            total_to_process = len(all_unread_uids)
-            moved_count = 0
-            skipped_count = 0
-            moved_emails: list[dict[str, str]] = []
-            skipped_emails: list[dict[str, str]] = []
-
             uid_list = list(all_unread_uids)
+            uids_to_process = [
+                u for u in uid_list[state.offset :] if u not in already_processed
+            ]
 
-            for batch_start in range(0, len(uid_list), batch_size):
-                batch_uids = uid_list[batch_start : batch_start + batch_size]
-                logging.debug(
-                    f"quick_clean_inbox: Processing batch {batch_start // batch_size + 1}, fetching {len(batch_uids)} emails"
+            if not uids_to_process:
+                return json.dumps(
+                    {
+                        "status": "complete",
+                        "candidates": [],
+                        "has_more": False,
+                        "total_unread": total_unread,
+                    },
+                    indent=2,
                 )
+
+            candidates: list[dict[str, Any]] = []
+            skipped: list[dict[str, Any]] = []
+            start_time = time_module.time()
+            processed_count = 0
+            time_limit_reached = False
+
+            batch_size = 20
+            for batch_start in range(0, len(uids_to_process), batch_size):
+                if time_module.time() - start_time >= time_limit_seconds:
+                    time_limit_reached = True
+                    break
+
+                batch_uids = uids_to_process[batch_start : batch_start + batch_size]
                 emails = client.fetch_emails(batch_uids, folder="INBOX")
-                logging.debug(f"quick_clean_inbox: Fetched {len(emails)} emails")
 
                 for uid, email in emails.items():
-                    processed = moved_count + skipped_count
-                    if ctx and processed % 1 == 0:
-                        await ctx.report_progress(processed, total_to_process)
+                    if time_module.time() - start_time >= time_limit_seconds:
+                        time_limit_reached = True
+                        break
 
                     to_addresses = [str(addr).lower() for addr in email.to]
                     cc_addresses = [str(addr).lower() for addr in (email.cc or [])]
@@ -2189,39 +2246,44 @@ def register_tools(
                         body_text
                     ) or identity.matches_name(body_text)
 
-                    email_summary = {
-                        "uid": str(uid),
+                    email_info = {
+                        "uid": uid,
+                        "date": email.date.isoformat() if email.date else None,
                         "from": str(email.from_),
+                        "to": ", ".join(to_addresses[:3]),
+                        "cc": ", ".join(cc_addresses[:3]) if cc_addresses else None,
                         "subject": email.subject or "(no subject)",
                     }
 
                     if not user_in_recipients and not user_mentioned_in_body:
-                        client.mark_email(uid, "INBOX", r"\Seen", True)
-                        client.move_email(uid, "INBOX", target_folder)
-                        moved_count += 1
-                        moved_emails.append(email_summary)
-
-                        try:
-                            cache = get_email_cache_from_context(ctx)
-                            if cache:
-                                cache.mark_as_read(uid, "INBOX")
-                                cache.move_email(uid, "INBOX", target_folder)
-                        except Exception:
-                            pass
+                        candidates.append(email_info)
                     else:
-                        skipped_count += 1
-                        skipped_emails.append(email_summary)
+                        skipped.append(email_info)
 
-            logging.debug("quick_clean_inbox: Completed successfully")
+                    state.processed_uids.append(uid)
+                    processed_count += 1
+
+                if time_limit_reached:
+                    break
+
+            state.offset += processed_count
+            elapsed = time_module.time() - start_time
+            is_complete = state.offset >= total_unread and not time_limit_reached
+
             return json.dumps(
                 {
-                    "status": "success",
-                    "total_processed": total_to_process,
-                    "moved": moved_count,
-                    "skipped": skipped_count,
+                    "status": "complete" if is_complete else "partial",
+                    "candidates": candidates,
+                    "candidates_count": len(candidates),
+                    "skipped": skipped,
+                    "skipped_count": len(skipped),
+                    "has_more": not is_complete,
+                    "continuation_state": None if is_complete else state.to_dict(),
+                    "total_unread": total_unread,
+                    "processed_this_batch": processed_count,
+                    "time_elapsed_seconds": round(elapsed, 2),
+                    "time_limit_reached": time_limit_reached,
                     "target_folder": target_folder,
-                    "moved_emails": moved_emails[:50],
-                    "skipped_emails": skipped_emails[:20],
                 },
                 indent=2,
             )
@@ -2231,28 +2293,69 @@ def register_tools(
             return json.dumps({"error": str(e)}, indent=2)
 
     @mcp.tool()
+    async def execute_clean_batch(
+        ctx: Context = None,  # type: ignore
+        uids: Optional[list[int]] = None,
+    ) -> str:
+        """Execute the auto-clean action on approved email UIDs."""
+        if not uids:
+            return json.dumps({"error": "No UIDs provided"}, indent=2)
+
+        client = get_client_from_context(ctx)
+        target_folder = "Secretary/Auto-Cleaned"
+
+        moved = 0
+        failed = 0
+
+        for uid in uids:
+            try:
+                client.mark_email(uid, "INBOX", r"\Seen", True)
+                client.move_email(uid, "INBOX", target_folder)
+                moved += 1
+
+                try:
+                    cache = get_email_cache_from_context(ctx)
+                    if cache:
+                        cache.mark_as_read(uid, "INBOX")
+                        cache.move_email(uid, "INBOX", target_folder)
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"Failed to clean UID {uid}: {e}")
+                failed += 1
+
+        return json.dumps(
+            {
+                "status": "success",
+                "moved": moved,
+                "failed": failed,
+                "target_folder": target_folder,
+            },
+            indent=2,
+        )
+
+    @mcp.tool()
     async def triage_priority_emails(
         ctx: Context = None,  # type: ignore
-        batch_size: int = 20,
+        continuation_state: Optional[str] = None,
+        time_limit_seconds: float = 5.0,
     ) -> str:
-        """Identify high-priority emails that need immediate attention.
+        """Identify high-priority emails (time-boxed).
 
-        Criteria for HIGH PRIORITY:
-        1. User in To: field with <5 total recipients, OR
-        2. User in To: field with <15 recipients AND first/last name mentioned in body
-
-        Emails matching these criteria are moved to Secretary/Priority for subagent handling.
-
-        Args:
-            ctx: MCP context
-            batch_size: Emails per batch (default: 20)
-
-        Returns:
-            JSON with priority emails ready for subagent processing
+        Criteria: User in To: with <5 recipients, OR <15 recipients with name in body.
+        Pass continuation_state from previous response to resume processing.
         """
+        import time as time_module
+        from workspace_secretary.batch_utils import BatchState
+
         client = get_client_from_context(ctx)
         config = get_server_config_from_context(ctx)
         identity = config.identity
+
+        state = BatchState.from_dict(
+            json.loads(continuation_state) if continuation_state else None
+        )
+        already_processed = set(state.processed_uids)
 
         try:
             priority_folder = "Secretary/Priority"
@@ -2260,49 +2363,67 @@ def register_tools(
                 client.create_folder(priority_folder)
 
             all_unread_uids = client.search({"UNSEEN": True}, folder="INBOX")
+            total_unread = len(all_unread_uids)
+
             if not all_unread_uids:
                 return json.dumps(
                     {
-                        "status": "success",
-                        "message": "No unread emails to triage",
-                        "total_processed": 0,
-                        "priority_count": 0,
-                        "skipped_count": 0,
+                        "status": "complete",
+                        "priority_emails": [],
+                        "has_more": False,
+                        "total_unread": 0,
                     },
                     indent=2,
                 )
 
-            total_to_process = len(all_unread_uids)
-            priority_count = 0
-            skipped_count = 0
-            priority_emails: list[dict[str, Any]] = []
-            skipped_emails: list[dict[str, str]] = []
-
             uid_list = list(all_unread_uids)
+            uids_to_process = [
+                u for u in uid_list[state.offset :] if u not in already_processed
+            ]
 
-            for batch_start in range(0, len(uid_list), batch_size):
-                batch_uids = uid_list[batch_start : batch_start + batch_size]
+            if not uids_to_process:
+                return json.dumps(
+                    {
+                        "status": "complete",
+                        "priority_emails": [],
+                        "has_more": False,
+                        "total_unread": total_unread,
+                    },
+                    indent=2,
+                )
+
+            priority_emails: list[dict[str, Any]] = []
+            skipped_emails: list[dict[str, Any]] = []
+            start_time = time_module.time()
+            processed_count = 0
+            time_limit_reached = False
+
+            batch_size = 20
+            for batch_start in range(0, len(uids_to_process), batch_size):
+                if time_module.time() - start_time >= time_limit_seconds:
+                    time_limit_reached = True
+                    break
+
+                batch_uids = uids_to_process[batch_start : batch_start + batch_size]
                 emails = client.fetch_emails(batch_uids, folder="INBOX")
 
                 for uid, email in emails.items():
-                    processed = priority_count + skipped_count
-                    if ctx and processed % 5 == 0:
-                        await ctx.report_progress(processed, total_to_process)
+                    if time_module.time() - start_time >= time_limit_seconds:
+                        time_limit_reached = True
+                        break
 
                     to_addresses = [str(addr).lower() for addr in email.to]
                     total_to_recipients = len(to_addresses)
-
                     user_in_to = any(
                         identity.matches_email(addr) for addr in to_addresses
                     )
 
                     if not user_in_to:
-                        skipped_count += 1
+                        state.processed_uids.append(uid)
+                        processed_count += 1
                         skipped_emails.append(
                             {
                                 "uid": str(uid),
-                                "from": str(email.from_),
-                                "subject": email.subject or "(no subject)",
                                 "reason": "not_in_to",
                             }
                         )
@@ -2325,21 +2446,19 @@ def register_tools(
                             f"name_mentioned ({total_to_recipients} recipients)"
                         )
 
-                    email_summary: dict[str, Any] = {
-                        "uid": str(uid),
-                        "from": str(email.from_),
-                        "subject": email.subject or "(no subject)",
-                        "date": email.date.isoformat() if email.date else None,
-                        "to_count": total_to_recipients,
-                        "snippet": email.content.get_best_content()[:300],
-                    }
-
                     if is_priority:
-                        email_summary["priority_reason"] = priority_reason
                         client.move_email(uid, "INBOX", priority_folder)
-                        priority_count += 1
-                        priority_emails.append(email_summary)
-
+                        priority_emails.append(
+                            {
+                                "uid": str(uid),
+                                "from": str(email.from_),
+                                "subject": email.subject or "(no subject)",
+                                "date": email.date.isoformat() if email.date else None,
+                                "to_count": total_to_recipients,
+                                "priority_reason": priority_reason,
+                                "snippet": body_text[:300],
+                            }
+                        )
                         try:
                             cache = get_email_cache_from_context(ctx)
                             if cache:
@@ -2347,26 +2466,36 @@ def register_tools(
                         except Exception:
                             pass
                     else:
-                        skipped_count += 1
                         skipped_emails.append(
                             {
                                 "uid": str(uid),
-                                "from": str(email.from_),
-                                "subject": email.subject or "(no subject)",
-                                "reason": f"large_group ({total_to_recipients} recipients, name not mentioned)",
+                                "reason": f"large_group ({total_to_recipients} recipients)",
                             }
                         )
 
+                    state.processed_uids.append(uid)
+                    processed_count += 1
+
+                if time_limit_reached:
+                    break
+
+            state.offset += processed_count
+            elapsed = time_module.time() - start_time
+            is_complete = state.offset >= total_unread and not time_limit_reached
+
             return json.dumps(
                 {
-                    "status": "success",
-                    "total_processed": total_to_process,
-                    "priority_count": priority_count,
-                    "skipped_count": skipped_count,
-                    "target_folder": priority_folder,
+                    "status": "complete" if is_complete else "partial",
                     "priority_emails": priority_emails,
-                    "skipped_emails": skipped_emails[:20],
-                    "next_action": "Delegate priority_emails to triage subagent for content analysis",
+                    "priority_count": len(priority_emails),
+                    "skipped_count": len(skipped_emails),
+                    "has_more": not is_complete,
+                    "continuation_state": None if is_complete else state.to_dict(),
+                    "total_unread": total_unread,
+                    "processed_this_batch": processed_count,
+                    "time_elapsed_seconds": round(elapsed, 2),
+                    "time_limit_reached": time_limit_reached,
+                    "target_folder": priority_folder,
                 },
                 indent=2,
             )
@@ -2378,26 +2507,25 @@ def register_tools(
     @mcp.tool()
     async def triage_remaining_emails(
         ctx: Context = None,  # type: ignore
-        batch_size: int = 20,
+        continuation_state: Optional[str] = None,
+        time_limit_seconds: float = 5.0,
     ) -> str:
-        """Process emails that don't match auto-clean or high-priority criteria.
+        """Process emails not matching auto-clean or high-priority (time-boxed).
 
-        These are emails where:
-        - User IS in To: or CC: (so not auto-cleanable), BUT
-        - Don't meet high-priority criteria (large group, name not mentioned)
-
-        Returns email details for subagent to determine appropriate action.
-
-        Args:
-            ctx: MCP context
-            batch_size: Emails per batch (default: 20)
-
-        Returns:
-            JSON with remaining emails for subagent decision-making
+        These emails have user in To:/CC: but don't meet priority criteria.
+        Pass continuation_state from previous response to resume processing.
         """
+        import time as time_module
+        from workspace_secretary.batch_utils import BatchState
+
         client = get_client_from_context(ctx)
         config = get_server_config_from_context(ctx)
         identity = config.identity
+
+        state = BatchState.from_dict(
+            json.loads(continuation_state) if continuation_state else None
+        )
+        already_processed = set(state.processed_uids)
 
         try:
             waiting_folder = "Secretary/Waiting"
@@ -2405,30 +2533,54 @@ def register_tools(
                 client.create_folder(waiting_folder)
 
             all_unread_uids = client.search({"UNSEEN": True}, folder="INBOX")
+            total_unread = len(all_unread_uids)
+
             if not all_unread_uids:
                 return json.dumps(
                     {
-                        "status": "success",
-                        "message": "No unread emails to triage",
-                        "total_processed": 0,
-                        "remaining_count": 0,
+                        "status": "complete",
+                        "remaining_emails": [],
+                        "has_more": False,
+                        "total_unread": 0,
                     },
                     indent=2,
                 )
 
-            total_to_process = len(all_unread_uids)
-            remaining_count = 0
-            remaining_emails: list[dict[str, Any]] = []
-
             uid_list = list(all_unread_uids)
+            uids_to_process = [
+                u for u in uid_list[state.offset :] if u not in already_processed
+            ]
 
-            for batch_start in range(0, len(uid_list), batch_size):
-                batch_uids = uid_list[batch_start : batch_start + batch_size]
+            if not uids_to_process:
+                return json.dumps(
+                    {
+                        "status": "complete",
+                        "remaining_emails": [],
+                        "has_more": False,
+                        "total_unread": total_unread,
+                    },
+                    indent=2,
+                )
+
+            remaining_emails: list[dict[str, Any]] = []
+            skipped_count = 0
+            start_time = time_module.time()
+            processed_count = 0
+            time_limit_reached = False
+
+            batch_size = 20
+            for batch_start in range(0, len(uids_to_process), batch_size):
+                if time_module.time() - start_time >= time_limit_seconds:
+                    time_limit_reached = True
+                    break
+
+                batch_uids = uids_to_process[batch_start : batch_start + batch_size]
                 emails = client.fetch_emails(batch_uids, folder="INBOX")
 
                 for uid, email in emails.items():
-                    if ctx and remaining_count % 5 == 0:
-                        await ctx.report_progress(remaining_count, total_to_process)
+                    if time_module.time() - start_time >= time_limit_seconds:
+                        time_limit_reached = True
+                        break
 
                     to_addresses = [str(addr).lower() for addr in email.to]
                     cc_addresses = [str(addr).lower() for addr in (email.cc or [])]
@@ -2441,6 +2593,9 @@ def register_tools(
                     )
 
                     if not user_in_to and not user_in_cc:
+                        state.processed_uids.append(uid)
+                        processed_count += 1
+                        skipped_count += 1
                         continue
 
                     total_to_recipients = len(to_addresses)
@@ -2453,6 +2608,9 @@ def register_tools(
                     )
 
                     if is_high_priority:
+                        state.processed_uids.append(uid)
+                        processed_count += 1
+                        skipped_count += 1
                         continue
 
                     vip_senders = [v.lower() for v in config.vip_senders]
@@ -2488,7 +2646,6 @@ def register_tools(
                     }
 
                     client.move_email(uid, "INBOX", waiting_folder)
-                    remaining_count += 1
                     remaining_emails.append(email_summary)
 
                     try:
@@ -2498,14 +2655,29 @@ def register_tools(
                     except Exception:
                         pass
 
+                    state.processed_uids.append(uid)
+                    processed_count += 1
+
+                if time_limit_reached:
+                    break
+
+            state.offset += processed_count
+            elapsed = time_module.time() - start_time
+            is_complete = state.offset >= total_unread and not time_limit_reached
+
             return json.dumps(
                 {
-                    "status": "success",
-                    "total_processed": total_to_process,
-                    "remaining_count": remaining_count,
-                    "target_folder": waiting_folder,
+                    "status": "complete" if is_complete else "partial",
                     "remaining_emails": remaining_emails,
-                    "next_action": "Delegate remaining_emails to triage subagent for action determination",
+                    "remaining_count": len(remaining_emails),
+                    "skipped_count": skipped_count,
+                    "has_more": not is_complete,
+                    "continuation_state": None if is_complete else state.to_dict(),
+                    "total_unread": total_unread,
+                    "processed_this_batch": processed_count,
+                    "time_elapsed_seconds": round(elapsed, 2),
+                    "time_limit_reached": time_limit_reached,
+                    "target_folder": waiting_folder,
                 },
                 indent=2,
             )

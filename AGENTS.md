@@ -218,18 +218,23 @@ AI: ✅ Reverts to standard Draft-Review-Send pattern (shows draft first)
 - `create_task` ✅ (adds to tasks.md, no external mutation)
 - `setup_smart_labels` ✅ (idempotent label creation)
 
-### Auto-Clean (No Confirmation - Special Case) 🟡
-- `quick_clean_inbox` ✅ - **The ONLY mutation tool that skips confirmation**
+### Auto-Clean (Two-Step Workflow) 🟡
+- `quick_clean_inbox` ✅ - Identifies candidates (time-boxed, returns partial results)
+- `execute_clean_batch` ✅ - Executes approved moves (mutation)
 
-**Why no confirmation?** This tool has built-in safety guarantees:
-1. Only affects emails where user is **NOT** in To: or CC: fields
-2. Only affects emails where user's email/name is **NOT** mentioned in body
+**Workflow:**
+1. Call `quick_clean_inbox()` → processes for up to 5s, returns candidates
+2. Review candidates with user (Date, From, To, CC, Subject)
+3. If approved, call `execute_clean_batch(uids=[...])` with candidate UIDs
+4. If `has_more=true`, call again with `continuation_state` from response
+
+**Safety guarantees:**
+1. Only identifies emails where user is **NOT** in To: or CC: fields
+2. Only identifies emails where user's email/name is **NOT** mentioned in body
 3. Emails are moved to `Secretary/Auto-Cleaned` (recoverable, not deleted)
-4. Processes in batches of 20, checking each email exactly once
+4. Time-boxed (5s default) prevents MCP timeout
 
-If both conditions fail (user not addressed AND not mentioned), the email is provably not directed at the user. This is deterministic, not heuristic.
-
-### Triage Tools (Require Subagent Handoff) 🔵
+### Triage Tools (Time-Boxed with Continuation) 🔵
 - `triage_priority_emails` - Identifies high-priority emails, moves to `Secretary/Priority`
 - `triage_remaining_emails` - Processes remaining emails, moves to `Secretary/Waiting`
 
@@ -237,7 +242,155 @@ If both conditions fail (user not addressed AND not mentioned), the email is pro
 1. User in To: field with <5 total recipients, OR
 2. User in To: field with <15 recipients AND first/last name mentioned in body
 
-**Workflow**: These tools return email details with signals. Delegate results to a triage subagent for content analysis and action determination.
+**Time-Boxed Continuation Pattern:**
+All batch tools use the same continuation pattern to avoid MCP timeouts:
+
+```json
+// First call
+{"continuation_state": null}
+
+// Response (partial)
+{
+  "status": "partial",
+  "has_more": true,
+  "continuation_state": {"offset": 45, "processed_uids": [1,2,3...], ...},
+  "time_limit_reached": true
+}
+
+// Continue with state from previous response
+{"continuation_state": "{\"offset\": 45, \"processed_uids\": [1,2,3...]}"}
+```
+
+**Workflow**: These tools return email details with signals. Delegate to specialized subagents for processing.
+
+---
+
+## 🔄 Autonomous Subagent Continuation Pattern
+
+**CRITICAL**: Subagents handling time-boxed batch tools MUST run the continuation loop autonomously. The user should NOT be prompted every 5 seconds for approval.
+
+### The Pattern
+
+```
+Primary Agent (@secretary):
+  → Receives user request (e.g., "/clean-inbox")
+  → Delegates to specialized subagent (@bulk-cleaner)
+  → WAITS for subagent to return complete results
+  
+Subagent (@bulk-cleaner):
+  → Calls quick_clean_inbox() 
+  → If has_more=true, AUTOMATICALLY calls again with continuation_state
+  → Repeats until status="complete" or has_more=false
+  → Aggregates ALL candidates across ALL batches
+  → Returns COMPLETE aggregated list to primary agent
+
+Primary Agent:
+  → Receives complete aggregated results from subagent
+  → NOW asks user for approval (SINGLE prompt, not per-batch)
+  → If approved, calls execute_clean_batch(uids=[all_candidate_uids])
+```
+
+### Why This Pattern?
+
+1. **Never hits MCP timeout** - Each batch call completes in ~5s
+2. **No user interaction during data gathering** - Continuation is transparent
+3. **Single approval prompt** - User sees complete picture before deciding
+4. **Subagent handles complexity** - Primary agent stays simple
+
+### Subagent Implementation Requirements
+
+Subagents that use time-boxed tools (`quick_clean_inbox`, `triage_priority_emails`, `triage_remaining_emails`) MUST:
+
+1. **Initialize aggregation storage** before first call
+2. **Loop automatically** while `has_more=true`
+3. **Aggregate results** from each batch into combined list
+4. **Return only when complete** (`status="complete"` or `has_more=false`)
+5. **Never prompt user** during the continuation loop
+
+### Example: @bulk-cleaner Subagent Loop
+
+```python
+# Subagent internal logic (pseudo-code)
+all_candidates = []
+continuation_state = None
+
+while True:
+    result = quick_clean_inbox(continuation_state=continuation_state)
+    
+    # Aggregate this batch's candidates
+    all_candidates.extend(result["candidates"])
+    
+    # Check if done
+    if result["status"] == "complete" or not result["has_more"]:
+        break
+    
+    # Continue with state from response
+    continuation_state = result["continuation_state"]
+
+# Return aggregated results to primary agent
+return {
+    "total_candidates": len(all_candidates),
+    "candidates": all_candidates,  # Full list
+    "status": "complete"
+}
+```
+
+### Primary Agent Approval Flow
+
+After subagent returns complete results:
+
+```
+@secretary: "I've identified 47 emails for cleanup:
+
+High Confidence (35 emails):
+1. [2026-01-07] From: newsletter@company.com | Subject: Weekly Digest
+2. [2026-01-07] From: no-reply@github.com | Subject: Repository Activity
+... [33 more]
+
+Medium Confidence (12 emails):
+1. [2026-01-06] From: team@company.com | CC: you@gmail.com | Subject: FYI
+... [11 more]
+
+Action: Mark as read + Move to Secretary/Auto-Cleaned
+Approve this batch? (yes/no)"
+```
+
+### Tools That Require This Pattern
+
+| Tool | Subagent | Returns |
+|------|----------|---------|
+| `quick_clean_inbox` | @bulk-cleaner | Cleanup candidates |
+| `triage_priority_emails` | @triage | Priority emails with signals |
+| `triage_remaining_emails` | @triage | Remaining emails with signals |
+
+### Anti-Patterns (FORBIDDEN)
+
+❌ **Prompting user after each batch**:
+```
+# WRONG - Don't do this!
+result = quick_clean_inbox()
+show_to_user(result["candidates"])  # User sees partial results
+user_approves()
+result2 = quick_clean_inbox(continuation_state=...)
+show_to_user(result2["candidates"])  # User prompted AGAIN
+```
+
+❌ **Primary agent running the loop**:
+```
+# WRONG - Primary agent should delegate, not loop
+while has_more:
+    result = quick_clean_inbox(...)  # Primary agent shouldn't do this
+```
+
+✅ **Correct: Subagent loops, primary agent approves once**:
+```
+# RIGHT
+@secretary delegates to @bulk-cleaner
+@bulk-cleaner runs loop internally, returns complete list
+@secretary shows complete list to user
+User approves once
+@secretary executes
+```
 
 ---
 

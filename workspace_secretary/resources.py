@@ -34,18 +34,9 @@ def get_server_config_from_context(ctx: Context) -> ServerConfig:
 
 
 def get_client_from_context(ctx: Context) -> ImapClient:
-    """Get IMAP client from context.
+    """Get IMAP client from context, ensuring connection is established."""
+    from workspace_secretary.server import _client_manager
 
-    Args:
-        ctx: MCP context
-
-    Returns:
-        IMAP client
-
-    Raises:
-        RuntimeError: If IMAP client is not available
-    """
-    # For testing: Allow passing client via context.kwargs
     ctx_any: Any = ctx
     if (
         hasattr(ctx_any, "kwargs")
@@ -54,7 +45,8 @@ def get_client_from_context(ctx: Context) -> ImapClient:
     ):
         return ctx_any.kwargs["client"]  # type: ignore
 
-    # Type ignore for request_context since it might not be in all versions of mcp
+    _client_manager.ensure_connections()
+
     client = ctx_any.request_context.lifespan_context.get("imap_client")  # type: ignore
     if not client:
         raise RuntimeError("IMAP client not available")
@@ -76,17 +68,11 @@ def get_email_cache_from_context(ctx: Context) -> EmailCache:
 
 
 def get_calendar_client_from_context(ctx: Context) -> CalendarClient:
-    """Get Calendar client from context.
+    """Get Calendar client from context, ensuring connection is established."""
+    from workspace_secretary.server import _client_manager
 
-    Args:
-        ctx: MCP context
+    _client_manager.ensure_connections()
 
-    Returns:
-        Calendar client
-
-    Raises:
-        RuntimeError: If Calendar client is not available
-    """
     ctx_any: Any = ctx
     client = ctx_any.request_context.lifespan_context.get("calendar_client")
     if not client:

@@ -24,14 +24,17 @@ from workspace_secretary.cache import EmailCache
 from workspace_secretary.resources import register_resources
 from workspace_secretary.tools import register_tools
 from workspace_secretary.mcp_protocol import extend_server
+from workspace_secretary.oauth2 import validate_oauth_config, OAuthValidationResult
 import asyncio
 
-# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger("workspace_secretary")
+
+AUTH_RETRY_TIMEOUT = 30
+AUTH_RETRY_INTERVAL = 3
 
 
 class ClientManager:
@@ -43,6 +46,7 @@ class ClientManager:
         self.smtp_client: Optional[SMTPClient] = None
         self.email_cache: Optional[EmailCache] = None
         self._initialized = False
+        self._connections_established = False
         self._sync_thread: Optional[threading.Thread] = None
 
     def initialize(self, config_path: Optional[str] = None) -> None:
@@ -62,12 +66,6 @@ class ClientManager:
         logger.info(
             f"Starting server in {self.config.oauth_mode.value.upper()} mode..."
         )
-        logger.info("Connecting to IMAP server...")
-        self.imap_client.connect()
-
-        if self.config.calendar and self.config.calendar.enabled:
-            logger.info("Connecting to Google Calendar...")
-            self.calendar_client.connect()
 
         if self.config.oauth_mode == OAuthMode.API:
             if self.config.imap.is_gmail and self.config.imap.oauth2:
@@ -79,8 +77,61 @@ class ClientManager:
             self.smtp_client = SMTPClient(self.config)
 
         self._initialized = True
-        logger.info("Client manager initialized successfully")
+        logger.info("Client manager initialized (IMAP/Calendar connections deferred)")
 
+    def _wait_for_valid_oauth(self) -> bool:
+        """Wait up to AUTH_RETRY_TIMEOUT seconds for valid OAuth tokens."""
+        if not self.config or not self.config.imap.oauth2:
+            return True
+
+        start_time = time.time()
+        while time.time() - start_time < AUTH_RETRY_TIMEOUT:
+            validation = validate_oauth_config(self.config.imap.oauth2)
+
+            if validation.valid or validation.can_refresh:
+                logger.info(
+                    "OAuth tokens valid/refreshable, proceeding with connection"
+                )
+                return True
+
+            elapsed = int(time.time() - start_time)
+            remaining = AUTH_RETRY_TIMEOUT - elapsed
+            logger.warning(
+                f"OAuth tokens not ready: {validation.error}. "
+                f"Retrying for {remaining}s... "
+                f"Run 'python -m workspace_secretary.browser_auth' to authenticate."
+            )
+            time.sleep(AUTH_RETRY_INTERVAL)
+
+        logger.error(
+            f"OAuth authentication timeout after {AUTH_RETRY_TIMEOUT}s. "
+            "Please run 'python -m workspace_secretary.browser_auth' to authenticate."
+        )
+        return False
+
+    def ensure_connections(self) -> None:
+        """Establish IMAP and Calendar connections, with OAuth retry loop."""
+        if self._connections_established:
+            return
+
+        if not self.imap_client:
+            raise RuntimeError("IMAP client not initialized")
+
+        if not self._wait_for_valid_oauth():
+            raise ConnectionError(
+                "OAuth authentication required. "
+                "Run 'python -m workspace_secretary.browser_auth' to authenticate."
+            )
+
+        logger.info("Establishing IMAP connection...")
+        self.imap_client.connect()
+
+        if self.config and self.config.calendar and self.config.calendar.enabled:
+            if self.calendar_client:
+                logger.info("Connecting to Google Calendar...")
+                self.calendar_client.connect()
+
+        self._connections_established = True
         self._start_background_sync()
 
     def _start_background_sync(self) -> None:
@@ -140,6 +191,10 @@ class StaticTokenVerifier:
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict]:
+    try:
+        _client_manager.ensure_connections()
+    except Exception as e:
+        logger.warning(f"Deferred connection failed (will retry on first request): {e}")
     yield {
         "imap_client": _client_manager.imap_client,
         "calendar_client": _client_manager.calendar_client,
