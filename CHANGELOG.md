@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.2] - 2026-01-09
+
+### Changed
+
+- **README Rewrite**: Complete documentation overhaul focusing on technical depth
+  - Repositioned as "Gmail IMAP/SMTP Client for AI Agents" (not just MCP wrapper)
+  - Added RFC compliance section (IMAP4rev1, CONDSTORE, IDLE, CHANGEDSINCE)
+  - Added Gmail extensions documentation (X-GM-THRID, X-GM-MSGID, X-GM-LABELS, X-GM-RAW)
+  - Added performance benchmarks and CONDSTORE sync explanation
+  - Added architecture diagram showing dual-process design
+  - Added signal extraction and HITL safety documentation
+  - Added database schema documentation
+
 ## [4.1.1] - 2026-01-09
 
 ### Fixed

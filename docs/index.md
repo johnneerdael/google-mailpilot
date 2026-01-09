@@ -3,11 +3,11 @@ layout: home
 
 hero:
   name: "Gmail Secretary"
-  text: "AI-Native MCP Server"
-  tagline: Transform Gmail and Google Calendar into an intelligent, AI-powered knowledge base
+  text: "IMAP/SMTP Client for AI Agents"
+  tagline: A production-grade Gmail client engineered for LLM orchestration with RFC-compliant CONDSTORE, IDLE, and native Gmail extensions
   image:
     src: /hero-image.svg
-    alt: Gmail Secretary MCP
+    alt: Gmail Secretary
   actions:
     - theme: brand
       text: Get Started
@@ -17,29 +17,29 @@ hero:
       link: https://github.com/johnneerdael/Google-Workspace-Secretary-MCP
 
 features:
+  - icon: 📡
+    title: RFC-Compliant IMAP
+    details: Full IMAP4rev1 with CONDSTORE (RFC 7162) for incremental sync, IDLE (RFC 2177) for push notifications, and CHANGEDSINCE for flag-only updates.
+    
   - icon: ⚡
-    title: Read/Write Split Architecture
-    details: v4.1 brings efficient CONDSTORE & IDLE sync. Engine owns all database writes, MCP is read-only. Skip sync when mailbox unchanged, instant push notifications.
+    title: Instant Sync
+    details: Skip sync when mailbox unchanged (HIGHESTMODSEQ), fetch only changed flags, instant new mail via IDLE. 10x faster than polling.
     
-  - icon: 🤖
-    title: AI-Native Design
-    details: Built specifically for AI assistants like Claude via Model Context Protocol (MCP). Provides intelligent tools that scaffold complex email and calendar workflows.
+  - icon: 🏷️
+    title: Native Gmail Support
+    details: X-GM-THRID threading, X-GM-MSGID stable IDs, X-GM-LABELS as JSONB, X-GM-RAW search syntax. No heuristic threading needed.
     
-  - icon: 🧠
-    title: Intelligent Prioritization
-    details: Daily briefings with ML-ready signals for VIP senders, urgency markers, questions, and deadlines. The AI decides priority based on your context.
-    
-  - icon: 🌍
-    title: Timezone-Aware Scheduling
-    details: All calendar operations respect your configured timezone and working hours. Automatically suggests meeting times that fit your schedule.
-    
-  - icon: 📄
-    title: Document Intelligence
-    details: Extract and analyze text from PDF, DOCX, TXT, and LOG attachments directly in the AI's context. No manual downloads needed.
+  - icon: 🗄️
+    title: Local-First Cache
+    details: SQLite with FTS5 for instant search, or PostgreSQL with pgvector for semantic search. Your AI reads from local DB in milliseconds.
     
   - icon: 🔒
-    title: Human-in-the-Loop Safety
-    details: Built-in safety patterns ensure all mutations (sending emails, deleting, moving) require explicit user confirmation.
+    title: Human-in-the-Loop
+    details: AI never sends without approval. Draft-first philosophy with confidence-based batch operations and explicit confirmation.
+    
+  - icon: 📅
+    title: Calendar Integration
+    details: Full Google Calendar sync with timezone-aware scheduling, availability lookup, and meeting suggestions within working hours.
 ---
 
 ## Quick Start
