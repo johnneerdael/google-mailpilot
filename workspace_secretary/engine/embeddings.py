@@ -159,11 +159,21 @@ class EmbeddingsClient:
         return results
 
     async def _embed_batch(self, texts: list[str]) -> list[EmbeddingResult]:
-        filtered_texts = [t for t in texts if t and t.strip()]
+        def is_valid_text(t: str) -> bool:
+            if not t or not t.strip():
+                return False
+            stripped = t.strip()
+            if len(stripped) < 3:
+                return False
+            if not any(c.isalnum() for c in stripped):
+                return False
+            return True
+
+        filtered_texts = [t.strip() for t in texts if is_valid_text(t)]
         if not filtered_texts:
             return [
                 EmbeddingResult(
-                    text=t,
+                    text=t if t else "",
                     embedding=[],
                     model=self.model,
                     content_hash="",
