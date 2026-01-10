@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full dark">
+<html lang="en" class="h-full {% if theme == 'dark' or (theme == 'system' and not theme) %}dark{% endif %}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -26,7 +26,7 @@
         .email-content a { color: #60a5fa; text-decoration: underline; }
     </style>
 </head>
-<body class="h-full bg-gray-950 text-gray-100" x-data="{ darkMode: localStorage.getItem('darkMode') !== 'false' }" x-init="if(!darkMode) document.documentElement.classList.remove('dark'); else document.documentElement.classList.add('dark')" :class="{ 'bg-gray-50 text-gray-900': !darkMode, 'bg-gray-950 text-gray-100': darkMode }">
+<body class="h-full bg-gray-950 text-gray-100" x-data="{ darkMode: {% if theme == 'system' %}localStorage.getItem('darkMode') !== 'false'{% elif theme == 'dark' %}true{% else %}false{% endif %} }" x-init="if(!darkMode) document.documentElement.classList.remove('dark'); else document.documentElement.classList.add('dark')" :class="{ 'bg-gray-50 text-gray-900': !darkMode, 'bg-gray-950 text-gray-100': darkMode }">
     <div class="min-h-full">
         <nav class="bg-gray-900 border-b border-gray-800" :class="{ 'bg-white border-gray-200': !darkMode, 'bg-gray-900 border-gray-800': darkMode }">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

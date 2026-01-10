@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    from workspace_secretary.web import web_app
+    from workspace_secretary.web import web_app, init_web_app
     from workspace_secretary.web.routes import (
         inbox,
         thread,
@@ -27,6 +27,10 @@ def main():
         analysis,
         dashboard,
     )
+    from workspace_secretary.config import load_config
+
+    config = load_config()
+    init_web_app(config.web if config else None)
 
     web_app.include_router(dashboard.router)
     web_app.include_router(inbox.router)

@@ -283,6 +283,53 @@ class DatabaseBackend(Enum):
             )
 
 
+class WebAuthMethod(Enum):
+    """Web authentication method."""
+
+    NONE = "none"
+    PASSWORD = "password"
+    OIDC = "oidc"
+    SAML2 = "saml2"
+
+    @classmethod
+    def from_string(cls, value: str) -> "WebAuthMethod":
+        normalized = value.lower().strip()
+        if normalized == "none":
+            return cls.NONE
+        elif normalized == "password":
+            return cls.PASSWORD
+        elif normalized == "oidc":
+            return cls.OIDC
+        elif normalized == "saml2":
+            return cls.SAML2
+        else:
+            raise ValueError(
+                f"Invalid auth method '{value}'. Must be 'none', 'password', 'oidc', or 'saml2'."
+            )
+
+
+class WebApiFormat(Enum):
+    """Web agent API format."""
+
+    OPENAI_CHAT = "openai.chat"
+    OPENAI_RESPONSES = "openai.responses"
+    ANTHROPIC_CHAT = "anthropic.chat"
+
+    @classmethod
+    def from_string(cls, value: str) -> "WebApiFormat":
+        normalized = value.lower().strip()
+        if normalized in ("openai.chat", "openai.chat.completions"):
+            return cls.OPENAI_CHAT
+        elif normalized in ("openai.responses",):
+            return cls.OPENAI_RESPONSES
+        elif normalized in ("anthropic.chat", "anthropic.chat.completions"):
+            return cls.ANTHROPIC_CHAT
+        else:
+            raise ValueError(
+                f"Invalid API format '{value}'. Must be 'openai.chat', 'openai.responses', or 'anthropic.chat'."
+            )
+
+
 @dataclass
 class SqliteConfig:
     """SQLite database configuration."""
@@ -412,6 +459,7 @@ class ServerConfig:
     vip_senders: List[str] = field(default_factory=list)
     bearer_auth: BearerAuthConfig = field(default_factory=BearerAuthConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    web: Optional["WebConfig"] = None
 
     def __post_init__(self):
         """Validate server configuration."""
@@ -448,6 +496,10 @@ class ServerConfig:
         if not identity_data.get("email"):
             identity_data["email"] = data.get("imap", {}).get("username", "")
 
+        web_config = (
+            WebConfig.from_dict(data.get("web", {})) if data.get("web") else None
+        )
+
         return cls(
             imap=ImapConfig.from_dict(data.get("imap", {})),
             timezone=data["timezone"],
@@ -458,6 +510,141 @@ class ServerConfig:
             vip_senders=data.get("vip_senders", []),
             bearer_auth=BearerAuthConfig.from_dict(data.get("bearer_auth", {})),
             database=DatabaseConfig.from_dict(data.get("database", {})),
+            web=web_config,
+        )
+
+
+@dataclass
+class WebAgentConfig:
+    base_url: str = "https://api.openai.com/v1"
+    api_format: WebApiFormat = WebApiFormat.OPENAI_CHAT
+    model: str = "gpt-4o"
+    token_limit: int = 128000
+    api_key: str = ""
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WebAgentConfig":
+        api_key = (
+            data.get("api_key")
+            or os.environ.get("WEB_AGENT_API_KEY")
+            or os.environ.get("OPENAI_API_KEY", "")
+        )
+        api_format_str = data.get("api_format", "openai.chat")
+        return cls(
+            base_url=data.get("base_url", "https://api.openai.com/v1"),
+            api_format=WebApiFormat.from_string(api_format_str),
+            model=data.get("model", "gpt-4o"),
+            token_limit=data.get("token_limit", 128000),
+            api_key=api_key,
+        )
+
+
+@dataclass
+class WebOIDCConfig:
+    provider_url: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    scopes: List[str] = field(default_factory=lambda: ["openid", "profile", "email"])
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WebOIDCConfig":
+        return cls(
+            provider_url=data.get("provider_url", ""),
+            client_id=data.get("client_id") or os.environ.get("OIDC_CLIENT_ID", ""),
+            client_secret=data.get("client_secret")
+            or os.environ.get("OIDC_CLIENT_SECRET", ""),
+            scopes=data.get("scopes", ["openid", "profile", "email"]),
+        )
+
+
+@dataclass
+class WebSAML2Config:
+    idp_metadata_url: str = ""
+    sp_entity_id: str = ""
+    sp_acs_url: str = ""
+    sp_sls_url: str = ""
+    certificate_path: str = ""
+    private_key_path: str = ""
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WebSAML2Config":
+        return cls(
+            idp_metadata_url=data.get("idp_metadata_url", ""),
+            sp_entity_id=data.get("sp_entity_id", ""),
+            sp_acs_url=data.get("sp_acs_url", ""),
+            sp_sls_url=data.get("sp_sls_url", ""),
+            certificate_path=data.get("certificate_path", ""),
+            private_key_path=data.get("private_key_path", ""),
+        )
+
+
+@dataclass
+class WebAuthConfig:
+    method: WebAuthMethod = WebAuthMethod.NONE
+    password_hash: str = ""
+    session_secret: str = ""
+    session_expiry_hours: int = 24
+    oidc: Optional[WebOIDCConfig] = None
+    saml2: Optional[WebSAML2Config] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WebAuthConfig":
+        method_str = data.get("method", "none")
+        method = WebAuthMethod.from_string(method_str)
+
+        session_secret = data.get("session_secret") or os.environ.get(
+            "WEB_SESSION_SECRET", ""
+        )
+        password_hash = data.get("password_hash") or os.environ.get(
+            "WEB_PASSWORD_HASH", ""
+        )
+
+        oidc_config = (
+            WebOIDCConfig.from_dict(data.get("oidc", {})) if data.get("oidc") else None
+        )
+        saml2_config = (
+            WebSAML2Config.from_dict(data.get("saml2", {}))
+            if data.get("saml2")
+            else None
+        )
+
+        return cls(
+            method=method,
+            password_hash=password_hash,
+            session_secret=session_secret,
+            session_expiry_hours=data.get("session_expiry_hours", 24),
+            oidc=oidc_config,
+            saml2=saml2_config,
+        )
+
+
+@dataclass
+class WebConfig:
+    theme: str = "dark"
+    agent: WebAgentConfig = field(default_factory=WebAgentConfig)
+    auth: WebAuthConfig = field(default_factory=WebAuthConfig)
+
+    def __post_init__(self):
+        if self.theme not in ("light", "dark", "system"):
+            raise ValueError(
+                f"Invalid theme '{self.theme}'. Must be 'light', 'dark', or 'system'."
+            )
+
+        if self.auth.method == WebAuthMethod.OIDC and not self.auth.oidc:
+            raise ValueError("OIDC configuration required when auth method is 'oidc'")
+        if self.auth.method == WebAuthMethod.SAML2 and not self.auth.saml2:
+            raise ValueError("SAML2 configuration required when auth method is 'saml2'")
+        if self.auth.method == WebAuthMethod.PASSWORD and not self.auth.password_hash:
+            raise ValueError("password_hash required when auth method is 'password'")
+        if self.auth.method != WebAuthMethod.NONE and not self.auth.session_secret:
+            raise ValueError("session_secret required when authentication is enabled")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WebConfig":
+        return cls(
+            theme=data.get("theme", "dark"),
+            agent=WebAgentConfig.from_dict(data.get("agent", {})),
+            auth=WebAuthConfig.from_dict(data.get("auth", {})),
         )
 
 
