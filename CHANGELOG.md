@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.7] - 2026-01-10
+
+### Fixed
+
+- **Gap Sync via Set Difference**: Finds missing UIDs by comparing IMAP vs DB
+  - Queries all IMAP UIDs and all synced DB UIDs
+  - Computes set difference to find exactly what's missing
+  - Fixes gap sync when emails were synced oldest-first then newest-first
+- **Accurate Progress Counters**: Uses actual DB counts instead of cursor-based estimation
+  - `count_emails()` and `get_synced_uids()` added to database interface
+  - Progress shows real state: "15506/24230 done, 8724 remaining"
+
 ## [4.2.6] - 2026-01-10
 
 ### Fixed

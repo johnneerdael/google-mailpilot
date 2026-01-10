@@ -124,6 +124,14 @@ The AI:
 3. Parses and presents the total
 :::
 
+## What's New in v4.2.7
+
+**Gap Sync & Accurate Counters**:
+
+- 🔍 **Set Difference Sync**: Compares IMAP UIDs vs DB UIDs to find exactly what's missing
+- 📊 **Real Progress**: Counters reflect actual DB state, not estimates
+- 🔧 **Gap Recovery**: Fixes sync when emails were synced from both ends leaving a gap
+
 ## What's New in v4.2.6
 
 **Resumable Sync & Stability Fixes**:
