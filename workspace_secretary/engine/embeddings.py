@@ -111,9 +111,9 @@ class EmbeddingsClient:
 
         text = "\n".join(parts)
 
-        # Truncate to ~8000 tokens (roughly 32000 chars for English)
-        # Most embedding models have 8192 token limit
-        max_chars = 32000
+        # Truncate to ~6000 tokens (roughly 24000 chars for English)
+        # text-embedding-3-small has 8192 token limit, leave headroom for tokenizer variance
+        max_chars = 24000
         if len(text) > max_chars:
             text = text[:max_chars]
 
@@ -331,6 +331,9 @@ class EmbeddingsSyncWorker:
                 raise
 
             for email, result in zip(emails, results):
+                if not result.embedding:
+                    total_failed += 1
+                    continue
                 try:
                     self.database.upsert_embedding(
                         email_uid=email["uid"],
@@ -346,11 +349,11 @@ class EmbeddingsSyncWorker:
                         f"Failed to store embedding for UID {email['uid']}: {e}"
                     )
 
-            if (total_stored + total_failed) % 200 == 0 or (
-                total_stored + total_failed
-            ) == total_needing:
+            current_remaining = self.database.count_emails_needing_embedding(folder)
+            done = total_needing - current_remaining
+            if done % 200 == 0 or current_remaining == 0:
                 logger.info(
-                    f"[{folder}] {total_stored + total_failed}/{total_needing} embeddings processed ({total_stored} ok, {total_failed} failed)"
+                    f"[{folder}] {done}/{total_needing} embeddings done ({total_stored} stored, {total_failed} skipped)"
                 )
 
     async def sync_all_folders(self) -> int:
