@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import smtplib
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
@@ -429,11 +430,15 @@ async def sync_loop():
             if state.database and state.imap_client:
                 logger.info("Running email sync...")
                 await sync_emails()
-
         except Exception as e:
             logger.error(f"Sync error: {e}")
 
         await asyncio.sleep(sync_interval)
+
+
+async def sync_emails():
+    """Async wrapper for synchronous sync_emails_sync to avoid blocking event loop."""
+    await asyncio.get_event_loop().run_in_executor(None, sync_emails_sync)
 
 
 def _email_to_db_params(email_obj: "Email", folder: str) -> dict[str, Any]:
@@ -476,7 +481,7 @@ def _email_to_db_params(email_obj: "Email", folder: str) -> dict[str, Any]:
     }
 
 
-async def sync_emails():
+def sync_emails_sync():
     """Sync emails from IMAP to database using CONDSTORE when available."""
     if not state.database or not state.imap_client:
         return
@@ -620,29 +625,29 @@ async def generate_embeddings() -> int:
         raise
 
 
-async def idle_monitor():
-    """Background task that uses IMAP IDLE for push-based sync notifications.
+def _idle_worker(
+    client: ImapClient,
+    loop: asyncio.AbstractEventLoop,
+    stop_event: threading.Event,
+):
+    """Dedicated thread worker for IMAP IDLE operations.
 
-    Monitors INBOX for changes and triggers sync when new mail arrives.
-    Uses a dedicated IMAP connection separate from the main sync client.
+    Runs the entire IDLE loop on a separate thread to avoid blocking
+    the asyncio event loop. Communicates back via thread-safe event loop
+    scheduling when a sync is needed.
     """
-    if not state.config or not state.idle_client:
-        return
-
-    if not state.idle_client.has_idle_capability():
-        logger.info("Server does not support IDLE, skipping idle monitor")
-        return
-
-    logger.info("Starting IDLE monitor for push notifications")
     idle_timeout = 25 * 60  # 25 minutes (Gmail requires re-IDLE every 29 min)
+    logger.info("IDLE worker thread started")
 
-    while state.running and state.enrolled:
+    while not stop_event.is_set():
         try:
-            state.idle_client.select_folder("INBOX", readonly=True)
-            state.idle_client.idle_start()
+            client.select_folder("INBOX", readonly=True)
+            client.idle_start()
 
             try:
-                responses = state.idle_client.idle_check(timeout=idle_timeout)
+                # This blocks for up to idle_timeout seconds
+                responses = client.idle_check(timeout=idle_timeout)
+
                 if responses:
                     for response in responses:
                         if len(response) >= 2 and response[1] in (
@@ -650,14 +655,66 @@ async def idle_monitor():
                             b"EXPUNGE",
                         ):
                             logger.debug(f"IDLE notification: {response}")
-                            await debounced_sync()
+                            # Schedule sync on the main event loop (thread-safe)
+                            loop.call_soon_threadsafe(
+                                lambda: asyncio.create_task(debounced_sync())
+                            )
                             break
             finally:
-                state.idle_client.idle_done()
+                client.idle_done()
 
         except Exception as e:
-            logger.error(f"IDLE monitor error: {e}")
-            await asyncio.sleep(30)
+            logger.error(f"IDLE worker error: {e}")
+            # Sleep before retry, but check stop_event periodically
+            for _ in range(30):
+                if stop_event.is_set():
+                    break
+                stop_event.wait(1.0)
+
+    logger.info("IDLE worker thread stopped")
+
+
+async def idle_monitor():
+    """Background task that manages the IDLE worker thread.
+
+    Monitors INBOX for changes and triggers sync when new mail arrives.
+    Uses a dedicated IMAP connection and runs on a separate thread
+    to avoid blocking the asyncio event loop.
+    """
+    if not state.config or not state.idle_client:
+        return
+
+    client = state.idle_client
+
+    if not client.has_idle_capability():
+        logger.info("Server does not support IDLE, skipping idle monitor")
+        return
+
+    logger.info("Starting IDLE monitor for push notifications")
+
+    loop = asyncio.get_event_loop()
+    stop_event = threading.Event()
+
+    # Start the IDLE worker on a dedicated thread
+    idle_thread = threading.Thread(
+        target=_idle_worker,
+        args=(client, loop, stop_event),
+        name="idle-worker",
+        daemon=True,
+    )
+    idle_thread.start()
+
+    # Wait until we should stop
+    try:
+        while state.running and state.enrolled:
+            await asyncio.sleep(1.0)
+    finally:
+        # Signal the worker thread to stop
+        logger.info("Stopping IDLE worker thread...")
+        stop_event.set()
+        idle_thread.join(timeout=5.0)
+        if idle_thread.is_alive():
+            logger.warning("IDLE worker thread did not stop cleanly")
 
 
 async def debounced_sync():
