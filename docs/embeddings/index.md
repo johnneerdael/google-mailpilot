@@ -41,6 +41,213 @@ Use this table to configure optimal settings for your provider:
 - **3072**: Highest quality, more storage, slower searches
 :::
 
+## Recommended Configurations
+
+Copy-paste configs optimized for each tier. These settings are tuned to **maximize throughput while staying within rate limits**.
+
+### Cohere Free Tier (Trial Key)
+
+**Limits**: 100k tokens/min, 1,000 API calls/month
+
+```yaml
+embeddings:
+  enabled: true
+  provider: cohere
+  model: embed-v4.0
+  api_key: ${COHERE_API_KEY}
+  dimensions: 1536
+  batch_size: 80          # Stay under 96 limit, leave headroom
+  max_chars: 40000        # ~10k tokens/batch, safe under 100k/min
+  input_type: search_document
+  truncate: END
+```
+
+::: warning Monthly Call Limit
+With 1,000 calls/month on trial, you can embed ~80,000 emails total (80 emails × 1,000 calls). For larger mailboxes, upgrade to production or use Gemini as fallback.
+:::
+
+**What these settings mean:**
+- `batch_size: 80` → 80 emails per API call (Cohere max is 96, we leave buffer)
+- `max_chars: 40000` → Truncate emails to ~40k chars (~10k tokens per batch)
+- At 100k tokens/min limit, you can make ~10 batches/min = 800 emails/min
+- **Initial sync of 25k emails**: ~31 minutes
+
+### Cohere Production Key
+
+**Limits**: 2,000 inputs/min, no monthly limit
+
+```yaml
+embeddings:
+  enabled: true
+  provider: cohere
+  model: embed-v4.0
+  api_key: ${COHERE_API_KEY}
+  dimensions: 1536
+  batch_size: 96          # Max allowed by Cohere
+  max_chars: 500000       # Full email support
+  input_type: search_document
+  truncate: END
+```
+
+**What these settings mean:**
+- `batch_size: 96` → Maximum throughput per call
+- `max_chars: 500000` → No client-side truncation (server handles it)
+- At 2k inputs/min, you can embed 2,000 emails/min
+- **Initial sync of 25k emails**: ~13 minutes
+
+### Gemini Free Tier
+
+**Limits**: 100 RPM, 30k TPM, 1,000 requests/day
+
+```yaml
+embeddings:
+  enabled: true
+  provider: gemini
+  gemini_api_key: ${GEMINI_API_KEY}
+  gemini_model: gemini-embedding-001
+  dimensions: 768         # Smallest dimension, fastest
+  batch_size: 20          # Conservative: 20 emails × 100 RPM = 2k emails/min max
+  max_chars: 8000         # Gemini limit ~8k chars
+  task_type: RETRIEVAL_DOCUMENT
+```
+
+::: danger Daily Request Limit
+With 1,000 requests/day on free tier, you can only embed ~20,000 emails/day (20 emails × 1,000 requests). For initial sync of large mailboxes, this will take multiple days or use fallback.
+:::
+
+**What these settings mean:**
+- `batch_size: 20` → 20 emails per request, conservative for TPM limit
+- `dimensions: 768` → Smallest output, faster searches, less storage
+- `max_chars: 8000` → Gemini's input limit
+- At 100 RPM with batch of 20 → theoretical 2,000 emails/min
+- But 30k TPM limits you to ~60 batches/min (500 tokens/email avg)
+- **Effective rate**: ~1,200 emails/min
+- **Daily limit**: 1,000 requests × 20 = 20,000 emails/day
+- **Initial sync of 25k emails**: 2 days (hitting daily limit)
+
+### Gemini Pay-as-you-go
+
+**Limits**: 3,000 RPM, 1M TPM, unlimited daily
+
+```yaml
+embeddings:
+  enabled: true
+  provider: gemini
+  gemini_api_key: ${GEMINI_API_KEY}
+  gemini_model: text-embedding-004
+  dimensions: 1536        # Higher quality
+  batch_size: 100         # Max batch size
+  max_chars: 8000
+  task_type: RETRIEVAL_DOCUMENT
+```
+
+**What these settings mean:**
+- `batch_size: 100` → Maximum throughput
+- `dimensions: 1536` → Better quality, paid tier can handle it
+- At 3k RPM with batch of 100 → 300,000 emails/min theoretical
+- TPM limit of 1M tokens/min → ~2,000 batches/min (500 tok/email)
+- **Effective rate**: ~200,000 emails/min (TPM limited)
+- **Initial sync of 25k emails**: ~8 seconds
+
+### OpenAI
+
+**Limits**: Vary by tier (typically 3,000 RPM for Tier 1)
+
+```yaml
+embeddings:
+  enabled: true
+  provider: openai_compat
+  endpoint: https://api.openai.com/v1
+  model: text-embedding-3-small
+  api_key: ${OPENAI_API_KEY}
+  dimensions: 1536
+  batch_size: 100
+  max_chars: 32000        # ~8k tokens max input
+```
+
+**What these settings mean:**
+- `batch_size: 100` → Good balance of throughput and reliability
+- `max_chars: 32000` → OpenAI limit ~8k tokens
+- At 3k RPM (Tier 1) with batch of 100 → 300,000 emails/min
+- **Initial sync of 25k emails**: ~5 seconds
+
+### Fallback Configuration (Recommended for Free Tiers)
+
+Combine free tiers for resilience. When Cohere hits rate limit, automatically switch to Gemini:
+
+```yaml
+embeddings:
+  enabled: true
+  provider: cohere
+  api_key: ${COHERE_API_KEY}
+  model: embed-v4.0
+  dimensions: 768         # Must match across providers!
+  batch_size: 80
+  max_chars: 8000         # Use lowest common denominator
+  input_type: search_document
+  truncate: END
+  
+  fallback_provider: gemini
+  gemini_api_key: ${GEMINI_API_KEY}
+  gemini_model: gemini-embedding-001
+  task_type: RETRIEVAL_DOCUMENT
+```
+
+::: warning Dimension Matching
+When using fallback, both providers MUST produce the same dimensions. Use 768 (Gemini default) or configure both to 1536.
+:::
+
+**Why this works:**
+- Cohere trial: 1,000 calls/month → 80,000 emails
+- Gemini free: 1,000 calls/day → 20,000 emails/day
+- Combined: Handle bursts and large initial syncs
+- 60-second cooldown between provider switches
+
+### Local Models (Ollama)
+
+**Limits**: Your hardware
+
+```yaml
+embeddings:
+  enabled: true
+  provider: openai_compat
+  endpoint: http://localhost:11434/v1
+  model: nomic-embed-text
+  api_key: ""             # Not needed for local
+  dimensions: 768
+  batch_size: 50          # Depends on GPU memory
+  max_chars: 8000
+```
+
+**Tuning for your hardware:**
+- **8GB VRAM**: `batch_size: 20-30`
+- **16GB VRAM**: `batch_size: 50-100`
+- **24GB+ VRAM**: `batch_size: 100-200`
+
+### Batch Size Calculator
+
+Use this formula to calculate safe batch sizes:
+
+```
+safe_batch_size = min(
+    provider_max_batch,                    # Cohere: 96, others: ~100
+    tokens_per_minute_limit / (avg_tokens_per_email * target_batches_per_min),
+    requests_per_minute_limit / target_batches_per_min
+)
+```
+
+**Example for Gemini free tier:**
+- TPM limit: 30,000
+- Avg tokens/email: 500
+- Target: 60 batches/min (1 per second)
+- Safe batch = 30,000 / (500 × 60) = 1 email/batch ❌ Too slow!
+
+Better approach:
+- Target: 10 batches/min (1 every 6 seconds)
+- Safe batch = 30,000 / (500 × 10) = 6 emails/batch
+- But RPM limit is 100, so we can do 100/10 = 10 batches/min
+- **Recommended**: `batch_size: 20` with built-in rate limiting handling bursts
+
 ## Quick Start
 
 ### 1. Enable PostgreSQL with pgvector
