@@ -143,6 +143,11 @@ class DatabaseInterface(ABC):
         pass
 
     @abstractmethod
+    def count_emails(self, folder: str) -> int:
+        """Count emails in a folder."""
+        pass
+
+    @abstractmethod
     def get_synced_folders(self) -> list[dict[str, Any]]:
         """Get list of all synced folders with their state."""
         pass
@@ -602,6 +607,13 @@ class SqliteDatabase(DatabaseInterface):
             cursor = conn.execute("DELETE FROM emails WHERE folder = ?", (folder,))
             conn.commit()
             return cursor.rowcount
+
+    def count_emails(self, folder: str) -> int:
+        with self._get_email_connection() as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM emails WHERE folder = ?", (folder,)
+            )
+            return cursor.fetchone()[0]
 
     def get_synced_folders(self) -> list[dict[str, Any]]:
         """Get list of all synced folders with their state."""
@@ -1091,6 +1103,12 @@ class PostgresDatabase(DatabaseInterface):
                 count = cur.rowcount
                 conn.commit()
                 return count
+
+    def count_emails(self, folder: str) -> int:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM emails WHERE folder = %s", (folder,))
+                return cur.fetchone()[0]
 
     def get_synced_folders(self) -> list[dict[str, Any]]:
         """Get list of all synced folders with their state."""
