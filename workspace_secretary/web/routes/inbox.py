@@ -123,3 +123,30 @@ async def emails_partial(
         "partials/email_list.html",
         {"request": request, "emails": emails, "page": page, "has_more": has_more},
     )
+
+
+@router.get("/inbox/partial", response_class=HTMLResponse)
+async def inbox_widget(
+    request: Request,
+    limit: int = Query(5),
+    unread_only: bool = Query(False),
+):
+    emails_raw = db.get_inbox_emails("INBOX", limit, 0, unread_only)
+
+    emails = [
+        {
+            "uid": e["uid"],
+            "folder": e["folder"],
+            "from_name": extract_name(e.get("from_addr", "")),
+            "subject": e.get("subject", "(no subject)"),
+            "preview": truncate(e.get("preview") or "", 80),
+            "date": format_date(e.get("date")),
+            "is_unread": e.get("is_unread", False),
+        }
+        for e in emails_raw
+    ]
+
+    return templates.TemplateResponse(
+        "partials/email_widget.html",
+        {"request": request, "emails": emails},
+    )

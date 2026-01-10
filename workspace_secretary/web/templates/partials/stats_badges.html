@@ -1,0 +1,21 @@
+<div class="flex items-center space-x-4">
+    <div class="flex items-center px-3 py-1 bg-gray-800 rounded-full">
+        <span class="text-gray-400 text-sm mr-2">📬</span>
+        <span class="text-white font-medium">{{ unread_count }}</span>
+        <span class="text-gray-500 text-xs ml-1">unread</span>
+    </div>
+    {% if priority_count > 0 %}
+    <div class="flex items-center px-3 py-1 bg-red-900/50 border border-red-800 rounded-full">
+        <span class="text-red-400 text-sm mr-2">🔥</span>
+        <span class="text-white font-medium">{{ priority_count }}</span>
+        <span class="text-gray-400 text-xs ml-1">priority</span>
+    </div>
+    {% endif %}
+    {% if meetings_today > 0 %}
+    <div class="flex items-center px-3 py-1 bg-blue-900/50 border border-blue-800 rounded-full">
+        <span class="text-blue-400 text-sm mr-2">📅</span>
+        <span class="text-white font-medium">{{ meetings_today }}</span>
+        <span class="text-gray-400 text-xs ml-1">meetings</span>
+    </div>
+    {% endif %}
+</div>

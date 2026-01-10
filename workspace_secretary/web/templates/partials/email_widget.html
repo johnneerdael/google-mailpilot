@@ -1,0 +1,27 @@
+{% if emails %}
+<div class="space-y-2">
+    {% for email in emails %}
+    <a href="/thread/{{ email.folder }}/{{ email.uid }}" 
+       class="block p-3 bg-gray-800 hover:bg-gray-700 rounded-lg transition-colors">
+        <div class="flex items-start justify-between">
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center space-x-2">
+                    {% if email.is_unread %}
+                    <span class="w-2 h-2 bg-primary rounded-full flex-shrink-0"></span>
+                    {% endif %}
+                    <p class="text-sm font-medium text-white truncate {% if not email.is_unread %}text-gray-400{% endif %}">
+                        {{ email.subject }}
+                    </p>
+                </div>
+                <p class="text-xs text-gray-500 truncate mt-1">{{ email.from_name }}</p>
+            </div>
+            <span class="text-xs text-gray-500 ml-2 flex-shrink-0">{{ email.date }}</span>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-6">
+    <p class="text-gray-500">No emails</p>
+</div>
+{% endif %}

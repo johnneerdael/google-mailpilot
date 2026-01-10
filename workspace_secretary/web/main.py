@@ -25,8 +25,10 @@ def main():
         compose,
         calendar,
         analysis,
+        dashboard,
     )
 
+    web_app.include_router(dashboard.router)
     web_app.include_router(inbox.router)
     web_app.include_router(thread.router)
     web_app.include_router(search.router)
