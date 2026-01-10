@@ -636,14 +636,15 @@ def _sync_single_folder(client: ImapClient, folder: str) -> int:
 
 
 def _sync_next_batch(
-    client: ImapClient, folder: str, batch_size: int = 50
-) -> list[int]:
-    """Sync exactly next batch_size emails for folder.
+    client: ImapClient, folder: str, batch_size: int = 50, cursor_uid: int = 0
+) -> tuple[list[int], int]:
+    """Sync next batch of emails starting from cursor_uid.
 
-    Returns the list of UIDs actually synced (for lockstep embedding).
+    Returns (synced_uids, next_cursor_uid). Cursor 0 = start from oldest.
+    Returns ([], 0) when complete.
     """
     if not state.database or not state.config:
-        return []
+        return [], 0
 
     try:
         folder_state = state.database.get_folder_state(folder)
@@ -653,24 +654,23 @@ def _sync_next_batch(
         current_highestmodseq = folder_info.get("highestmodseq", 0)
 
         stored_uidvalidity = folder_state.get("uidvalidity", 0) if folder_state else 0
-        stored_uidnext = folder_state.get("uidnext", 1) if folder_state else 1
 
         if stored_uidvalidity != current_uidvalidity and stored_uidvalidity != 0:
             logger.warning(f"UIDVALIDITY changed for {folder}, clearing cache")
             state.database.clear_folder(folder)
-            stored_uidnext = 1
 
-        uids = client.search(f"UID {stored_uidnext}:*", folder=folder)
-        new_uids = sorted([uid for uid in uids if uid >= stored_uidnext], reverse=True)
+        search_start = cursor_uid + 1 if cursor_uid > 0 else 1
+        uids = client.search(f"UID {search_start}:*", folder=folder)
+        new_uids = sorted([uid for uid in uids if uid >= search_start])
 
         if not new_uids:
             state.database.save_folder_state(
                 folder=folder,
                 uidvalidity=current_uidvalidity,
-                uidnext=stored_uidnext,
+                uidnext=cursor_uid + 1,
                 highestmodseq=current_highestmodseq,
             )
-            return []
+            return [], 0
 
         batch_uids = new_uids[:batch_size]
         emails = client.fetch_emails(batch_uids, folder, limit=batch_size)
@@ -681,19 +681,22 @@ def _sync_next_batch(
             state.database.upsert_email(**params)
             synced_uids.append(uid)
 
-        max_synced_uid = max(synced_uids) if synced_uids else stored_uidnext - 1
-        state.database.save_folder_state(
-            folder=folder,
-            uidvalidity=current_uidvalidity,
-            uidnext=max_synced_uid + 1,
-            highestmodseq=current_highestmodseq,
-        )
+        next_cursor = max(synced_uids) if synced_uids else cursor_uid
+        has_more = len(new_uids) > batch_size
 
-        return synced_uids
+        if not has_more:
+            state.database.save_folder_state(
+                folder=folder,
+                uidvalidity=current_uidvalidity,
+                uidnext=next_cursor + 1,
+                highestmodseq=current_highestmodseq,
+            )
+
+        return synced_uids, next_cursor if has_more else 0
 
     except Exception as e:
         logger.error(f"Error in batch sync for {folder}: {e}")
-        return []
+        return [], 0
 
 
 async def sync_emails_parallel():
@@ -905,31 +908,38 @@ async def initial_lockstep_sync_and_embed():
         logger.info(f"[{folder}] Starting lockstep sync+embed...")
         folder_synced = 0
         folder_embedded = 0
+        cursor_uid = 0
 
         while state.running:
 
-            def _sync_batch():
+            def _sync_batch(cur=cursor_uid):
                 try:
                     client = state._imap_pool.get(timeout=60)
                 except Empty:
-                    return []
+                    return [], 0
                 try:
-                    return _sync_next_batch(client, folder, batch_size)
+                    return _sync_next_batch(client, folder, batch_size, cur)
                 finally:
                     state._imap_pool.put(client)
 
-            synced_uids = await loop.run_in_executor(state._sync_executor, _sync_batch)
+            synced_uids, next_cursor = await loop.run_in_executor(
+                state._sync_executor, _sync_batch
+            )
 
             if not synced_uids:
                 break
 
             folder_synced += len(synced_uids)
+            cursor_uid = next_cursor
             logger.info(f"[{folder}] Synced {folder_synced} emails...")
 
             if supports_embeddings:
                 embedded = await embed_specific_uids(folder, synced_uids)
                 folder_embedded += embedded
                 logger.info(f"[{folder}] Embedded {folder_embedded} emails...")
+
+            if next_cursor == 0:
+                break
 
         total_synced += folder_synced
         total_embedded += folder_embedded
