@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -7,18 +7,19 @@ from datetime import datetime, timedelta
 from workspace_secretary.web import database as db
 from workspace_secretary.web import engine_client as engine
 from workspace_secretary.web.routes.analysis import analyze_signals, compute_priority
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 @router.get("/dashboard")
-async def dashboard_redirect():
+async def dashboard_redirect(session: Session = Depends(require_auth)):
     return RedirectResponse(url="/", status_code=302)
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
+async def dashboard(request: Request, session: Session = Depends(require_auth)):
     unread_emails = db.get_inbox_emails("INBOX", limit=50, offset=0, unread_only=True)
 
     priority_emails = []
@@ -84,7 +85,7 @@ async def dashboard(request: Request):
 
 
 @router.get("/api/stats", response_class=HTMLResponse)
-async def get_stats(request: Request):
+async def get_stats(request: Request, session: Session = Depends(require_auth)):
     unread_emails = db.get_inbox_emails("INBOX", limit=100, offset=0, unread_only=True)
 
     high_priority = 0

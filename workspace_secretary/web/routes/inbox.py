@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, Request, Query, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -6,6 +6,7 @@ from datetime import datetime
 import html
 
 from workspace_secretary.web import database as db
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -54,6 +55,7 @@ async def inbox(
     per_page: int = Query(50, ge=10, le=100),
     folder: str = Query("INBOX"),
     unread_only: bool = Query(False),
+    session: Session = Depends(require_auth),
 ):
     offset = (page - 1) * per_page
     emails_raw = db.get_inbox_emails(folder, per_page + 1, offset, unread_only)
@@ -97,6 +99,7 @@ async def emails_partial(
     per_page: int = Query(50, ge=10, le=100),
     folder: str = Query("INBOX"),
     unread_only: bool = Query(False),
+    session: Session = Depends(require_auth),
 ):
     offset = (page - 1) * per_page
     emails_raw = db.get_inbox_emails(folder, per_page + 1, offset, unread_only)
@@ -130,6 +133,7 @@ async def inbox_widget(
     request: Request,
     limit: int = Query(5),
     unread_only: bool = Query(False),
+    session: Session = Depends(require_auth),
 ):
     emails_raw = db.get_inbox_emails("INBOX", limit, 0, unread_only)
 

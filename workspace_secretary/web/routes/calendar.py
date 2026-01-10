@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query, Form
+from fastapi import APIRouter, Request, Query, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import json
 
 from workspace_secretary.web import engine_client as engine
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -16,6 +17,7 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templa
 async def calendar_view(
     request: Request,
     week_offset: int = Query(0),
+    session: Session = Depends(require_auth),
 ):
     now = datetime.now()
     week_start = now - timedelta(days=now.weekday()) + timedelta(weeks=week_offset)
@@ -75,6 +77,7 @@ async def calendar_view(
 async def availability_widget(
     request: Request,
     days: int = Query(7),
+    session: Session = Depends(require_auth),
 ):
     now = datetime.now()
     time_min = now.strftime("%Y-%m-%dT00:00:00Z")
@@ -107,6 +110,7 @@ async def create_event(
     location: Optional[str] = Form(None),
     attendees: Optional[str] = Form(None),
     add_meet: bool = Form(False),
+    session: Session = Depends(require_auth),
 ):
     try:
         attendee_list = [a.strip() for a in attendees.split(",")] if attendees else None
@@ -130,6 +134,7 @@ async def create_event(
 async def respond_to_event(
     event_id: str,
     response: str = Query(...),
+    session: Session = Depends(require_auth),
 ):
     if response not in ("accepted", "declined", "tentative"):
         return JSONResponse(

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -7,6 +7,7 @@ import html
 import re
 
 from workspace_secretary.web import database as db
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -91,7 +92,9 @@ def detect_calendar_invite(email: dict) -> dict | None:
 
 
 @router.get("/thread/{folder}/{uid}", response_class=HTMLResponse)
-async def thread_view(request: Request, folder: str, uid: int):
+async def thread_view(
+    request: Request, folder: str, uid: int, session: Session = Depends(require_auth)
+):
     email = db.get_email(uid, folder)
     if not email:
         raise HTTPException(status_code=404, detail="Email not found")

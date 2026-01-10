@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Optional
 
 from workspace_secretary.web import database as db
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -15,7 +16,9 @@ _last_check: dict[str, datetime] = {}
 
 
 @router.get("/api/notifications/check")
-async def check_notifications(request: Request):
+async def check_notifications(
+    request: Request, session: Session = Depends(require_auth)
+):
     """Check for new priority emails since last check."""
     session_id = request.cookies.get("session_id", "default")
     last_check = _last_check.get(session_id)
@@ -55,7 +58,9 @@ async def check_notifications(request: Request):
 
 
 @router.post("/api/notifications/subscribe")
-async def subscribe_notifications(request: Request):
+async def subscribe_notifications(
+    request: Request, session: Session = Depends(require_auth)
+):
     """Register push notification subscription (for future PWA support)."""
     # Placeholder for Web Push API integration
     data = await request.json()
@@ -64,7 +69,9 @@ async def subscribe_notifications(request: Request):
 
 
 @router.get("/api/notifications/settings")
-async def get_notification_settings(request: Request):
+async def get_notification_settings(
+    request: Request, session: Session = Depends(require_auth)
+):
     """Get notification settings."""
     # In production: load from user preferences
     return JSONResponse(
@@ -78,7 +85,9 @@ async def get_notification_settings(request: Request):
 
 
 @router.post("/api/notifications/settings")
-async def update_notification_settings(request: Request):
+async def update_notification_settings(
+    request: Request, session: Session = Depends(require_auth)
+):
     """Update notification settings."""
     data = await request.json()
     # In production: save to user preferences

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, Request, Query, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -6,6 +6,7 @@ import re
 
 from workspace_secretary.web import database as db
 from workspace_secretary.config import load_config
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -115,7 +116,9 @@ def compute_priority(signals: dict) -> tuple[str, str]:
 
 
 @router.get("/api/analysis/{folder}/{uid}", response_class=JSONResponse)
-async def get_email_analysis(folder: str, uid: int):
+async def get_email_analysis(
+    folder: str, uid: int, session: Session = Depends(require_auth)
+):
     email = db.get_email(uid, folder)
     if not email:
         return JSONResponse({"error": "Email not found"}, status_code=404)
@@ -169,7 +172,9 @@ async def get_email_analysis(folder: str, uid: int):
 
 
 @router.get("/analysis/{folder}/{uid}", response_class=HTMLResponse)
-async def analysis_sidebar(request: Request, folder: str, uid: int):
+async def analysis_sidebar(
+    request: Request, folder: str, uid: int, session: Session = Depends(require_auth)
+):
     email = db.get_email(uid, folder)
     if not email:
         return HTMLResponse("<div class='p-4 text-red-400'>Email not found</div>")

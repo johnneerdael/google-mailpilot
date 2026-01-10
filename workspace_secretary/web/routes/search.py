@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query
+from fastapi import APIRouter, Request, Query, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -10,6 +10,7 @@ import httpx
 import json
 
 from workspace_secretary.web import database as db
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -110,6 +111,7 @@ async def search(
     date_to: str = Query(""),
     has_attachments: Optional[bool] = Query(None),
     is_unread: Optional[bool] = Query(None),
+    session: Session = Depends(require_auth),
 ):
     supports_semantic = db.has_embeddings()
     folders = db.get_folders()
@@ -193,7 +195,7 @@ async def search(
 
 
 @router.post("/search/save", response_class=HTMLResponse)
-async def save_search(request: Request):
+async def save_search(request: Request, session: Session = Depends(require_auth)):
     """Save current search as a quick filter."""
     form = await request.form()
     name_val = form.get("name", "")
@@ -231,7 +233,9 @@ async def save_search(request: Request):
 
 
 @router.delete("/search/saved/{search_id}", response_class=HTMLResponse)
-async def delete_saved_search(request: Request, search_id: int):
+async def delete_saved_search(
+    request: Request, search_id: int, session: Session = Depends(require_auth)
+):
     """Delete a saved search."""
     global _saved_searches
     _saved_searches = [s for s in _saved_searches if s["id"] != search_id]
@@ -242,7 +246,9 @@ async def delete_saved_search(request: Request, search_id: int):
 
 
 @router.get("/search/suggestions", response_class=HTMLResponse)
-async def search_suggestions(request: Request, q: str = Query("")):
+async def search_suggestions(
+    request: Request, q: str = Query(""), session: Session = Depends(require_auth)
+):
     """Get search suggestions based on partial query."""
     if len(q) < 2:
         return HTMLResponse("")

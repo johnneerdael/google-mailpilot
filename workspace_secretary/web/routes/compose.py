@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query, Form
+from fastapi import APIRouter, Request, Query, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -6,6 +6,7 @@ from typing import Optional
 
 from workspace_secretary.web import database as db
 from workspace_secretary.web import engine_client as engine
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -18,6 +19,7 @@ async def compose_modal(
     reply_all: Optional[int] = Query(None),
     forward: Optional[int] = Query(None),
     folder: str = Query("INBOX"),
+    session: Session = Depends(require_auth),
 ):
     """Render compose modal - new email, reply, reply all, or forward."""
     context = {
@@ -109,6 +111,7 @@ async def send_email(
     cc: Optional[str] = Form(None),
     bcc: Optional[str] = Form(None),
     reply_to_message_id: Optional[str] = Form(None),
+    session: Session = Depends(require_auth),
 ):
     """Send an email via Engine API."""
     try:
@@ -131,6 +134,7 @@ async def save_draft(
     folder: str = Form(...),
     body: str = Form(...),
     reply_all: bool = Form(False),
+    session: Session = Depends(require_auth),
 ):
     """Save a draft reply via Engine API."""
     try:

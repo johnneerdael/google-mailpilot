@@ -1,14 +1,15 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 from typing import List
 
 from workspace_secretary.web import engine_client
+from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
 
 
 @router.post("/api/bulk/mark-read")
-async def bulk_mark_read(request: Request):
+async def bulk_mark_read(request: Request, session: Session = Depends(require_auth)):
     data = await request.json()
     uids: List[dict] = data.get("emails", [])
 
@@ -35,7 +36,7 @@ async def bulk_mark_read(request: Request):
 
 
 @router.post("/api/bulk/mark-unread")
-async def bulk_mark_unread(request: Request):
+async def bulk_mark_unread(request: Request, session: Session = Depends(require_auth)):
     data = await request.json()
     uids: List[dict] = data.get("emails", [])
 
@@ -62,7 +63,7 @@ async def bulk_mark_unread(request: Request):
 
 
 @router.post("/api/bulk/archive")
-async def bulk_archive(request: Request):
+async def bulk_archive(request: Request, session: Session = Depends(require_auth)):
     data = await request.json()
     uids: List[dict] = data.get("emails", [])
 
@@ -91,7 +92,7 @@ async def bulk_archive(request: Request):
 
 
 @router.post("/api/bulk/delete")
-async def bulk_delete(request: Request):
+async def bulk_delete(request: Request, session: Session = Depends(require_auth)):
     data = await request.json()
     uids: List[dict] = data.get("emails", [])
 
@@ -121,7 +122,7 @@ async def bulk_delete(request: Request):
 
 
 @router.post("/api/bulk/move")
-async def bulk_move(request: Request):
+async def bulk_move(request: Request, session: Session = Depends(require_auth)):
     data = await request.json()
     uids: List[dict] = data.get("emails", [])
     destination = data.get("destination", "")
@@ -155,7 +156,7 @@ async def bulk_move(request: Request):
 
 
 @router.post("/api/bulk/label")
-async def bulk_label(request: Request):
+async def bulk_label(request: Request, session: Session = Depends(require_auth)):
     data = await request.json()
     uids: List[dict] = data.get("emails", [])
     label = data.get("label", "")
