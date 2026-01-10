@@ -246,43 +246,46 @@ class EmbeddingsSyncWorker:
             logger.warning("Database does not support embeddings")
             return 0
 
-        emails = self.database.get_emails_needing_embedding(
-            folder, limit=self.batch_size
-        )
-
-        if not emails:
-            logger.debug(f"No emails need embedding in {folder}")
-            return 0
-
-        logger.info(f"Embedding {len(emails)} emails from {folder}")
-
-        try:
-            results = await self.client.embed_emails(emails)
-        except httpx.TimeoutException:
-            logger.error(f"Embeddings timeout for {len(emails)} emails in {folder}")
-            raise
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                f"Embeddings API error {e.response.status_code}: {e.response.text[:200]}"
+        total_stored = 0
+        while True:
+            emails = self.database.get_emails_needing_embedding(
+                folder, limit=self.batch_size
             )
-            raise
 
-        stored = 0
-        for email, result in zip(emails, results):
+            if not emails:
+                if total_stored > 0:
+                    logger.info(f"Embedded {total_stored} emails from {folder}")
+                else:
+                    logger.debug(f"No emails need embedding in {folder}")
+                return total_stored
+
+            logger.debug(f"Embedding batch of {len(emails)} emails from {folder}")
+
             try:
-                self.database.upsert_embedding(
-                    email_uid=email["uid"],
-                    email_folder=email["folder"],
-                    embedding=result.embedding,
-                    model=result.model,
-                    content_hash=result.content_hash,
+                results = await self.client.embed_emails(emails)
+            except httpx.TimeoutException:
+                logger.error(f"Embeddings timeout for {len(emails)} emails in {folder}")
+                raise
+            except httpx.HTTPStatusError as e:
+                logger.error(
+                    f"Embeddings API error {e.response.status_code}: {e.response.text[:200]}"
                 )
-                stored += 1
-            except Exception as e:
-                logger.error(f"Failed to store embedding for UID {email['uid']}: {e}")
+                raise
 
-        logger.info(f"Embedded {stored}/{len(results)} emails from {folder}")
-        return stored
+            for email, result in zip(emails, results):
+                try:
+                    self.database.upsert_embedding(
+                        email_uid=email["uid"],
+                        email_folder=email["folder"],
+                        embedding=result.embedding,
+                        model=result.model,
+                        content_hash=result.content_hash,
+                    )
+                    total_stored += 1
+                except Exception as e:
+                    logger.error(
+                        f"Failed to store embedding for UID {email['uid']}: {e}"
+                    )
 
     async def sync_all_folders(self) -> int:
         """Sync embeddings for all configured folders.
