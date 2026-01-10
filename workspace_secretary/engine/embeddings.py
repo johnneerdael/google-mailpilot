@@ -454,13 +454,16 @@ class CohereEmbeddingsClient:
             if elapsed >= 60:
                 self._tokens_used_this_minute = 0
                 self._minute_start = now
+                elapsed = 0
 
-            if (
+            if self._tokens_used_this_minute > 0 and (
                 self._tokens_used_this_minute + estimated_tokens
                 > self.TOKENS_PER_MINUTE
             ):
                 wait_time = 60 - elapsed + 1
-                logger.info(f"Rate limit approaching, waiting {wait_time:.1f}s")
+                logger.info(
+                    f"Rate limit approaching ({self._tokens_used_this_minute:,} tokens used), waiting {wait_time:.1f}s"
+                )
                 await asyncio.sleep(wait_time)
                 self._tokens_used_this_minute = 0
                 self._minute_start = time.monotonic()
