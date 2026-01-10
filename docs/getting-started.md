@@ -371,7 +371,7 @@ docker compose logs workspace-secretary
 ## Next Steps
 
 - [Configuration Guide](/guide/configuration) - All settings explained
-- [MCP Tools Reference](/api/) - Available tools
+- [MCP Tools Reference](/tools/) - Available tools
 - [Semantic Search](/guide/semantic-search) - AI-powered email search
 - [Agent Patterns](/guide/agents) - Building intelligent workflows
 
