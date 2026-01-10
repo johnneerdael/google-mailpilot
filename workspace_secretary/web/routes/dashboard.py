@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -10,6 +10,11 @@ from workspace_secretary.web.routes.analysis import analyze_signals, compute_pri
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+
+@router.get("/dashboard")
+async def dashboard_redirect():
+    return RedirectResponse(url="/", status_code=302)
 
 
 @router.get("/", response_class=HTMLResponse)

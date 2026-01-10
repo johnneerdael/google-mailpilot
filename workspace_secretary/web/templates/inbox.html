@@ -2,10 +2,10 @@
 {% block title %}Inbox - Secretary{% endblock %}
 
 {% block content %}
-<div class="space-y-4">
-    <div class="flex items-center justify-between">
-        <h1 class="text-2xl font-bold">Inbox</h1>
-        <div class="flex items-center space-x-4">
+<div class="space-y-4" x-data="bulkActions()">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h1 class="text-xl sm:text-2xl font-bold">Inbox</h1>
+        <div class="flex items-center justify-between sm:justify-end space-x-4">
             <label class="flex items-center space-x-2 text-sm text-gray-400">
                 <input type="checkbox" 
                        {% if unread_only %}checked{% endif %}
@@ -15,49 +15,105 @@
                        class="rounded bg-gray-800 border-gray-700 text-primary focus:ring-primary">
                 <span>Unread only</span>
             </label>
-            <a href="/compose" class="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90">
-                ✏️ Compose
+            <a href="/compose" class="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 touch-manipulation">
+                <span class="hidden sm:inline">✏️ Compose</span>
+                <span class="sm:hidden">✏️</span>
             </a>
+        </div>
+    </div>
+
+    <div x-show="selected.length > 0" x-cloak 
+         class="flex flex-wrap items-center gap-2 p-3 bg-gray-900 border border-gray-700 rounded-lg">
+        <span class="text-sm text-gray-400" x-text="selected.length + ' selected'"></span>
+        <div class="flex flex-wrap gap-2 ml-auto">
+            <button @click="bulkAction('mark-read')" 
+                    class="px-3 py-1.5 text-xs font-medium text-gray-300 bg-gray-800 rounded hover:bg-gray-700 touch-manipulation">
+                ✓ Mark Read
+            </button>
+            <button @click="bulkAction('mark-unread')" 
+                    class="px-3 py-1.5 text-xs font-medium text-gray-300 bg-gray-800 rounded hover:bg-gray-700 touch-manipulation">
+                ○ Mark Unread
+            </button>
+            <button @click="bulkAction('archive')" 
+                    class="px-3 py-1.5 text-xs font-medium text-gray-300 bg-gray-800 rounded hover:bg-gray-700 touch-manipulation">
+                📥 Archive
+            </button>
+            <button @click="bulkAction('delete')" 
+                    class="px-3 py-1.5 text-xs font-medium text-red-400 bg-gray-800 rounded hover:bg-gray-700 touch-manipulation">
+                🗑️ Delete
+            </button>
+            <button @click="clearSelection()" 
+                    class="px-3 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-300 touch-manipulation">
+                ✕ Clear
+            </button>
         </div>
     </div>
 
     <div class="bg-gray-900 rounded-lg divide-y divide-gray-800">
         {% if emails %}
+            <div class="px-3 py-2 sm:px-4 border-b border-gray-700 flex items-center gap-3">
+                <label class="flex items-center cursor-pointer touch-manipulation">
+                    <input type="checkbox" 
+                           @change="toggleAll($event.target.checked)"
+                           :checked="selected.length === {{ emails|length }}"
+                           :indeterminate="selected.length > 0 && selected.length < {{ emails|length }}"
+                           class="rounded bg-gray-800 border-gray-700 text-primary focus:ring-primary">
+                </label>
+                <span class="text-xs text-gray-500">Select all</span>
+            </div>
             {% for email in emails %}
-            <a href="/thread/{{ email.folder }}/{{ email.uid }}" 
-               class="block hover:bg-gray-800 transition-colors">
-                <div class="px-4 py-4 sm:px-6">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center min-w-0 flex-1">
+            <div class="flex items-start hover:bg-gray-800 active:bg-gray-700 transition-colors">
+                <label class="flex items-center px-3 py-4 cursor-pointer touch-manipulation self-stretch">
+                    <input type="checkbox" 
+                           value="{{ email.uid }}"
+                           data-folder="{{ email.folder }}"
+                           @change="toggleSelect('{{ email.uid }}', '{{ email.folder }}', $event.target.checked)"
+                           :checked="isSelected('{{ email.uid }}')"
+                           class="rounded bg-gray-800 border-gray-700 text-primary focus:ring-primary">
+                </label>
+                <a href="/thread/{{ email.folder }}/{{ email.uid }}" 
+                   class="flex-1 py-3 pr-3 sm:pr-4 touch-manipulation">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 sm:gap-0">
+                        <div class="flex items-start sm:items-center min-w-0 flex-1">
                             {% if email.is_unread %}
-                            <span class="w-2 h-2 bg-primary rounded-full mr-3 flex-shrink-0"></span>
+                            <span class="w-2 h-2 bg-primary rounded-full mr-2 sm:mr-3 flex-shrink-0 mt-1.5 sm:mt-0"></span>
                             {% else %}
-                            <span class="w-2 h-2 mr-3 flex-shrink-0"></span>
+                            <span class="w-2 h-2 mr-2 sm:mr-3 flex-shrink-0"></span>
                             {% endif %}
                             
-                            <p class="text-sm font-medium truncate w-48 flex-shrink-0 {% if email.is_unread %}text-white{% else %}text-gray-300{% endif %}">
-                                {{ email.from_name or email.from_addr }}
-                            </p>
-                            
-                            <div class="ml-4 min-w-0 flex-1">
-                                <p class="text-sm truncate {% if email.is_unread %}text-white font-semibold{% else %}text-gray-300{% endif %}">
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center justify-between sm:justify-start gap-2">
+                                    <p class="text-sm font-medium truncate {% if email.is_unread %}text-white{% else %}text-gray-300{% endif %}">
+                                        {{ email.from_name or email.from_addr }}
+                                    </p>
+                                    <div class="flex items-center gap-1 sm:hidden flex-shrink-0">
+                                        {% if email.has_attachments %}
+                                        <span class="text-gray-500 text-xs">📎</span>
+                                        {% endif %}
+                                        <span class="text-xs text-gray-500">{{ email.date }}</span>
+                                    </div>
+                                </div>
+                                
+                                <p class="text-sm truncate mt-0.5 {% if email.is_unread %}text-white font-semibold{% else %}text-gray-300{% endif %}">
                                     {{ email.subject }}
-                                    {% if email.preview %}
-                                    <span class="text-gray-500 font-normal"> — {{ email.preview }}</span>
-                                    {% endif %}
                                 </p>
+                                {% if email.preview %}
+                                <p class="text-xs sm:text-sm text-gray-500 truncate mt-0.5 hidden sm:block">
+                                    {{ email.preview }}
+                                </p>
+                                {% endif %}
                             </div>
                         </div>
                         
-                        <div class="ml-4 flex items-center space-x-2 flex-shrink-0">
+                        <div class="hidden sm:flex ml-4 items-center space-x-2 flex-shrink-0">
                             {% if email.has_attachments %}
                             <span class="text-gray-500" title="Has attachments">📎</span>
                             {% endif %}
                             <span class="text-sm text-gray-500">{{ email.date }}</span>
                         </div>
                     </div>
-                </div>
-            </a>
+                </a>
+            </div>
             {% endfor %}
         {% else %}
             <div class="px-4 py-12 text-center">
@@ -67,11 +123,11 @@
     </div>
 
     {% if has_more or page > 1 %}
-    <div class="flex justify-between items-center">
+    <div class="flex justify-between items-center gap-2">
         {% if page > 1 %}
         <a href="/inbox?page={{ page - 1 }}&folder={{ folder }}&unread_only={{ unread_only }}"
-           class="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-900 border border-gray-700 rounded-md hover:bg-gray-800">
-            ← Previous
+           class="px-3 sm:px-4 py-2 text-sm font-medium text-gray-300 bg-gray-900 border border-gray-700 rounded-md hover:bg-gray-800 touch-manipulation">
+            ← <span class="hidden sm:inline">Previous</span>
         </a>
         {% else %}
         <div></div>
@@ -81,8 +137,8 @@
         
         {% if has_more %}
         <a href="/inbox?page={{ page + 1 }}&folder={{ folder }}&unread_only={{ unread_only }}"
-           class="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-900 border border-gray-700 rounded-md hover:bg-gray-800">
-            Next →
+           class="px-3 sm:px-4 py-2 text-sm font-medium text-gray-300 bg-gray-900 border border-gray-700 rounded-md hover:bg-gray-800 touch-manipulation">
+            <span class="hidden sm:inline">Next</span> →
         </a>
         {% else %}
         <div></div>
@@ -90,4 +146,64 @@
     </div>
     {% endif %}
 </div>
+
+<script>
+function bulkActions() {
+    return {
+        selected: [],
+        
+        toggleSelect(uid, folder, checked) {
+            if (checked) {
+                this.selected.push({ uid, folder });
+            } else {
+                this.selected = this.selected.filter(e => e.uid !== uid);
+            }
+        },
+        
+        toggleAll(checked) {
+            if (checked) {
+                this.selected = Array.from(document.querySelectorAll('input[data-folder]'))
+                    .map(el => ({ uid: el.value, folder: el.dataset.folder }));
+            } else {
+                this.selected = [];
+            }
+        },
+        
+        isSelected(uid) {
+            return this.selected.some(e => e.uid === uid);
+        },
+        
+        clearSelection() {
+            this.selected = [];
+        },
+        
+        async bulkAction(action) {
+            if (this.selected.length === 0) return;
+            
+            try {
+                const response = await fetch(`/api/bulk/${action}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ emails: this.selected })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    window.showToast(data.message, 'success');
+                    this.selected = [];
+                    
+                    if (action === 'archive' || action === 'delete') {
+                        setTimeout(() => location.reload(), 500);
+                    }
+                } else {
+                    window.showToast(data.message || 'Action failed', 'error');
+                }
+            } catch (e) {
+                window.showToast('Failed to perform action', 'error');
+            }
+        }
+    };
+}
+</script>
 {% endblock %}

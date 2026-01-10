@@ -1,0 +1,27 @@
+<div class="grid grid-cols-2 gap-4">
+    <div>
+        <span class="text-zinc-400 text-sm block mb-1">Start Time</span>
+        <span class="text-white text-lg">{{ working_hours.start }}</span>
+    </div>
+    <div>
+        <span class="text-zinc-400 text-sm block mb-1">End Time</span>
+        <span class="text-white text-lg">{{ working_hours.end }}</span>
+    </div>
+    <div>
+        <span class="text-zinc-400 text-sm block mb-1">Timezone</span>
+        <span class="text-white">{{ working_hours.timezone }}</span>
+    </div>
+    <div>
+        <span class="text-zinc-400 text-sm block mb-1">Work Days</span>
+        <div class="flex flex-wrap gap-1 mt-1">
+            {% for day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
+                {% set full_day = {'Mon': 'Monday', 'Tue': 'Tuesday', 'Wed': 'Wednesday', 'Thu': 'Thursday', 'Fri': 'Friday', 'Sat': 'Saturday', 'Sun': 'Sunday'}[day] %}
+                {% if full_day in working_hours.workdays %}
+                <span class="bg-blue-600 text-white px-2 py-0.5 rounded text-xs">{{ day }}</span>
+                {% else %}
+                <span class="bg-zinc-700 text-zinc-500 px-2 py-0.5 rounded text-xs">{{ day }}</span>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </div>
+</div>

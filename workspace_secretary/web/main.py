@@ -26,11 +26,21 @@ def main():
         calendar,
         analysis,
         dashboard,
+        chat,
+        settings,
+        notifications,
+        bulk,
     )
+    from workspace_secretary.web.llm_client import init_llm_client
     from workspace_secretary.config import load_config
 
     config = load_config()
     init_web_app(config.web if config else None)
+
+    if config and config.web and config.web.agent:
+        init_llm_client(config.web.agent)
+    else:
+        init_llm_client(None)
 
     web_app.include_router(dashboard.router)
     web_app.include_router(inbox.router)
@@ -40,6 +50,10 @@ def main():
     web_app.include_router(compose.router)
     web_app.include_router(calendar.router)
     web_app.include_router(analysis.router)
+    web_app.include_router(chat.router)
+    web_app.include_router(settings.router)
+    web_app.include_router(notifications.router)
+    web_app.include_router(bulk.router)
 
     host = os.environ.get("WEB_HOST", "0.0.0.0")
     port = int(os.environ.get("WEB_PORT", "8080"))

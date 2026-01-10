@@ -152,6 +152,151 @@ def has_embeddings() -> bool:
         return False
 
 
+def get_folders() -> list[str]:
+    """Get list of all folders."""
+    with get_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT folder FROM emails ORDER BY folder")
+            return [row[0] for row in cur.fetchall()]
+
+
+def search_emails_advanced(
+    query: str, folder: str, limit: int, filters: dict
+) -> list[dict]:
+    """Search emails with advanced filters."""
+    conditions = ["folder = %s"]
+    params: list = [folder]
+
+    if query.strip():
+        conditions.append(
+            """(
+                to_tsvector('english', COALESCE(subject, '') || ' ' || COALESCE(body_text, '')) 
+                @@ plainto_tsquery('english', %s)
+            )"""
+        )
+        params.append(query)
+
+    if filters.get("from_addr"):
+        conditions.append("from_addr ILIKE %s")
+        params.append(f"%{filters['from_addr']}%")
+
+    if filters.get("date_from"):
+        conditions.append("date >= %s")
+        params.append(filters["date_from"])
+
+    if filters.get("date_to"):
+        conditions.append("date <= %s")
+        params.append(filters["date_to"])
+
+    if filters.get("has_attachments") is not None:
+        conditions.append("has_attachments = %s")
+        params.append(filters["has_attachments"])
+
+    if filters.get("is_unread") is not None:
+        conditions.append("is_unread = %s")
+        params.append(filters["is_unread"])
+
+    params.append(limit)
+
+    sql = f"""
+        SELECT uid, folder, from_addr, subject, 
+               LEFT(body_text, 200) as preview, date, is_unread, has_attachments
+        FROM emails 
+        WHERE {" AND ".join(conditions)}
+        ORDER BY date DESC LIMIT %s
+    """
+
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+def semantic_search_advanced(
+    query_embedding: list[float],
+    folder: str,
+    limit: int,
+    filters: dict,
+    threshold: float = 0.5,
+) -> list[dict]:
+    """Semantic search with advanced filters."""
+    conditions = ["e.folder = %s", "1 - (emb.embedding <=> %s::vector) > %s"]
+    params: list = [folder, query_embedding, threshold]
+
+    if filters.get("from_addr"):
+        conditions.append("e.from_addr ILIKE %s")
+        params.append(f"%{filters['from_addr']}%")
+
+    if filters.get("date_from"):
+        conditions.append("e.date >= %s")
+        params.append(filters["date_from"])
+
+    if filters.get("date_to"):
+        conditions.append("e.date <= %s")
+        params.append(filters["date_to"])
+
+    if filters.get("has_attachments") is not None:
+        conditions.append("e.has_attachments = %s")
+        params.append(filters["has_attachments"])
+
+    if filters.get("is_unread") is not None:
+        conditions.append("e.is_unread = %s")
+        params.append(filters["is_unread"])
+
+    params.extend([query_embedding, limit])
+
+    sql = f"""
+        SELECT e.uid, e.folder, e.from_addr, e.subject, 
+               LEFT(e.body_text, 200) as preview, e.date, e.is_unread, e.has_attachments,
+               1 - (emb.embedding <=> %s::vector) as similarity
+        FROM email_embeddings emb
+        JOIN emails e ON e.uid = emb.uid AND e.folder = emb.folder
+        WHERE {" AND ".join(conditions)}
+        ORDER BY similarity DESC LIMIT %s
+    """
+
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, params)
+            return cur.fetchall()
+
+
+def get_search_suggestions(query: str, limit: int = 5) -> list[dict]:
+    """Get search suggestions based on partial query (senders and subjects)."""
+    suggestions = []
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            # Suggest senders
+            cur.execute(
+                """
+                SELECT DISTINCT from_addr, COUNT(*) as cnt
+                FROM emails
+                WHERE from_addr ILIKE %s
+                GROUP BY from_addr
+                ORDER BY cnt DESC LIMIT %s
+                """,
+                (f"%{query}%", limit),
+            )
+            for row in cur.fetchall():
+                suggestions.append({"type": "sender", "value": row["from_addr"]})
+
+            # Suggest subjects
+            cur.execute(
+                """
+                SELECT DISTINCT subject
+                FROM emails
+                WHERE subject ILIKE %s
+                ORDER BY date DESC LIMIT %s
+                """,
+                (f"%{query}%", limit),
+            )
+            for row in cur.fetchall():
+                if row["subject"]:
+                    suggestions.append({"type": "subject", "value": row["subject"]})
+
+    return suggestions[:limit]
+
+
 def find_related_emails(uid: int, folder: str, limit: int = 5) -> list[dict]:
     with get_conn() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
@@ -178,3 +323,26 @@ def find_related_emails(uid: int, folder: str, limit: int = 5) -> list[dict]:
                 (embedding, uid, folder, embedding, limit),
             )
             return cur.fetchall()
+
+
+def get_new_priority_emails(since, limit: int = 10) -> list[dict]:
+    """Get new priority emails since a given datetime."""
+    with get_conn() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            # Try to get priority emails - fall back to unread from recent if no priority system
+            try:
+                cur.execute(
+                    """
+                    SELECT uid, folder, from_addr, subject, 
+                           LEFT(body_text, 200) as preview, date
+                    FROM emails
+                    WHERE date > %s
+                      AND is_unread = true
+                    ORDER BY date DESC
+                    LIMIT %s
+                    """,
+                    (since, limit),
+                )
+                return cur.fetchall()
+            except Exception:
+                return []

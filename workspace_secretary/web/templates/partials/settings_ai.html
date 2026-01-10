@@ -1,0 +1,32 @@
+<div class="space-y-3">
+    <div class="flex items-center justify-between py-2">
+        <span class="text-zinc-400">Status</span>
+        {% if ai_config.configured %}
+        <span class="flex items-center gap-2 text-green-400">
+            <span class="w-2 h-2 bg-green-400 rounded-full"></span>
+            Configured
+        </span>
+        {% else %}
+        <span class="flex items-center gap-2 text-zinc-500">
+            <span class="w-2 h-2 bg-zinc-500 rounded-full"></span>
+            Not configured
+        </span>
+        {% endif %}
+    </div>
+    {% if ai_config.configured %}
+    <div class="flex items-center justify-between py-2 border-t border-zinc-700">
+        <span class="text-zinc-400">Model</span>
+        <span class="text-white font-mono text-sm">{{ ai_config.model or 'Default' }}</span>
+    </div>
+    <div class="flex items-center justify-between py-2 border-t border-zinc-700">
+        <span class="text-zinc-400">API Format</span>
+        <span class="text-white">{{ ai_config.api_format or 'OpenAI' }}</span>
+    </div>
+    {% if ai_config.base_url %}
+    <div class="flex items-center justify-between py-2 border-t border-zinc-700">
+        <span class="text-zinc-400">Base URL</span>
+        <span class="text-white font-mono text-sm truncate max-w-xs">{{ ai_config.base_url }}</span>
+    </div>
+    {% endif %}
+    {% endif %}
+</div>

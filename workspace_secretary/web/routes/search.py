@@ -3,15 +3,19 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import html
 import os
 import httpx
+import json
 
 from workspace_secretary.web import database as db
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
+
+# In-memory saved searches (in production, store in DB or config)
+_saved_searches: list[dict] = []
 
 
 def format_date(date_val) -> str:
@@ -73,10 +77,37 @@ async def search(
     mode: str = Query("keyword"),
     folder: str = Query("INBOX"),
     limit: int = Query(50, ge=1, le=100),
+    # Advanced filters
+    from_addr: str = Query("", alias="from"),
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    has_attachments: Optional[bool] = Query(None),
+    is_unread: Optional[bool] = Query(None),
 ):
     supports_semantic = db.has_embeddings()
+    folders = db.get_folders()
 
-    if not q.strip():
+    # Build filters dict
+    filters = {
+        "from_addr": from_addr,
+        "date_from": date_from,
+        "date_to": date_to,
+        "has_attachments": has_attachments,
+        "is_unread": is_unread,
+    }
+
+    # Check if any filters are active
+    has_filters = any(
+        [
+            from_addr,
+            date_from,
+            date_to,
+            has_attachments is not None,
+            is_unread is not None,
+        ]
+    )
+
+    if not q.strip() and not has_filters:
         return templates.TemplateResponse(
             "search.html",
             {
@@ -85,29 +116,35 @@ async def search(
                 "mode": mode,
                 "results": [],
                 "folder": folder,
+                "folders": folders,
                 "supports_semantic": supports_semantic,
+                "filters": filters,
+                "saved_searches": _saved_searches,
             },
         )
 
     results_raw = []
-    if mode == "semantic" and supports_semantic:
+    if mode == "semantic" and supports_semantic and q.strip():
         embedding = await get_embedding(q)
         if embedding:
-            results_raw = db.semantic_search(embedding, folder, limit)
+            results_raw = db.semantic_search_advanced(embedding, folder, limit, filters)
         else:
-            results_raw = db.search_emails(q, folder, limit)
+            results_raw = db.search_emails_advanced(q, folder, limit, filters)
     else:
-        results_raw = db.search_emails(q, folder, limit)
+        results_raw = db.search_emails_advanced(q, folder, limit, filters)
 
     results = [
         {
             "uid": e["uid"],
             "folder": e.get("folder", folder),
             "from_name": extract_name(e.get("from_addr", "")),
+            "from_addr": e.get("from_addr", ""),
             "subject": e.get("subject", "(no subject)"),
             "preview": truncate(e.get("preview") or "", 150),
             "date": format_date(e.get("date")),
             "similarity": e.get("similarity"),
+            "is_unread": e.get("is_unread", False),
+            "has_attachments": e.get("has_attachments", False),
         }
         for e in results_raw
     ]
@@ -120,6 +157,74 @@ async def search(
             "mode": mode,
             "results": results,
             "folder": folder,
+            "folders": folders,
             "supports_semantic": supports_semantic,
+            "filters": filters,
+            "saved_searches": _saved_searches,
         },
+    )
+
+
+@router.post("/search/save", response_class=HTMLResponse)
+async def save_search(request: Request):
+    """Save current search as a quick filter."""
+    form = await request.form()
+    name_val = form.get("name", "")
+    query_val = form.get("query", "")
+    name = str(name_val).strip() if name_val else ""
+    query = str(query_val).strip() if query_val else ""
+    mode = form.get("mode", "keyword")
+    folder = form.get("folder", "INBOX")
+    from_addr = form.get("from", "")
+    date_from = form.get("date_from", "")
+    date_to = form.get("date_to", "")
+    has_attachments = form.get("has_attachments")
+    is_unread = form.get("is_unread")
+
+    if name:
+        saved = {
+            "id": len(_saved_searches) + 1,
+            "name": name,
+            "query": query,
+            "mode": mode,
+            "folder": folder,
+            "from_addr": from_addr,
+            "date_from": date_from,
+            "date_to": date_to,
+            "has_attachments": has_attachments == "true" if has_attachments else None,
+            "is_unread": is_unread == "true" if is_unread else None,
+        }
+        _saved_searches.append(saved)
+
+    # Return updated saved searches list
+    return templates.TemplateResponse(
+        "partials/saved_searches.html",
+        {"request": request, "saved_searches": _saved_searches},
+    )
+
+
+@router.delete("/search/saved/{search_id}", response_class=HTMLResponse)
+async def delete_saved_search(request: Request, search_id: int):
+    """Delete a saved search."""
+    global _saved_searches
+    _saved_searches = [s for s in _saved_searches if s["id"] != search_id]
+    return templates.TemplateResponse(
+        "partials/saved_searches.html",
+        {"request": request, "saved_searches": _saved_searches},
+    )
+
+
+@router.get("/search/suggestions", response_class=HTMLResponse)
+async def search_suggestions(request: Request, q: str = Query("")):
+    """Get search suggestions based on partial query."""
+    if len(q) < 2:
+        return HTMLResponse("")
+
+    suggestions = db.get_search_suggestions(q)
+    if not suggestions:
+        return HTMLResponse("")
+
+    return templates.TemplateResponse(
+        "partials/search_suggestions.html",
+        {"request": request, "suggestions": suggestions},
     )

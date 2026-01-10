@@ -2,74 +2,76 @@
 {% block title %}{{ subject }} - Secretary{% endblock %}
 
 {% block content %}
-<div class="flex gap-6" x-data="{ showActions: false, deletedUid: null, deletedFolder: null, showAnalysis: true }">
-    <div class="flex-1 space-y-4">
-        <div class="flex items-start justify-between">
-            <div class="flex items-start space-x-4">
-                <a href="/inbox" class="mt-1 text-gray-400 hover:text-gray-200">
-                    ← Back
+<div class="flex flex-col lg:flex-row gap-4 lg:gap-6" x-data="{ showActions: false, deletedUid: null, deletedFolder: null, showAnalysis: false }">
+    <div class="flex-1 space-y-4 min-w-0">
+        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+            <div class="flex items-start space-x-3 sm:space-x-4 min-w-0">
+                <a href="/inbox" class="mt-1 text-gray-400 hover:text-gray-200 flex-shrink-0 touch-manipulation p-1 -ml-1">
+                    ←
                 </a>
-                <h1 class="text-xl font-bold flex-1">{{ subject }}</h1>
+                <h1 class="text-lg sm:text-xl font-bold break-words">{{ subject }}</h1>
             </div>
-            <div class="flex items-center space-x-2">
+            <div class="flex items-center space-x-1 sm:space-x-2 flex-shrink-0 ml-6 sm:ml-0">
                 <button @click="showAnalysis = !showAnalysis"
-                        class="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md"
+                        class="p-2 sm:p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md touch-manipulation lg:hidden"
                         :class="{ 'bg-gray-800 text-primary': showAnalysis }"
                         title="Toggle AI Analysis">
                     🤖
                 </button>
                 <button hx-post="/api/email/toggle-read/{{ folder }}/{{ uid }}" 
                         hx-swap="none"
-                        class="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md" 
+                        class="p-2 sm:p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md touch-manipulation" 
                         title="Toggle read/unread">
                     ✉️
                 </button>
-                <button @click="showActions = !showActions" 
-                        class="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md"
-                        title="More actions">
-                    ⋯
-                </button>
-                <div x-show="showActions" @click.outside="showActions = false" x-cloak
-                     class="absolute right-4 mt-32 w-48 bg-gray-900 border border-gray-700 rounded-md shadow-lg z-10">
-                    <button hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/All Mail"
-                            hx-swap="none"
-                            hx-on::after-request="window.location.href='/inbox'"
-                            class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-800">
-                        📥 Archive
+                <div class="relative">
+                    <button @click="showActions = !showActions" 
+                            class="p-2 sm:p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md touch-manipulation"
+                            title="More actions">
+                        ⋯
                     </button>
-                    <button @click="deletedUid = '{{ uid }}'; deletedFolder = '{{ folder }}'"
-                            hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/Trash"
-                            hx-swap="none"
-                            hx-on::after-request="window.showUndoToast('Email deleted', deletedUid, deletedFolder, '[Gmail]/Trash')"
-                            class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-800">
-                        🗑️ Delete
-                    </button>
-                    <button hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/Spam"
-                            hx-swap="none"
-                            hx-on::after-request="window.location.href='/inbox'"
-                            class="w-full px-4 py-2 text-left text-sm text-gray-300 hover:bg-gray-800">
-                        ⚠️ Spam
-                    </button>
+                    <div x-show="showActions" @click.outside="showActions = false" x-cloak
+                         class="absolute right-0 mt-2 w-48 bg-gray-900 border border-gray-700 rounded-md shadow-lg z-10">
+                        <button hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/All Mail"
+                                hx-swap="none"
+                                hx-on::after-request="window.location.href='/inbox'"
+                                class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
+                            📥 Archive
+                        </button>
+                        <button @click="deletedUid = '{{ uid }}'; deletedFolder = '{{ folder }}'"
+                                hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/Trash"
+                                hx-swap="none"
+                                hx-on::after-request="window.showUndoToast('Email deleted', deletedUid, deletedFolder, '[Gmail]/Trash')"
+                                class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
+                            🗑️ Delete
+                        </button>
+                        <button hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/Spam"
+                                hx-swap="none"
+                                hx-on::after-request="window.location.href='/inbox'"
+                                class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
+                            ⚠️ Spam
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <div class="space-y-4">
+        <div class="space-y-3 sm:space-y-4">
             {% for message in messages %}
             <div class="bg-gray-900 rounded-lg overflow-hidden" 
                  x-data="{ expanded: {{ 'true' if loop.last else 'false' }} }">
-                <div class="px-4 py-3 border-b border-gray-800 cursor-pointer hover:bg-gray-800"
+                <div class="px-3 py-3 sm:px-4 border-b border-gray-800 cursor-pointer hover:bg-gray-800 touch-manipulation"
                      @click="expanded = !expanded">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center space-x-3">
-                            <div class="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-medium">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center space-x-2 sm:space-x-3 min-w-0">
+                            <div class="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-primary flex items-center justify-center text-white font-medium text-sm sm:text-base flex-shrink-0">
                                 {{ message.from_name[0] if message.from_name else '?' }}
                             </div>
-                            <div>
-                                <p class="text-sm font-medium text-white">
+                            <div class="min-w-0">
+                                <p class="text-sm font-medium text-white truncate">
                                     {{ message.from_name or message.from_addr }}
                                 </p>
-                                <p class="text-xs text-gray-500">
+                                <p class="text-xs text-gray-500 truncate hidden sm:block">
                                     to {{ message.to_addr[:50] }}{% if message.to_addr|length > 50 %}...{% endif %}
                                     {% if message.cc_addr %}
                                     <span class="ml-1">cc: {{ message.cc_addr[:30] }}{% if message.cc_addr|length > 30 %}...{% endif %}</span>
@@ -77,28 +79,28 @@
                                 </p>
                             </div>
                         </div>
-                        <div class="flex items-center space-x-2">
+                        <div class="flex items-center space-x-2 flex-shrink-0">
                             {% if message.has_attachments %}
-                            <span class="text-gray-500" title="Has attachments">📎</span>
+                            <span class="text-gray-500 hidden sm:inline" title="Has attachments">📎</span>
                             {% endif %}
-                            <span class="text-sm text-gray-500">{{ message.date }}</span>
-                            <span class="text-gray-500" x-text="expanded ? '▼' : '▶'"></span>
+                            <span class="text-xs sm:text-sm text-gray-500">{{ message.date }}</span>
+                            <span class="text-gray-500 text-sm" x-text="expanded ? '▼' : '▶'"></span>
                         </div>
                     </div>
                 </div>
                 
                 <div x-show="expanded" x-collapse x-cloak>
-                    <div class="px-4 py-4 email-content prose prose-invert max-w-none text-sm text-gray-300">
+                    <div class="px-3 py-3 sm:px-4 sm:py-4 email-content prose prose-invert max-w-none text-sm text-gray-300 overflow-x-auto">
                         {{ message.content | safe }}
                     </div>
                     
                     {% if message.has_attachments and message.attachment_filenames %}
-                    <div class="px-4 py-3 bg-gray-800/50 border-t border-gray-800">
+                    <div class="px-3 py-2 sm:px-4 sm:py-3 bg-gray-800/50 border-t border-gray-800">
                         <p class="text-xs font-medium text-gray-500 mb-2">Attachments</p>
                         <div class="flex flex-wrap gap-2">
                             {% for filename in message.attachment_filenames %}
                             <span class="inline-flex items-center px-2 py-1 rounded-md text-xs font-medium bg-gray-800 text-gray-300">
-                                📄 {{ filename }}
+                                📄 {{ filename[:20] }}{% if filename|length > 20 %}...{% endif %}
                             </span>
                             {% endfor %}
                         </div>
@@ -109,53 +111,57 @@
             {% endfor %}
         </div>
 
-        <div class="flex items-center space-x-3">
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
             {% if calendar_invite %}
-            <div class="flex items-center space-x-2 mr-4 px-3 py-2 bg-blue-900/30 border border-blue-800 rounded-lg">
-                <span class="text-sm text-blue-300">📅 Meeting Invite</span>
-                <button hx-post="/api/calendar/respond/{{ calendar_invite.event_id }}?response=accepted"
-                        hx-swap="none"
-                        hx-on::after-request="window.showToast('Accepted!', 'success')"
-                        class="px-3 py-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded">
-                    ✓ Accept
-                </button>
-                <button hx-post="/api/calendar/respond/{{ calendar_invite.event_id }}?response=tentative"
-                        hx-swap="none"
-                        hx-on::after-request="window.showToast('Tentatively accepted', 'info')"
-                        class="px-3 py-1 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded">
-                    ? Maybe
-                </button>
-                <button hx-post="/api/calendar/respond/{{ calendar_invite.event_id }}?response=declined"
-                        hx-swap="none"
-                        hx-on::after-request="window.showToast('Declined', 'info')"
-                        class="px-3 py-1 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded">
-                    ✕ Decline
-                </button>
+            <div class="flex flex-wrap items-center gap-2 px-3 py-2 bg-blue-900/30 border border-blue-800 rounded-lg">
+                <span class="text-sm text-blue-300">📅 Meeting</span>
+                <div class="flex gap-1">
+                    <button hx-post="/api/calendar/respond/{{ calendar_invite.event_id }}?response=accepted"
+                            hx-swap="none"
+                            hx-on::after-request="window.showToast('Accepted!', 'success')"
+                            class="px-3 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded touch-manipulation">
+                        ✓
+                    </button>
+                    <button hx-post="/api/calendar/respond/{{ calendar_invite.event_id }}?response=tentative"
+                            hx-swap="none"
+                            hx-on::after-request="window.showToast('Tentatively accepted', 'info')"
+                            class="px-3 py-1.5 text-xs font-medium text-gray-300 bg-gray-700 hover:bg-gray-600 rounded touch-manipulation">
+                        ?
+                    </button>
+                    <button hx-post="/api/calendar/respond/{{ calendar_invite.event_id }}?response=declined"
+                            hx-swap="none"
+                            hx-on::after-request="window.showToast('Declined', 'info')"
+                            class="px-3 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded touch-manipulation">
+                        ✕
+                    </button>
+                </div>
             </div>
             {% endif %}
-            <button class="px-4 py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90"
-                    hx-get="/compose?reply_to={{ uid }}&folder={{ folder }}"
-                    hx-target="#modal-container"
-                    hx-swap="innerHTML">
-                ↩️ Reply
-            </button>
-            <button class="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-900 border border-gray-700 rounded-md hover:bg-gray-800"
-                    hx-get="/compose?reply_all={{ uid }}&folder={{ folder }}"
-                    hx-target="#modal-container"
-                    hx-swap="innerHTML">
-                ↩️↩️ Reply All
-            </button>
-            <button class="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-900 border border-gray-700 rounded-md hover:bg-gray-800"
-                    hx-get="/compose?forward={{ uid }}&folder={{ folder }}"
-                    hx-target="#modal-container"
-                    hx-swap="innerHTML">
-                ➡️ Forward
-            </button>
+            <div class="flex gap-2 sm:gap-3">
+                <button class="flex-1 sm:flex-none px-4 py-2.5 sm:py-2 text-sm font-medium text-white bg-primary rounded-md hover:bg-primary/90 touch-manipulation"
+                        hx-get="/compose?reply_to={{ uid }}&folder={{ folder }}"
+                        hx-target="#modal-container"
+                        hx-swap="innerHTML">
+                    ↩️ Reply
+                </button>
+                <button class="flex-1 sm:flex-none px-4 py-2.5 sm:py-2 text-sm font-medium text-gray-300 bg-gray-900 border border-gray-700 rounded-md hover:bg-gray-800 touch-manipulation"
+                        hx-get="/compose?reply_all={{ uid }}&folder={{ folder }}"
+                        hx-target="#modal-container"
+                        hx-swap="innerHTML">
+                    <span class="hidden sm:inline">↩️↩️ Reply All</span>
+                    <span class="sm:hidden">↩️↩️ All</span>
+                </button>
+                <button class="flex-1 sm:flex-none px-4 py-2.5 sm:py-2 text-sm font-medium text-gray-300 bg-gray-900 border border-gray-700 rounded-md hover:bg-gray-800 touch-manipulation"
+                        hx-get="/compose?forward={{ uid }}&folder={{ folder }}"
+                        hx-target="#modal-container"
+                        hx-swap="innerHTML">
+                    ➡️ <span class="hidden sm:inline">Forward</span>
+                </button>
+            </div>
         </div>
     </div>
 
-    <div x-show="showAnalysis" x-cloak
-         class="w-72 flex-shrink-0"
+    <div class="hidden lg:block w-72 flex-shrink-0"
          hx-get="/analysis/{{ folder }}/{{ uid }}"
          hx-trigger="load"
          hx-swap="innerHTML">
@@ -163,6 +169,26 @@
             <div class="bg-gray-900 rounded-lg p-4 h-24"></div>
             <div class="bg-gray-900 rounded-lg p-4 h-32"></div>
             <div class="bg-gray-900 rounded-lg p-4 h-40"></div>
+        </div>
+    </div>
+    
+    <div x-show="showAnalysis" x-cloak 
+         class="lg:hidden fixed inset-0 z-40 bg-black/50"
+         @click="showAnalysis = false">
+        <div class="absolute right-0 top-0 bottom-0 w-80 max-w-full bg-gray-950 overflow-y-auto"
+             @click.stop
+             hx-get="/analysis/{{ folder }}/{{ uid }}"
+             hx-trigger="intersect once"
+             hx-swap="innerHTML">
+            <div class="p-4 border-b border-gray-800 flex items-center justify-between sticky top-0 bg-gray-950">
+                <h3 class="font-medium text-white">AI Analysis</h3>
+                <button @click="showAnalysis = false" class="p-2 text-gray-400 hover:text-white">✕</button>
+            </div>
+            <div class="p-4 animate-pulse space-y-4">
+                <div class="bg-gray-900 rounded-lg p-4 h-24"></div>
+                <div class="bg-gray-900 rounded-lg p-4 h-32"></div>
+                <div class="bg-gray-900 rounded-lg p-4 h-40"></div>
+            </div>
         </div>
     </div>
 </div>

@@ -1,0 +1,14 @@
+{% for search in saved_searches %}
+<a href="/search?q={{ search.query|urlencode }}&mode={{ search.mode }}&folder={{ search.folder }}{% if search.from_addr %}&from={{ search.from_addr|urlencode }}{% endif %}{% if search.date_from %}&date_from={{ search.date_from }}{% endif %}{% if search.date_to %}&date_to={{ search.date_to }}{% endif %}{% if search.has_attachments %}&has_attachments=true{% endif %}{% if search.is_unread %}&is_unread=true{% endif %}"
+   class="group inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-full text-sm text-gray-300 hover:border-gray-600 hover:text-white transition-colors">
+    {{ search.name }}
+    <button type="button" 
+            hx-delete="/search/saved/{{ search.id }}"
+            hx-target="#saved-searches"
+            hx-swap="innerHTML"
+            @click.prevent.stop
+            class="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 transition-opacity">
+        ✕
+    </button>
+</a>
+{% endfor %}

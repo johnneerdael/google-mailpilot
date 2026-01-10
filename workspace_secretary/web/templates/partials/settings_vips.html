@@ -1,0 +1,12 @@
+{% if vips %}
+<div class="flex flex-wrap gap-2">
+    {% for vip in vips %}
+    <span class="bg-yellow-900/30 text-yellow-400 border border-yellow-700/50 px-3 py-1.5 rounded-full text-sm flex items-center gap-1.5">
+        <span>⭐</span>
+        <span class="font-mono">{{ vip }}</span>
+    </span>
+    {% endfor %}
+</div>
+{% else %}
+<p class="text-zinc-500 italic">No VIP senders configured.</p>
+{% endif %}

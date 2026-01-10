@@ -100,20 +100,19 @@ class EmbeddingsClient:
         Combines subject and body, normalizes whitespace, and truncates
         to reasonable length for embedding models.
         """
-        # Combine subject and body
         parts = []
         if subject:
             parts.append(f"Subject: {subject}")
         if body:
-            # Clean up body - normalize whitespace
             clean_body = " ".join(body.split())
             parts.append(clean_body)
 
         text = "\n".join(parts)
 
-        # Truncate to ~6000 tokens (roughly 24000 chars for English)
-        # text-embedding-3-small has 8192 token limit, leave headroom for tokenizer variance
-        max_chars = 24000
+        # Truncate to ~4000 tokens (roughly 16000 chars for English)
+        # text-embedding-3-small has 8192 token limit
+        # Being conservative because code/URLs/special chars tokenize to more tokens
+        max_chars = 16000
         if len(text) > max_chars:
             text = text[:max_chars]
 
