@@ -49,3 +49,41 @@ async def modify_labels(
     label_list = [l.strip() for l in labels.split(",") if l.strip()]
     result = await engine.modify_labels(uid, folder, label_list, action)
     return JSONResponse(result)
+
+
+@router.post("/spam/{folder}/{uid}")
+async def mark_spam(folder: str, uid: int, session: Session = Depends(require_auth)):
+    result = await engine.move_email(uid, folder, "[Gmail]/Spam")
+    return JSONResponse(result)
+
+
+@router.post("/mute/{folder}/{uid}")
+async def mute_thread(folder: str, uid: int, session: Session = Depends(require_auth)):
+    result = await engine.modify_labels(uid, folder, ["Muted"], "add")
+    return JSONResponse(result)
+
+
+@router.post("/snooze/{folder}/{uid}")
+async def snooze_email(
+    folder: str,
+    uid: int,
+    until: str = Query(...),
+    session: Session = Depends(require_auth),
+):
+    result = await engine.modify_labels(uid, folder, ["Snoozed"], "add")
+    return JSONResponse(
+        {"success": True, "message": f"Snoozed until {until}", "snooze_time": until}
+    )
+
+
+@router.post("/remind/{folder}/{uid}")
+async def remind_email(
+    folder: str,
+    uid: int,
+    when: str = Query(...),
+    session: Session = Depends(require_auth),
+):
+    result = await engine.modify_labels(uid, folder, ["Reminder"], "add")
+    return JSONResponse(
+        {"success": True, "message": f"Reminder set for {when}", "reminder_time": when}
+    )

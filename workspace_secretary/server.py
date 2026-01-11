@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Optional, cast
 
 from mcp.server.fastmcp import FastMCP
-
+from mcp.server.fastmcp.auth import SecretAuthSettings
 from workspace_secretary.config import ServerConfig, load_config
 from workspace_secretary.engine.database import DatabaseInterface, create_database
 from workspace_secretary.engine_client import EngineClient, get_engine_client
@@ -18,6 +18,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("workspace_secretary")
 
+STATIC_TOKEN = "your-very-secure-static-token"
+
+async def verify_static_token(token: str) -> bool:
+    return token == STATIC_TOKEN
 
 class MCPState:
     def __init__(self):

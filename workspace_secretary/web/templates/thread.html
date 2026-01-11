@@ -64,23 +64,54 @@
                          class="absolute right-0 mt-2 w-48 bg-gray-900 border border-gray-700 rounded-md shadow-lg z-10">
                         <button hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/All Mail"
                                 hx-swap="none"
-                                hx-on::after-request="window.location.href='/inbox'"
+                                hx-on::after-request="window.showToast('Email archived', 'success'); setTimeout(() => window.location.href='/inbox', 1000);"
                                 class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
                             📥 Archive
                         </button>
-                        <button @click="deletedUid = '{{ uid }}'; deletedFolder = '{{ folder }}'"
-                                hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/Trash"
+                        <button hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/Trash"
                                 hx-swap="none"
-                                hx-on::after-request="window.showUndoToast('Email deleted', deletedUid, deletedFolder, '[Gmail]/Trash')"
+                                hx-on::after-request="window.showToast('Email deleted', 'success'); setTimeout(() => window.location.href='/inbox', 1000);"
                                 class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
                             🗑️ Delete
                         </button>
-                        <button hx-post="/api/email/move/{{ folder }}/{{ uid }}?destination=[Gmail]/Spam"
+                        <button hx-post="/api/email/spam/{{ folder }}/{{ uid }}"
                                 hx-swap="none"
-                                hx-on::after-request="window.location.href='/inbox'"
+                                hx-on::after-request="window.showToast('Marked as spam', 'success'); setTimeout(() => window.location.href='/inbox', 1000);"
                                 class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
-                            ⚠️ Spam
+                            ⚠️ Mark as Spam
                         </button>
+                        <button hx-post="/api/email/mute/{{ folder }}/{{ uid }}"
+                                hx-swap="none"
+                                hx-on::after-request="window.showToast('Thread muted', 'success'); showActions = false;"
+                                class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
+                            🔇 Mute Thread
+                        </button>
+                        <button @click="showActions = false; $refs.snoozeInput.showPicker()"
+                                class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
+                            ⏰ Snooze
+                        </button>
+                        <input type="datetime-local" x-ref="snoozeInput" class="hidden"
+                               @change="
+                                   const until = $event.target.value;
+                                   fetch('/api/email/snooze/{{ folder }}/{{ uid }}?until=' + encodeURIComponent(until), {method: 'POST'})
+                                       .then(r => r.json())
+                                       .then(data => {
+                                           window.showToast('Snoozed until ' + new Date(until).toLocaleString(), 'success');
+                                       });
+                               ">
+                        <button @click="showActions = false; $refs.reminderInput.showPicker()"
+                                class="w-full px-4 py-3 text-left text-sm text-gray-300 hover:bg-gray-800 touch-manipulation">
+                            🔔 Remind Me
+                        </button>
+                        <input type="datetime-local" x-ref="reminderInput" class="hidden"
+                               @change="
+                                   const when = $event.target.value;
+                                   fetch('/api/email/remind/{{ folder }}/{{ uid }}?when=' + encodeURIComponent(when), {method: 'POST'})
+                                       .then(r => r.json())
+                                       .then(data => {
+                                           window.showToast('Reminder set for ' + new Date(when).toLocaleString(), 'success');
+                                       });
+                               ">
                     </div>
                 </div>
             </div>

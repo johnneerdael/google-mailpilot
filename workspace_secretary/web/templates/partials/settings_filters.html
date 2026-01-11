@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Filters & Rules - Settings{% endblock %}
+
+{% block content %}
+<div class="min-h-screen bg-black text-white p-4">
+    <div class="max-w-4xl mx-auto">
+        <div class="mb-6">
+            <a href="/settings" class="text-primary hover:underline">← Back to Settings</a>
+            <h1 class="text-2xl font-bold mt-2">Filters & Rules</h1>
+        </div>
+
+        <div class="bg-gray-900 rounded-lg border border-gray-800 p-4 mb-4">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold">Email Filters</h2>
+                <button class="px-4 py-2 bg-primary text-white rounded hover:bg-primary/90"
+                        @click="$refs.newFilterDialog.showModal()">
+                    + New Filter
+                </button>
+            </div>
+
+            <div class="space-y-2">
+                <div class="bg-gray-800 rounded p-4 flex items-center justify-between">
+                    <div class="flex-1">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="font-medium">Auto-archive newsletters</span>
+                            <span class="px-2 py-0.5 bg-green-900 text-green-200 text-xs rounded">Enabled</span>
+                        </div>
+                        <div class="text-sm text-gray-400">
+                            <span class="text-gray-500">If:</span> from contains "newsletter" 
+                            <span class="text-gray-500 ml-2">Then:</span> archive, mark as read
+                        </div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded">Edit</button>
+                        <button class="px-3 py-1 text-sm bg-gray-700 hover:bg-gray-600 rounded">Delete</button>
+                    </div>
+                </div>
+
+                <div class="text-center text-gray-500 text-sm py-8">
+                    No custom filters yet. Click "New Filter" to create one.
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-blue-900/20 border border-blue-700/50 rounded-lg p-4 text-sm text-blue-200">
+            <strong>Note:</strong> Filter backend implementation is pending. This UI shows the planned interface.
+        </div>
+    </div>
+
+    <dialog x-ref="newFilterDialog" class="bg-gray-900 text-white rounded-lg p-0 border border-gray-700 w-full max-w-md">
+        <div class="p-4 border-b border-gray-800">
+            <h3 class="text-lg font-semibold">Create New Filter</h3>
+        </div>
+        <form method="dialog" class="p-4 space-y-4">
+            <div>
+                <label class="block text-sm font-medium mb-1">Filter Name</label>
+                <input type="text" class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" placeholder="My filter">
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">Conditions</label>
+                <select class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 mb-2">
+                    <option>From contains</option>
+                    <option>Subject contains</option>
+                    <option>To contains</option>
+                    <option>Has attachment</option>
+                </select>
+                <input type="text" class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2" placeholder="Value">
+            </div>
+            <div>
+                <label class="block text-sm font-medium mb-1">Actions</label>
+                <div class="space-y-2">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" class="rounded bg-gray-800 border-gray-700">
+                        <span class="text-sm">Mark as read</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" class="rounded bg-gray-800 border-gray-700">
+                        <span class="text-sm">Archive</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" class="rounded bg-gray-800 border-gray-700">
+                        <span class="text-sm">Apply label</span>
+                    </label>
+                </div>
+            </div>
+            <div class="flex gap-2 justify-end pt-4">
+                <button type="button" @click="$refs.newFilterDialog.close()" class="px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded">Cancel</button>
+                <button type="submit" class="px-4 py-2 bg-primary hover:bg-primary/90 rounded">Create Filter</button>
+            </div>
+        </form>
+    </dialog>
+</div>
+{% endblock %}

@@ -25,6 +25,46 @@
         .email-content img { max-width: 100%; height: auto; }
         .email-content a { color: #60a5fa; text-decoration: underline; }
     </style>
+    <script>
+        window.toastContainer = null;
+        window.showToast = function(message, type = 'info', duration = 5000, onUndo = null) {
+            if (!window.toastContainer) {
+                window.toastContainer = document.createElement('div');
+                window.toastContainer.className = 'fixed bottom-4 right-4 z-50 space-y-2';
+                document.body.appendChild(window.toastContainer);
+            }
+            
+            const toast = document.createElement('div');
+            const colors = {
+                success: 'bg-green-900 border-green-700 text-green-200',
+                error: 'bg-red-900 border-red-700 text-red-200',
+                info: 'bg-blue-900 border-blue-700 text-blue-200',
+                warning: 'bg-yellow-900 border-yellow-700 text-yellow-200'
+            };
+            
+            toast.className = `${colors[type]} border rounded-lg px-4 py-3 shadow-lg flex items-center gap-3 min-w-[300px]`;
+            toast.innerHTML = `
+                <span class="flex-1">${message}</span>
+                ${onUndo ? '<button class="px-2 py-1 text-sm bg-white/20 hover:bg-white/30 rounded">Undo</button>' : ''}
+                <button class="text-xl leading-none hover:opacity-70">×</button>
+            `;
+            
+            if (onUndo) {
+                toast.querySelector('button:first-of-type').onclick = () => {
+                    onUndo();
+                    toast.remove();
+                };
+            }
+            
+            toast.querySelector('button:last-of-type').onclick = () => toast.remove();
+            
+            window.toastContainer.appendChild(toast);
+            
+            if (duration > 0) {
+                setTimeout(() => toast.remove(), duration);
+            }
+        };
+    </script>
 </head>
 <body class="h-full bg-gray-950 text-gray-100" x-data="{ darkMode: {% if theme == 'system' %}localStorage.getItem('darkMode') !== 'false'{% elif theme == 'dark' %}true{% else %}false{% endif %} }" x-init="if(!darkMode) document.documentElement.classList.remove('dark'); else document.documentElement.classList.add('dark')" :class="{ 'bg-gray-50 text-gray-900': !darkMode, 'bg-gray-950 text-gray-100': darkMode }">
     <div class="min-h-full">
