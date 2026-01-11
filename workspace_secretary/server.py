@@ -112,32 +112,8 @@ def create_server(
     if not config:
         raise RuntimeError("Failed to load configuration")
 
-    token_verifier = None
-
-    if config.bearer_auth.enabled and config.bearer_auth.token:
-        from mcp.server.auth.provider import AccessToken, TokenVerifier
-
-        expected_token = config.bearer_auth.token
-
-        class SimpleTokenVerifier(TokenVerifier):
-            async def verify_token(self, token: str) -> AccessToken | None:
-                # Remove 'Bearer ' prefix if the client sends the full header
-                clean_token = (
-                    token.replace("Bearer ", "")
-                    if token.startswith("Bearer ")
-                    else token
-                )
-
-                if clean_token == expected_token:
-                    return AccessToken(
-                        token=clean_token,
-                        client_id="secretary-client",
-                        scopes=[],
-                    )
-                return None
-
-        token_verifier = SimpleTokenVerifier()
-        logger.info("Bearer authentication configured from config file")
+    # Authentication removed - handled by reverse proxy (Caddy)
+    logger.info("MCP server authentication disabled (use reverse proxy for auth)")
 
     server = FastMCP(
         "Secretary",
@@ -145,7 +121,6 @@ def create_server(
         lifespan=server_lifespan,
         host=host,
         port=port,
-        token_verifier=token_verifier,
     )
 
     _register_tools(server, config)

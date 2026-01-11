@@ -1,6 +1,8 @@
 services:
   workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-mcp:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: workspace-secretary
     restart: unless-stopped
     ports:
@@ -9,4 +11,3 @@ services:
       - ./config:/app/config
     environment:
       - LOG_LEVEL=INFO
-    command: ["--config", "/app/config/config.yaml", "--transport", "http", "--host", "0.0.0.0", "--port", "8000"]
