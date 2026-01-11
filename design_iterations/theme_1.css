@@ -13,6 +13,10 @@
     --text-muted: oklch(65% 0.02 260);
     
     --border-subtle: oklch(35% 0.02 260 / 0.3);
+    
+    --touch-target-min: 48px;
+    --touch-spacing: 12px;
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   }
 
   .light {
@@ -30,21 +34,72 @@
   .btn-primary {
     background-color: oklch(var(--color-primary));
     color: white;
+    min-height: var(--touch-target-min);
     @apply px-4 py-2 rounded-lg font-medium transition-all duration-200 hover:brightness-110 active:scale-95 shadow-lg shadow-blue-500/20;
   }
   
-  .card-settings {
+  .card-settings, .card-mobile {
     background-color: var(--bg-card);
     border: 1px solid var(--border-subtle);
     @apply p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow duration-300;
+  }
+
+  .nav-bottom-item {
+    @apply flex flex-col items-center justify-center flex-1 h-full text-zinc-400 transition-colors duration-200;
+  }
+  
+  .nav-bottom-item.active {
+    color: oklch(var(--color-primary));
   }
   
   .input-field {
     background-color: var(--bg-surface);
     border: 1px solid var(--border-subtle);
     color: var(--text-primary);
+    min-height: var(--touch-target-min);
     @apply w-full px-4 py-2 rounded-lg focus:ring-2 focus:ring-blue-500/50 outline-none transition-all;
   }
+
+  .swipe-row-container {
+    @apply relative overflow-hidden bg-zinc-900;
+  }
+
+  .swipe-row-content {
+    @apply relative z-10 bg-zinc-900 transition-transform duration-200 ease-out;
+    touch-action: pan-y;
+  }
+
+  .swipe-action-left, .swipe-action-right {
+    @apply absolute inset-0 flex items-center px-6 text-white font-bold;
+  }
+
+  .swipe-action-left {
+    background-color: oklch(60% 0.15 150);
+    @apply justify-start;
+  }
+
+  .swipe-action-right {
+    background-color: oklch(55% 0.2 30);
+    @apply justify-end;
+  }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes slideInBottom {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+.animate-slide-in-right {
+  animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+.animate-slide-in-bottom {
+  animation: slideInBottom 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
 
 @keyframes slideUp {
