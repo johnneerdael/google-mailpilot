@@ -248,6 +248,65 @@ calendar:
 
 **Default**: Calendar tools disabled unless explicitly enabled.
 
+### Web UI Configuration
+
+Configure the optional web interface:
+
+```yaml
+web:
+  theme: dark  # or "light"
+  
+  auth:
+    method: password  # "password" or "none"
+    password_hash: "$argon2id$v=19$m=65536,t=3,p=4$..."
+    session_secret: "your-random-secret-here"
+    session_expiry_hours: 24
+```
+
+**Fields:**
+- `theme`: UI theme (`dark` or `light`)
+- `auth.method`: Authentication method
+  - `password`: Require password login
+  - `none`: No authentication (local development only)
+- `auth.password_hash`: Argon2 or bcrypt hash of your password
+- `auth.session_secret`: Random string for session encryption
+- `auth.session_expiry_hours`: Session timeout in hours
+
+**Generating a password hash:**
+
+::: code-group
+```bash [Argon2 (recommended)]
+python -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('your-password-here'))"
+```
+
+```bash [Bcrypt]
+python -c "import bcrypt; print(bcrypt.hashpw(b'your-password-here', bcrypt.gensalt()).decode())"
+```
+
+```bash [Docker container]
+docker exec -it workspace-secretary python -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('your-password-here'))"
+```
+:::
+
+**Generating session secret:**
+
+```bash
+# macOS/Linux
+uuidgen
+
+# Or use OpenSSL
+openssl rand -hex 32
+```
+
+::: warning Login Credentials
+When logging into the web UI, enter your **plaintext password** (the one you used to generate the hash), NOT the hash itself.
+
+- ✅ Login with: `your-password-here` (what you hashed)
+- ❌ Don't use: `$argon2id$v=19$m=65536...` (the hash)
+:::
+
+See [Web UI Guide](./web-ui) for complete setup instructions.
+
 ## Environment Variables
 
 All fields can be overridden via environment variables:

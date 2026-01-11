@@ -197,21 +197,120 @@ services:
     command: ["web", "--config", "/app/config/config.yaml", "--port", "5000"]
 ```
 
-## Security Considerations
+## Authentication
 
-The web UI is designed for local/trusted network use:
+### Built-in Password Authentication
 
-- **No authentication** - Anyone with network access can view emails
-- **Session-based** - No persistent login
-- **CSRF protection** - Forms include CSRF tokens
+The web UI supports optional password-based authentication configured via `config.yaml`:
 
-For production deployment:
+```yaml
+web:
+  theme: dark  # or light
+  
+  auth:
+    method: password  # or "none" for no authentication
+    password_hash: "$argon2id$v=19$m=65536,t=3,p=4$..."  # See below
+    session_secret: "your-random-secret-here"
+    session_expiry_hours: 24
+```
 
-1. **Reverse proxy** - Use nginx/Caddy with authentication
-2. **HTTPS** - Always use TLS in production
-3. **Network isolation** - Don't expose directly to internet
+#### Generating a Password Hash
 
-Example nginx configuration:
+**Step 1: Choose your plaintext password** (e.g., `mySecurePassword123`)
+
+**Step 2: Generate the hash**
+
+::: code-group
+```bash [Using argon2 (recommended)]
+# Install argon2-cffi if needed
+pip install argon2-cffi
+
+# Generate hash
+python -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('mySecurePassword123'))"
+```
+
+```bash [Using bcrypt]
+# Install bcrypt if needed
+pip install bcrypt
+
+# Generate hash
+python -c "import bcrypt; print(bcrypt.hashpw(b'mySecurePassword123', bcrypt.gensalt()).decode())"
+```
+
+```bash [Using Docker container]
+# If you have the container running
+docker exec -it workspace-secretary python -c "from argon2 import PasswordHasher; print(PasswordHasher().hash('mySecurePassword123'))"
+```
+:::
+
+**Step 3: Add hash to config.yaml**
+
+Copy the entire hash output (including the `$argon2id$...` prefix) into your config:
+
+```yaml
+web:
+  auth:
+    method: password
+    password_hash: "$argon2id$v=19$m=65536,t=3,p=4$abcd1234..."
+    session_secret: "generate-with-uuidgen-or-openssl-rand"
+    session_expiry_hours: 24
+```
+
+**Step 4: Generate session secret**
+
+::: code-group
+```bash [macOS]
+uuidgen
+```
+
+```bash [Linux]
+uuidgen
+# Or use OpenSSL
+openssl rand -hex 32
+```
+
+```powershell [Windows]
+[guid]::NewGuid().ToString()
+```
+:::
+
+**Step 5: Restart the web server**
+
+```bash
+docker compose restart workspace-secretary
+```
+
+#### Logging In
+
+1. Navigate to `http://localhost:5000/auth/login`
+2. **Enter your plaintext password** (NOT the hash)
+   - If you hashed `mySecurePassword123`, type `mySecurePassword123`
+3. Click "Login"
+
+::: warning Common Mistake
+**Enter the plaintext password you used to generate the hash**, not the hash itself.
+
+- ✅ Login with: `mySecurePassword123` (what you typed into the hash generator)
+- ❌ Don't login with: `$argon2id$v=19$m=65536...` (the hash)
+:::
+
+#### No Authentication Mode
+
+For local development only, you can disable authentication:
+
+```yaml
+web:
+  auth:
+    method: none  # No login required
+```
+
+⚠️ **Security Warning**: Anyone who can reach your web UI port can access your emails. Only use `method: none` for local development on trusted networks.
+
+### Alternative: Reverse Proxy Authentication
+
+For production deployment, use a reverse proxy with authentication:
+
+#### Example: Nginx + Basic Auth
 
 ```nginx
 server {
@@ -231,6 +330,29 @@ server {
     }
 }
 ```
+
+Generate `.htpasswd`:
+```bash
+htpasswd -c /etc/nginx/.htpasswd yourusername
+```
+
+## Security Considerations
+
+The web UI security depends on your authentication method:
+
+| Method | Security Level | Use Case |
+|--------|---------------|----------|
+| Built-in password auth | Medium | Personal use, trusted network |
+| Reverse proxy (nginx/Caddy) | High | Production deployment |
+| No authentication | Low | Local development only |
+
+For production deployment:
+
+1. **Enable authentication** - Use built-in or reverse proxy auth
+2. **HTTPS** - Always use TLS in production
+3. **Network isolation** - Don't expose directly to internet
+4. **Strong passwords** - Use long, random passwords
+5. **Session expiry** - Configure reasonable session timeout
 
 ## Next Steps
 
