@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en" x-data="{ 
+    darkMode: true,
+    syncing: true,
+    showAuditLog: false,
+    showConfirmDelete: false,
+    imagesBlocked: true,
+    isSuspicious: true,
+    lastSynced: '2m ago'
+}" :class="{ 'dark': darkMode, 'light': !darkMode }">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security & Sync | Secretary</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="stylesheet" href="theme_1.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: 'oklch(65% 0.2 260)',
+                        danger: 'oklch(55% 0.2 30)',
+                        warning: 'oklch(75% 0.15 70)',
+                        success: 'oklch(65% 0.15 150)',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+        body { 
+            background-color: var(--bg-main); 
+            color: var(--text-primary);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+    <div class="max-w-4xl mx-auto">
+        <header class="flex items-center justify-between mb-8 border-b border-zinc-800 pb-6">
+            <div class="flex items-center gap-4">
+                <a href="/" class="p-2 rounded-full hover:bg-white/10 transition-colors">
+                    <i data-lucide="arrow-left" class="w-6 h-6"></i>
+                </a>
+                <h1 class="text-2xl font-bold">Email Security & Sync</h1>
+            </div>
+            
+            <div class="flex items-center gap-4 bg-zinc-900/50 px-4 py-2 rounded-full border border-zinc-800">
+                <div class="flex items-center gap-2">
+                    <div :class="syncing ? 'animate-pulse-sync bg-blue-500' : 'bg-green-500'" class="w-2.5 h-2.5 rounded-full"></div>
+                    <span class="text-sm font-medium" x-text="syncing ? 'Syncing...' : 'Synced'"></span>
+                </div>
+                <div class="h-4 w-px bg-zinc-700"></div>
+                <button @click="showAuditLog = true" class="text-xs text-zinc-400 hover:text-white flex items-center gap-1.5 transition-colors">
+                    <i data-lucide="history" class="w-3.5 h-3.5"></i>
+                    Last sync: <span x-text="lastSynced"></span>
+                </button>
+            </div>
+        </header>
+
+        <div class="space-y-6">
+            <div x-show="isSuspicious" 
+                 x-transition:enter="transition ease-out duration-300 transform"
+                 x-transition:enter-start="-translate-y-4 opacity-0"
+                 x-transition:enter-end="translate-y-0 opacity-100"
+                 class="alert-banner alert-danger">
+                <i data-lucide="shield-alert" class="w-6 h-6 shrink-0 mt-0.5"></i>
+                <div>
+                    <h3 class="font-bold mb-1">Potential Phishing Warning</h3>
+                    <p class="text-sm opacity-90">This sender's identity could not be verified by DMARC/SPF. Be cautious with links and attachments. The display name might be impersonating a known contact.</p>
+                </div>
+                <button @click="isSuspicious = false" class="ml-auto p-1 hover:bg-white/10 rounded">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            </div>
+
+            <section class="card-settings">
+                <div class="flex items-center justify-between mb-6 border-b border-zinc-800 pb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center">
+                            <i data-lucide="user" class="w-6 h-6 text-zinc-400"></i>
+                        </div>
+                        <div>
+                            <h2 class="font-bold">Microsoft Account Support</h2>
+                            <p class="text-xs text-zinc-500">support-security@microsoft-verify.com</p>
+                        </div>
+                    </div>
+                    <span class="px-3 py-1 bg-zinc-800 rounded-full text-[10px] font-bold uppercase tracking-wider text-zinc-400">External</span>
+                </div>
+
+                <div x-show="imagesBlocked" class="mb-6 p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <i data-lucide="image-off" class="w-5 h-5 text-blue-400"></i>
+                        <p class="text-sm text-zinc-300">Remote images were blocked to protect your privacy.</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button @click="imagesBlocked = false" class="px-3 py-1.5 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">
+                            Load Images
+                        </button>
+                        <button class="px-3 py-1.5 text-xs font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg transition-colors">
+                            Always Allow
+                        </button>
+                    </div>
+                </div>
+
+                <div class="prose prose-invert max-w-none text-zinc-300">
+                    <p class="mb-4">Hello User,</p>
+                    <p class="mb-4">We've detected an unusual sign-in attempt from a new location (Lagos, Nigeria). To protect your account, we have temporarily suspended access until you verify your identity.</p>
+                    <div class="p-8 bg-zinc-900 border border-zinc-800 rounded-xl text-center mb-6">
+                        <div x-show="imagesBlocked" class="w-32 h-32 bg-zinc-800 mx-auto rounded-lg flex items-center justify-center mb-4 text-zinc-600">
+                            <i data-lucide="image" class="w-8 h-8"></i>
+                        </div>
+                        <p class="font-bold mb-4">Verification Required</p>
+                        <button class="btn-primary w-full max-w-xs">Verify Account Now</button>
+                    </div>
+                    <p class="text-sm text-zinc-500">If this wasn't you, ignore this email. We will delete your account in 24 hours.</p>
+                </div>
+
+                <div class="mt-8 pt-6 border-t border-zinc-800 flex justify-between items-center">
+                    <div class="flex gap-2">
+                        <button class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-medium transition-colors">Reply</button>
+                        <button class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg text-sm font-medium transition-colors">Forward</button>
+                    </div>
+                    <button @click="showConfirmDelete = true" class="px-4 py-2 text-danger hover:bg-danger/10 rounded-lg text-sm font-medium transition-colors">
+                        Delete Forever
+                    </button>
+                </div>
+            </section>
+        </div>
+
+        <div x-show="showAuditLog" 
+             class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0"
+             x-transition:enter-end="opacity-100"
+             x-cloak>
+            <div class="card-settings max-w-lg w-full max-h-[80vh] flex flex-col overflow-hidden animate-slide-up" @click.away="showAuditLog = false">
+                <div class="flex items-center justify-between mb-6 shrink-0">
+                    <h2 class="text-xl font-bold flex items-center gap-2">
+                        <i data-lucide="scroll-text" class="w-5 h-5 text-zinc-400"></i>
+                        Activity Log
+                    </h2>
+                    <button @click="showAuditLog = false" class="p-2 hover:bg-zinc-800 rounded-full transition-colors">
+                        <i data-lucide="x" class="w-5 h-5"></i>
+                    </button>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto pr-2 space-y-4 font-mono text-xs">
+                    <div class="flex gap-4 p-3 bg-zinc-900/50 rounded-lg border border-zinc-800">
+                        <span class="text-zinc-500 shrink-0">10:45:21</span>
+                        <div>
+                            <p class="text-zinc-300 font-bold mb-1">IMAP_SYNC_COMPLETE</p>
+                            <p class="text-zinc-500">Synced 12 new messages from Inbox. Storage usage: 4.2GB / 15GB.</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-4 p-3 bg-zinc-900/50 rounded-lg border border-zinc-800">
+                        <span class="text-zinc-500 shrink-0">10:42:05</span>
+                        <div>
+                            <p class="text-zinc-300 font-bold mb-1">EMAIL_ARCHIVED</p>
+                            <p class="text-zinc-500">Thread ID: 45291-X moved to Secretary/Processed.</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-4 p-3 bg-zinc-900/50 rounded-lg border border-zinc-800">
+                        <span class="text-zinc-500 shrink-0">10:30:11</span>
+                        <div>
+                            <p class="text-zinc-300 font-bold mb-1">AI_DRAFT_CREATED</p>
+                            <p class="text-zinc-500">Drafted reply for "Meeting Invitation" (Model: GPT-4).</p>
+                        </div>
+                    </div>
+                    <div class="flex gap-4 p-3 bg-zinc-900/50 rounded-lg border border-zinc-800">
+                        <span class="text-zinc-500 shrink-0">09:15:00</span>
+                        <div>
+                            <p class="text-danger font-bold mb-1">SECURITY_AUTH_SUCCESS</p>
+                            <p class="text-zinc-500">Successful login from 192.168.1.45 (Local). Auth Method: JWT+Cookie.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-6 pt-4 border-t border-zinc-800 flex justify-end shrink-0">
+                    <button @click="showAuditLog = false" class="px-6 py-2 bg-zinc-800 hover:bg-zinc-700 rounded-lg font-medium transition-colors">Close</button>
+                </div>
+            </div>
+        </div>
+
+        <div x-show="showConfirmDelete" 
+             class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             x-cloak>
+            <div class="card-settings max-w-sm w-full text-center" @click.away="showConfirmDelete = false">
+                <div class="w-16 h-16 bg-danger/10 rounded-full flex items-center justify-center mx-auto mb-6 text-danger">
+                    <i data-lucide="trash-2" class="w-8 h-8"></i>
+                </div>
+                <h2 class="text-xl font-bold mb-2 text-zinc-100">Permanently Delete?</h2>
+                <p class="text-zinc-400 text-sm mb-8">This action will remove the message from your IMAP server forever. This cannot be undone.</p>
+                
+                <div class="grid grid-cols-2 gap-4">
+                    <button @click="showConfirmDelete = false" class="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 rounded-xl font-bold transition-all">Cancel</button>
+                    <button @click="showConfirmDelete = false; syncing = true; lastSynced = 'Just now'" class="px-6 py-3 bg-danger text-white rounded-xl font-bold shadow-lg shadow-red-500/20 active:scale-95 transition-all">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

@@ -14,6 +14,11 @@
     
     --border-subtle: oklch(35% 0.02 260 / 0.3);
     
+    --color-danger: 55% 0.2 30;
+    --color-warning: 75% 0.15 70;
+    --color-success: 65% 0.15 150;
+    --color-info: 65% 0.2 260;
+
     --touch-target-min: 48px;
     --touch-spacing: 12px;
     --safe-area-bottom: env(safe-area-inset-bottom, 0px);
@@ -118,6 +123,32 @@
 
 .animate-fade-in {
   animation: fadeIn 0.3s ease-in forwards;
+}
+
+@keyframes pulse-sync {
+  0% { opacity: 0.6; transform: scale(0.95); }
+  50% { opacity: 1; transform: scale(1.05); }
+  100% { opacity: 0.6; transform: scale(0.95); }
+}
+
+.animate-pulse-sync {
+  animation: pulse-sync 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.alert-banner {
+  @apply px-4 py-3 rounded-lg border-l-4 mb-4 flex items-start gap-3;
+}
+
+.alert-danger {
+  background-color: oklch(var(--color-danger) / 0.1);
+  border-color: oklch(var(--color-danger));
+  color: oklch(var(--color-danger));
+}
+
+.alert-warning {
+  background-color: oklch(var(--color-warning) / 0.1);
+  border-color: oklch(var(--color-warning));
+  color: oklch(var(--color-warning));
 }
 
 .hover-lift {
