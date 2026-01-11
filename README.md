@@ -1,8 +1,29 @@
 # Gmail Secretary
 
-[![Version](https://img.shields.io/badge/version-4.3.0-blue.svg)](https://github.com/johnneerdael/gmail-secretary-map/releases)
+[![Version](https://img.shields.io/badge/version-0.9.0--rc1-orange.svg)](https://github.com/johnneerdael/gmail-secretary-map/releases)
+[![Status](https://img.shields.io/badge/status-Public%20Alpha-orange)](https://github.com/johnneerdael/gmail-secretary-map)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![RFC Compliant](https://img.shields.io/badge/RFC-IMAP4rev1%20%7C%20CONDSTORE%20%7C%20IDLE-green.svg)](#-rfc-compliance)
+
+**The AI-Native Email Client (MCP Server)**
+
+Built for LLMs that need to read, search, triage, and respond to email autonomously. Not just a wrapper, but a full-featured IMAP client with `CONDSTORE` sync, `IDLE` push, and local Vector/SQL caching.
+
+> **⚠️ Alpha Notice:** This project is currently in active validation. The **Sync Engine** is production-stable (tested on 25k+ emails), but the **Write Operations** (sending, calendar edits) are currently enforced in "Draft-Only" mode for safety.
+
+---
+
+## 🚦 Stability Matrix
+
+We believe in transparency. Here is the current readiness of our stack:
+
+| Component | Status | Stability Notes |
+| :--- | :--- | :--- |
+| **IMAP Sync Engine** | 🟢 **Stable** | RFC-compliant, IDLE support, tested on >24k emails. |
+| **Read Operations** | 🟢 **Stable** | Search, Threading (X-GM-THRID), and Summarization work perfectly. |
+| **Write Operations** | 🟡 **Beta** | Draft creation is stable. **Auto-sending is currently disabled** via the [Safety Interceptor](#safety). |
+| **Web Dashboard** | 🟠 **Alpha** | Early preview. UI may change rapidly. |
+
+---
 
 **A Gmail IMAP/SMTP Client for AI Agents with Calendar Integration**
 
