@@ -22,6 +22,7 @@ from urllib.parse import urlencode
 
 import httpx
 from fastapi import Depends, HTTPException, Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.routing import APIRouter
 
@@ -38,6 +39,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 # Session cookie name
 SESSION_COOKIE = "secretary_session"
+CSRF_COOKIE = "secretary_csrf"
+CSRF_HEADER = "X-CSRF-Token"
 SESSION_MAX_AGE = 86400  # 24 hours default
 
 
@@ -50,6 +53,7 @@ class Session:
     name: Optional[str] = None
     created_at: float = 0.0
     expires_at: float = 0.0
+    csrf_token: Optional[str] = None
 
     def is_valid(self) -> bool:
         return time.time() < self.expires_at
@@ -62,6 +66,7 @@ class Session:
                 "name": self.name,
                 "created_at": self.created_at,
                 "expires_at": self.expires_at,
+                "csrf_token": self.csrf_token,
             }
         )
 
@@ -74,6 +79,7 @@ class Session:
             name=d.get("name"),
             created_at=d.get("created_at", 0.0),
             expires_at=d.get("expires_at", 0.0),
+            csrf_token=d.get("csrf_token"),
         )
 
 
@@ -113,6 +119,7 @@ class AuthManager:
         user_id: str,
         email: Optional[str] = None,
         name: Optional[str] = None,
+        csrf_token: Optional[str] = None,
     ) -> str:
         """Create a signed session token."""
         now = time.time()
@@ -122,6 +129,7 @@ class AuthManager:
             name=name,
             created_at=now,
             expires_at=now + self.session_expiry,
+            csrf_token=csrf_token,
         )
         payload = session.to_json()
         signature = hmac.new(
@@ -320,6 +328,26 @@ def get_session(request: Request) -> Optional[Session]:
     return auth_mgr.verify_session(token)
 
 
+class CSRFMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        method = request.method.upper()
+        if method in {"POST", "PUT", "PATCH", "DELETE"}:
+            session = get_session(request)
+            if session:
+                expected = session.csrf_token or ""
+                provided = request.headers.get(CSRF_HEADER) or ""
+                if (
+                    not expected
+                    or not provided
+                    or not hmac.compare_digest(provided, expected)
+                ):
+                    raise HTTPException(
+                        status_code=403, detail="CSRF token missing or invalid"
+                    )
+
+        return await call_next(request)
+
+
 async def require_auth(request: Request) -> Session:
     """Dependency that requires authentication."""
     auth_mgr = get_auth_manager()
@@ -432,14 +460,24 @@ async def login_submit(request: Request):
     next_url = form.get("next", "/")
 
     if auth_mgr.verify_password(str(password)):
-        # Create session
-        token = auth_mgr.create_session(user_id="admin", email=None, name="Admin")
+        csrf_token = secrets.token_urlsafe(32)
+        token = auth_mgr.create_session(
+            user_id="admin", email=None, name="Admin", csrf_token=csrf_token
+        )
         response = RedirectResponse(url=str(next_url), status_code=303)
         response.set_cookie(
             SESSION_COOKIE,
             token,
             max_age=auth_mgr.session_expiry,
             httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+        )
+        response.set_cookie(
+            CSRF_COOKIE,
+            csrf_token,
+            max_age=auth_mgr.session_expiry,
+            httponly=False,
             samesite="lax",
             secure=request.url.scheme == "https",
         )
@@ -477,13 +515,24 @@ async def oidc_callback(
         redirect_uri = str(request.url_for("oidc_callback"))
         user_id, email, name = await auth_mgr.exchange_oidc_code(code, redirect_uri)
 
-        token = auth_mgr.create_session(user_id=user_id, email=email, name=name)
+        csrf_token = secrets.token_urlsafe(32)
+        token = auth_mgr.create_session(
+            user_id=user_id, email=email, name=name, csrf_token=csrf_token
+        )
         response = RedirectResponse(url="/", status_code=303)
         response.set_cookie(
             SESSION_COOKIE,
             token,
             max_age=auth_mgr.session_expiry,
             httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+        )
+        response.set_cookie(
+            CSRF_COOKIE,
+            csrf_token,
+            max_age=auth_mgr.session_expiry,
+            httponly=False,
             samesite="lax",
             secure=request.url.scheme == "https",
         )
@@ -498,6 +547,7 @@ async def logout(request: Request):
     """Log out and clear session."""
     response = RedirectResponse(url="/auth/login", status_code=303)
     response.delete_cookie(SESSION_COOKIE)
+    response.delete_cookie(CSRF_COOKIE)
     return response
 
 

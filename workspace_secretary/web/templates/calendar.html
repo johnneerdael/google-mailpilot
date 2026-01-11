@@ -25,6 +25,15 @@
         return hour >= 11 && hour < 22;
     }
 }">
+    {% if engine_error %}
+    <div class="bg-red-900/90 border border-red-700 text-red-100 px-4 py-3 rounded">
+        <div class="flex items-center gap-2">
+            <span>⚠️</span>
+            <span>{{ engine_error }}</span>
+        </div>
+    </div>
+    {% endif %}
+
     <div class="flex items-center justify-between flex-wrap gap-4">
         <div class="flex items-center space-x-2">
             <h1 class="text-xl font-bold">Calendar</h1>

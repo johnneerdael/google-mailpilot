@@ -6,6 +6,10 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
+import re
+from email.utils import parseaddr
+
+import idna
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -741,6 +745,89 @@ async def sync_emails_parallel():
         )
 
 
+def _parse_authentication_results(headers: dict[str, Any]) -> dict[str, Any]:
+    raw_values: list[str] = []
+    for k in ["Authentication-Results", "ARC-Authentication-Results", "Received-SPF"]:
+        v = headers.get(k)
+        if not v:
+            continue
+        if isinstance(v, list):
+            raw_values.extend([str(x) for x in v if x])
+        else:
+            raw_values.append(str(v))
+
+    combined = "\n".join(raw_values)
+    combined_l = combined.lower()
+
+    def _has_result(prefix: str, value: str) -> bool:
+        return bool(
+            re.search(rf"\b{re.escape(prefix)}\s*=\s*{re.escape(value)}\b", combined_l)
+        )
+
+    spf_pass = _has_result("spf", "pass") or _has_result("spf", "bestguesspass")
+    spf_fail = _has_result("spf", "fail") or _has_result("spf", "softfail")
+    dkim_pass = _has_result("dkim", "pass")
+    dkim_fail = _has_result("dkim", "fail")
+    dmarc_pass = _has_result("dmarc", "pass")
+    dmarc_fail = _has_result("dmarc", "fail")
+
+    return {
+        "auth_results_raw": combined or None,
+        "spf": "pass" if spf_pass else "fail" if spf_fail else "unknown",
+        "dkim": "pass" if dkim_pass else "fail" if dkim_fail else "unknown",
+        "dmarc": "pass" if dmarc_pass else "fail" if dmarc_fail else "unknown",
+    }
+
+
+def _extract_domain(addr: str) -> str:
+    _, email_addr = parseaddr(addr or "")
+    if "@" not in email_addr:
+        return ""
+    return email_addr.split("@", 1)[1].strip().lower()
+
+
+def _is_punycode_domain(domain: str) -> bool:
+    if not domain:
+        return False
+    try:
+        decoded = idna.decode(domain)
+        return decoded != domain
+    except Exception:
+        return "xn--" in domain
+
+
+def _sender_suspicion_signals(from_addr_raw: str, reply_to_raw: str) -> dict[str, Any]:
+    from_domain = _extract_domain(from_addr_raw)
+    reply_to_domain = _extract_domain(reply_to_raw)
+
+    reply_to_differs = bool(
+        reply_to_domain and from_domain and reply_to_domain != from_domain
+    )
+
+    display_name, parsed_addr = parseaddr(from_addr_raw)
+    display_name_l = (display_name or "").lower()
+    parsed_local = parsed_addr.split("@", 1)[0].lower() if "@" in parsed_addr else ""
+
+    display_name_mismatch = False
+    if display_name_l and parsed_local:
+        token = re.sub(r"[^a-z0-9]+", "", parsed_local)
+        if token and token not in re.sub(r"[^a-z0-9]+", "", display_name_l):
+            display_name_mismatch = True
+
+    punycode_domain = _is_punycode_domain(from_domain) or _is_punycode_domain(
+        reply_to_domain
+    )
+
+    return {
+        "reply_to_differs": reply_to_differs,
+        "display_name_mismatch": display_name_mismatch,
+        "punycode_domain": punycode_domain,
+        "is_suspicious_sender": bool(
+            reply_to_differs or display_name_mismatch or punycode_domain
+        ),
+    }
+
+
 def _email_to_db_params(email_obj: "Email", folder: str) -> dict[str, Any]:
     """Convert Email dataclass to database upsert parameters."""
     date_str = email_obj.date.isoformat() if email_obj.date else None
@@ -750,6 +837,20 @@ def _email_to_db_params(email_obj: "Email", folder: str) -> dict[str, Any]:
     gmail_thread_id = (
         int(email_obj.gmail_thread_id) if email_obj.gmail_thread_id else None
     )
+
+    headers = email_obj.headers or {}
+    if not isinstance(headers, dict):
+        headers = {}
+
+    auth = _parse_authentication_results(headers)
+
+    reply_to_raw = ""
+    reply_to_v = headers.get("Reply-To")
+    if reply_to_v:
+        reply_to_raw = str(reply_to_v)
+
+    from_addr_raw = str(email_obj.from_)
+    suspicious = _sender_suspicion_signals(from_addr_raw, reply_to_raw)
 
     return {
         "uid": email_obj.uid or 0,
@@ -778,6 +879,16 @@ def _email_to_db_params(email_obj: "Email", folder: str) -> dict[str, Any]:
         "gmail_labels": email_obj.gmail_labels,
         "has_attachments": email_obj.has_attachments,
         "attachment_filenames": email_obj.attachment_filenames,
+        "auth_results_raw": auth["auth_results_raw"],
+        "spf": auth["spf"],
+        "dkim": auth["dkim"],
+        "dmarc": auth["dmarc"],
+        "is_suspicious_sender": suspicious["is_suspicious_sender"],
+        "suspicious_sender_signals": {
+            "reply_to_differs": suspicious["reply_to_differs"],
+            "display_name_mismatch": suspicious["display_name_mismatch"],
+            "punycode_domain": suspicious["punycode_domain"],
+        },
     }
 
 
@@ -862,8 +973,8 @@ async def embed_specific_uids(folder: str, uids: list[int]) -> int:
         for email, result in zip(emails, results):
             if result.embedding:
                 state.database.upsert_embedding(
-                    email_uid=email["uid"],
-                    email_folder=folder,
+                    uid=email["uid"],
+                    folder=folder,
                     embedding=result.embedding,
                     model=result.model,
                     content_hash=result.content_hash,
@@ -1839,14 +1950,35 @@ async def freebusy_query(req: FreeBusyRequest):
 
 
 def run_engine():
-    if Path(SOCKET_PATH).exists():
-        Path(SOCKET_PATH).unlink()
+    import argparse
 
-    config = uvicorn.Config(
-        app,
-        uds=SOCKET_PATH,
-        log_level="info",
+    parser = argparse.ArgumentParser(description="Gmail Secretary Engine API")
+    parser.add_argument(
+        "--host", type=str, default=None, help="TCP host to bind to (e.g., 127.0.0.1)"
     )
+    parser.add_argument(
+        "--port", type=int, default=None, help="TCP port to bind to (e.g., 8001)"
+    )
+    args = parser.parse_args()
+
+    if args.host and args.port:
+        logger.info(f"Starting Engine API on TCP {args.host}:{args.port}")
+        config = uvicorn.Config(
+            app,
+            host=args.host,
+            port=args.port,
+            log_level="info",
+        )
+    else:
+        if Path(SOCKET_PATH).exists():
+            Path(SOCKET_PATH).unlink()
+        logger.info(f"Starting Engine API on Unix socket {SOCKET_PATH}")
+        config = uvicorn.Config(
+            app,
+            uds=SOCKET_PATH,
+            log_level="info",
+        )
+
     server = uvicorn.Server(config)
     server.run()
 

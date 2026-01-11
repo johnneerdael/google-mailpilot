@@ -48,19 +48,23 @@ async def calendar_view(
         time_min = week_start.strftime("%Y-%m-%dT00:00:00Z")
         time_max = week_end.strftime("%Y-%m-%dT23:59:59Z")
 
+    engine_error = None
     try:
         events_response = await engine.get_calendar_events(time_min, time_max)
         events = events_response.get("events", [])
-    except Exception:
+    except Exception as e:
         events = []
+        engine_error = f"Calendar service unavailable: {str(e)}"
 
     try:
         freebusy_response = await engine.freebusy_query(time_min, time_max)
         busy_slots = (
             freebusy_response.get("calendars", {}).get("primary", {}).get("busy", [])
         )
-    except Exception:
+    except Exception as e:
         busy_slots = []
+        if not engine_error:
+            engine_error = f"Calendar service unavailable: {str(e)}"
 
     context = {
         "request": request,
@@ -68,6 +72,7 @@ async def calendar_view(
         "events": events,
         "busy_slots": busy_slots,
         "now": now,
+        "engine_error": engine_error,
     }
 
     if view == "day":
@@ -499,5 +504,3 @@ async def book_meeting(
             },
             status_code=500,
         )
-    except Exception as e:
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)

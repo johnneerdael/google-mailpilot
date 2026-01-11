@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "workspace-secretary"
-version = "4.2.7"
+version = "4.3.0"
 description = "Gmail Secretary MCP server for interactive email and calendar processing"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -45,6 +45,9 @@ dependencies = [
     "pydantic>=2.0.0",
     "argon2-cffi>=23.1.0",
     "bcrypt>=4.0.0",
+    "psycopg[binary,pool]>=3.3.2",
+    "cohere>=5.20.1",
+    "google-genai>=1.57.0",
 ]
 
 [project.optional-dependencies]

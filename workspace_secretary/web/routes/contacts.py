@@ -2,7 +2,7 @@
 Contact extraction and management routes.
 """
 
-from fastapi import APIRouter, Request, Depends, Query
+from fastapi import APIRouter, Request, Depends, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -199,14 +199,9 @@ async def contact_detail_page(
     email: str,
     session: Session = Depends(require_auth),
 ):
-    """Contact detail page."""
     contact = get_contact_by_email(email)
     if not contact:
-        return templates.TemplateResponse(
-            "error.html",
-            {"request": request, "error": "Contact not found"},
-            status_code=404,
-        )
+        raise HTTPException(status_code=404, detail="Contact not found")
 
     interactions = get_contact_interactions(contact["id"], limit=100)
     notes = get_contact_notes(contact["id"])

@@ -20,6 +20,10 @@ def get_pool():
         from workspace_secretary.config import load_config
 
         config = load_config()
+        if not config.database or not config.database.postgres:
+            logger.error("PostgreSQL configuration is missing from config.yaml")
+            raise RuntimeError("PostgreSQL configuration is missing")
+
         db = config.database.postgres
 
         conninfo = f"host={db.host} port={db.port} dbname={db.database} user={db.user} password={db.password}"
@@ -455,7 +459,13 @@ def get_new_priority_emails(since, limit: int = 10) -> list[dict]:
                 return []
 
 
-def upsert_contact(email: str, display_name: str = None, first_name: str = None, last_name: str = None, organization: str = None):
+def upsert_contact(
+    email: str,
+    display_name: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    organization: str | None = None,
+):
     """Create or update a contact."""
     pool = get_pool()
     with pool.connection() as conn:
@@ -479,7 +489,15 @@ def upsert_contact(email: str, display_name: str = None, first_name: str = None,
             return result[0] if result else None
 
 
-def add_contact_interaction(contact_id: int, email_uid: int, email_folder: str, direction: str, subject: str, email_date: str, message_id: str = None):
+def add_contact_interaction(
+    contact_id: int,
+    email_uid: int,
+    email_folder: str,
+    direction: str,
+    subject: str,
+    email_date: str,
+    message_id: str = None,
+):
     """Record an interaction with a contact."""
     pool = get_pool()
     with pool.connection() as conn:
@@ -490,7 +508,15 @@ def add_contact_interaction(contact_id: int, email_uid: int, email_folder: str, 
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (contact_id, email_uid, email_folder, direction) DO NOTHING
                 """,
-                (contact_id, email_uid, email_folder, direction, subject, email_date, message_id),
+                (
+                    contact_id,
+                    email_uid,
+                    email_folder,
+                    direction,
+                    subject,
+                    email_date,
+                    message_id,
+                ),
             )
             cur.execute(
                 """
@@ -505,14 +531,20 @@ def add_contact_interaction(contact_id: int, email_uid: int, email_folder: str, 
             conn.commit()
 
 
-def get_all_contacts(limit: int = 100, offset: int = 0, search: str = None, sort_by: str = "last_email_date"):
+def get_all_contacts(
+    limit: int = 100,
+    offset: int = 0,
+    search: str | None = None,
+    sort_by: str = "last_email_date",
+):
     """Get all contacts with pagination and search."""
     from psycopg import sql
+
     pool = get_pool()
     valid_sorts = ["last_email_date", "email_count", "email", "display_name"]
     if sort_by not in valid_sorts:
         sort_by = "last_email_date"
-    
+
     with pool.connection() as conn:
         with conn.cursor(row_factory=dict_row) as cur:
             if search:

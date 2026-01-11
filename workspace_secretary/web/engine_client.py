@@ -16,7 +16,7 @@ _client: Optional[httpx.AsyncClient] = None
 
 
 def get_engine_url() -> str:
-    return os.environ.get("ENGINE_API_URL", "http://localhost:8000")
+    return os.environ.get("ENGINE_API_URL", "http://localhost:8001")
 
 
 ENGINE_URL = get_engine_url()

@@ -669,6 +669,142 @@ class WebConfig:
         )
 
 
+_last_loaded_config_path: Optional[Path] = None
+
+
+def get_last_loaded_config_path() -> Optional[Path]:
+    return _last_loaded_config_path
+
+
+def save_config(config: ServerConfig, config_path: Optional[str] = None) -> Path:
+    path: Optional[Path]
+    if config_path:
+        path = Path(config_path).expanduser()
+    else:
+        path = get_last_loaded_config_path()
+
+    if path is None:
+        raise RuntimeError("No config file path available for persistence")
+
+    data: Dict[str, Any] = {
+        "imap": {
+            "host": config.imap.host,
+            "port": config.imap.port,
+            "username": config.imap.username,
+            "password": config.imap.password or "",
+            "use_ssl": config.imap.use_ssl,
+        },
+        "timezone": config.timezone,
+        "working_hours": {
+            "start": config.working_hours.start,
+            "end": config.working_hours.end,
+            "workdays": config.working_hours.workdays,
+        },
+        "identity": {
+            "email": config.identity.email,
+            "full_name": config.identity.full_name or "",
+            "aliases": config.identity.aliases or [],
+        },
+        "vip_senders": config.vip_senders or [],
+        "allowed_folders": config.allowed_folders or None,
+        "bearer_auth": {
+            "enabled": config.bearer_auth.enabled,
+            "token": config.bearer_auth.token or "",
+        },
+        "database": {
+            "backend": config.database.backend.value,
+            "sqlite": {
+                "email_cache_path": config.database.sqlite.email_cache_path,
+            },
+            "postgres": (
+                {
+                    "host": config.database.postgres.host,
+                    "port": config.database.postgres.port,
+                    "database": config.database.postgres.database,
+                    "user": config.database.postgres.user,
+                    "password": config.database.postgres.password,
+                    "ssl_mode": config.database.postgres.ssl_mode,
+                }
+                if config.database.postgres
+                else None
+            ),
+            "embeddings": {
+                "enabled": config.database.embeddings.enabled,
+                "provider": config.database.embeddings.provider,
+                "fallback_provider": config.database.embeddings.fallback_provider,
+                "endpoint": config.database.embeddings.endpoint,
+                "model": config.database.embeddings.model,
+                "api_key": config.database.embeddings.api_key,
+                "dimensions": config.database.embeddings.dimensions,
+                "batch_size": config.database.embeddings.batch_size,
+                "max_chars": config.database.embeddings.max_chars,
+                "input_type": config.database.embeddings.input_type,
+                "truncate": config.database.embeddings.truncate,
+                "gemini_api_key": config.database.embeddings.gemini_api_key,
+                "gemini_model": config.database.embeddings.gemini_model,
+                "task_type": config.database.embeddings.task_type,
+            },
+        },
+    }
+
+    if config.calendar:
+        data["calendar"] = {
+            "enabled": config.calendar.enabled,
+            "verified_client": config.calendar.verified_client,
+        }
+
+    if config.web:
+        data["web"] = {
+            "theme": config.web.theme,
+            "agent": {
+                "base_url": config.web.agent.base_url,
+                "api_format": config.web.agent.api_format.value,
+                "model": config.web.agent.model,
+                "token_limit": config.web.agent.token_limit,
+                "api_key": config.web.agent.api_key,
+            },
+            "auth": {
+                "method": config.web.auth.method.value,
+                "password_hash": config.web.auth.password_hash,
+                "session_secret": config.web.auth.session_secret,
+                "session_expiry_hours": config.web.auth.session_expiry_hours,
+                "oidc": (
+                    {
+                        "provider_url": config.web.auth.oidc.provider_url,
+                        "client_id": config.web.auth.oidc.client_id,
+                        "client_secret": config.web.auth.oidc.client_secret,
+                        "scopes": config.web.auth.oidc.scopes,
+                    }
+                    if config.web.auth.oidc
+                    else None
+                ),
+                "saml2": (
+                    {
+                        "idp_metadata_url": config.web.auth.saml2.idp_metadata_url,
+                        "sp_entity_id": config.web.auth.saml2.sp_entity_id,
+                        "sp_acs_url": config.web.auth.saml2.sp_acs_url,
+                        "sp_sls_url": config.web.auth.saml2.sp_sls_url,
+                        "certificate_path": config.web.auth.saml2.certificate_path,
+                        "private_key_path": config.web.auth.saml2.private_key_path,
+                    }
+                    if config.web.auth.saml2
+                    else None
+                ),
+            },
+        }
+
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(tmp_path, "w") as f:
+        yaml.safe_dump(data, f, sort_keys=False)
+    tmp_path.replace(path)
+
+    global _last_loaded_config_path
+    _last_loaded_config_path = path
+
+    return path
+
+
 def load_config(config_path: Optional[str] = None) -> ServerConfig:
     """Load configuration from file or environment variables.
 
@@ -687,6 +823,8 @@ def load_config(config_path: Optional[str] = None) -> ServerConfig:
     default_locations = [
         Path("/app/config/config.yaml"),
         Path("/app/config/config.yml"),
+        Path("config/config.yaml"),
+        Path("config/config.yml"),
         Path("config.yaml"),
         Path("config.yml"),
         Path("~/.config/workspace-secretary/config.yaml"),
@@ -695,11 +833,14 @@ def load_config(config_path: Optional[str] = None) -> ServerConfig:
 
     # Load from specified path or try default locations
     config_data: Dict[str, Any] = {}
+    global _last_loaded_config_path
+
     if config_path:
         try:
             with open(config_path, "r") as f:
                 config_data = yaml.safe_load(f) or {}
             logger.info(f"Loaded configuration from {config_path}")
+            _last_loaded_config_path = Path(config_path).expanduser()
         except FileNotFoundError:
             logger.warning(f"Configuration file not found: {config_path}")
     else:
@@ -709,6 +850,7 @@ def load_config(config_path: Optional[str] = None) -> ServerConfig:
                 with open(expanded_path, "r") as f:
                     config_data = yaml.safe_load(f) or {}
                 logger.info(f"Loaded configuration from {expanded_path}")
+                _last_loaded_config_path = expanded_path
                 break
 
     # If environment variables are set, they take precedence

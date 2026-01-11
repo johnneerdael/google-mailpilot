@@ -9,21 +9,29 @@ import httpx
 logger = logging.getLogger(__name__)
 
 SOCKET_PATH = os.environ.get("ENGINE_SOCKET", "/tmp/secretary-engine.sock")
+ENGINE_API_URL = os.environ.get("ENGINE_API_URL")
 
 
 class EngineClient:
-    def __init__(self, socket_path: str = SOCKET_PATH):
+    def __init__(self, socket_path: str = SOCKET_PATH, api_url: Optional[str] = None):
         self.socket_path = socket_path
+        self.api_url = api_url or ENGINE_API_URL
         self._client: Optional[httpx.Client] = None
 
     def _get_client(self) -> httpx.Client:
         if self._client is None:
-            transport = httpx.HTTPTransport(uds=self.socket_path)
-            self._client = httpx.Client(
-                transport=transport,
-                base_url="http://localhost",
-                timeout=30.0,
-            )
+            if self.api_url:
+                self._client = httpx.Client(
+                    base_url=self.api_url,
+                    timeout=30.0,
+                )
+            else:
+                transport = httpx.HTTPTransport(uds=self.socket_path)
+                self._client = httpx.Client(
+                    transport=transport,
+                    base_url="http://localhost",
+                    timeout=30.0,
+                )
         return self._client
 
     def close(self) -> None:
@@ -38,9 +46,9 @@ class EngineClient:
             response.raise_for_status()
             return response.json()
         except httpx.ConnectError:
+            location = self.api_url if self.api_url else f"socket {self.socket_path}"
             raise ConnectionError(
-                f"Cannot connect to engine at {self.socket_path}. "
-                "Is secretary-engine running?"
+                f"Cannot connect to engine at {location}. Is secretary-engine running?"
             )
         except httpx.HTTPStatusError as e:
             error_detail = e.response.json().get("detail", str(e))

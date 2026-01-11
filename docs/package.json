@@ -1,6 +1,6 @@
 {
   "name": "google-workspace-secretary-docs",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Documentation for Gmail Secretary MCP",
   "type": "module",
   "scripts": {

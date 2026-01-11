@@ -3,6 +3,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 import re
+import idna
+from email.utils import parseaddr
 
 from workspace_secretary.web import database as db
 from workspace_secretary.config import load_config
@@ -21,6 +23,94 @@ def get_config():
     return _config
 
 
+def _parse_authentication_results(headers: dict) -> dict:
+    raw_values: list[str] = []
+    for k in ["Authentication-Results", "ARC-Authentication-Results", "Received-SPF"]:
+        v = headers.get(k) if isinstance(headers, dict) else None
+        if not v:
+            continue
+        if isinstance(v, list):
+            raw_values.extend([str(x) for x in v if x])
+        else:
+            raw_values.append(str(v))
+
+    combined = "\n".join(raw_values)
+    combined_l = combined.lower()
+
+    def _has_result(prefix: str, value: str) -> bool:
+        return bool(
+            re.search(rf"\b{re.escape(prefix)}\s*=\s*{re.escape(value)}\b", combined_l)
+        )
+
+    spf_pass = _has_result("spf", "pass") or _has_result("spf", "bestguesspass")
+    spf_fail = _has_result("spf", "fail") or _has_result("spf", "softfail")
+    dkim_pass = _has_result("dkim", "pass")
+    dkim_fail = _has_result("dkim", "fail")
+    dmarc_pass = _has_result("dmarc", "pass")
+    dmarc_fail = _has_result("dmarc", "fail")
+
+    return {
+        "auth_results_raw": combined or None,
+        "spf": "pass" if spf_pass else "fail" if spf_fail else "unknown",
+        "dkim": "pass" if dkim_pass else "fail" if dkim_fail else "unknown",
+        "dmarc": "pass" if dmarc_pass else "fail" if dmarc_fail else "unknown",
+    }
+
+
+def _extract_domain(addr: str) -> str:
+    _, email_addr = parseaddr(addr or "")
+    if "@" not in email_addr:
+        return ""
+    return email_addr.split("@", 1)[1].strip().lower()
+
+
+def _is_punycode_domain(domain: str) -> bool:
+    if not domain:
+        return False
+    try:
+        decoded = idna.decode(domain)
+        return decoded != domain
+    except Exception:
+        return "xn--" in domain
+
+
+def _sender_suspicion_signals(email: dict) -> dict:
+    from_addr_raw = email.get("from_addr") or ""
+    headers_obj = email.get("headers")
+    headers = headers_obj if isinstance(headers_obj, dict) else {}
+    reply_to_raw = headers.get("Reply-To")
+
+    from_domain = _extract_domain(from_addr_raw)
+    reply_to_domain = _extract_domain(str(reply_to_raw) if reply_to_raw else "")
+
+    reply_to_differs = bool(
+        reply_to_domain and from_domain and reply_to_domain != from_domain
+    )
+
+    display_name, parsed_addr = parseaddr(from_addr_raw)
+    display_name_l = (display_name or "").lower()
+    parsed_local = parsed_addr.split("@", 1)[0].lower() if "@" in parsed_addr else ""
+
+    display_name_mismatch = False
+    if display_name_l and parsed_local:
+        token = re.sub(r"[^a-z0-9]+", "", parsed_local)
+        if token and token not in re.sub(r"[^a-z0-9]+", "", display_name_l):
+            display_name_mismatch = True
+
+    punycode_domain = _is_punycode_domain(from_domain) or _is_punycode_domain(
+        reply_to_domain
+    )
+
+    return {
+        "reply_to_differs": reply_to_differs,
+        "display_name_mismatch": display_name_mismatch,
+        "punycode_domain": punycode_domain,
+        "is_suspicious_sender": bool(
+            reply_to_differs or display_name_mismatch or punycode_domain
+        ),
+    }
+
+
 def analyze_signals(email: dict) -> dict:
     config = get_config()
 
@@ -29,6 +119,44 @@ def analyze_signals(email: dict) -> dict:
     subject = (email.get("subject") or "").lower()
     body = (email.get("body_text") or "").lower()
     text = subject + " " + body
+
+    auth_results_raw = email.get("auth_results_raw")
+    spf = email.get("spf")
+    dkim = email.get("dkim")
+    dmarc = email.get("dmarc")
+
+    headers_obj = email.get("headers")
+    headers = headers_obj if isinstance(headers_obj, dict) else {}
+    auth = (
+        _parse_authentication_results(headers)
+        if auth_results_raw is None and spf is None and dkim is None and dmarc is None
+        else {
+            "auth_results_raw": auth_results_raw,
+            "spf": spf or "unknown",
+            "dkim": dkim or "unknown",
+            "dmarc": dmarc or "unknown",
+        }
+    )
+
+    suspicious_sender_signals = email.get("suspicious_sender_signals")
+    if isinstance(suspicious_sender_signals, str):
+        try:
+            import json
+
+            suspicious_sender_signals = json.loads(suspicious_sender_signals)
+        except Exception:
+            suspicious_sender_signals = None
+
+    if suspicious_sender_signals is None:
+        suspicious = _sender_suspicion_signals(email)
+        suspicious_sender_signals = {
+            "reply_to_differs": suspicious["reply_to_differs"],
+            "display_name_mismatch": suspicious["display_name_mismatch"],
+            "punycode_domain": suspicious["punycode_domain"],
+        }
+        is_suspicious_sender = suspicious["is_suspicious_sender"]
+    else:
+        is_suspicious_sender = bool(email.get("is_suspicious_sender"))
 
     is_from_vip = any(vip.lower() in from_addr for vip in config.vip_senders)
 
@@ -79,6 +207,12 @@ def analyze_signals(email: dict) -> dict:
         "mentions_deadline": mentions_deadline,
         "mentions_meeting": mentions_meeting,
         "is_important": email.get("is_important", False),
+        "spf": auth["spf"],
+        "dkim": auth["dkim"],
+        "dmarc": auth["dmarc"],
+        "auth_results_raw": auth["auth_results_raw"],
+        "is_suspicious_sender": is_suspicious_sender,
+        "suspicious_sender_signals": suspicious_sender_signals,
     }
 
 

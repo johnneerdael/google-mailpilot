@@ -40,16 +40,35 @@
             <div class="flex items-center space-x-6">
                 <label class="flex items-center space-x-2 cursor-pointer">
                     <input type="radio" name="mode" value="keyword" {% if mode == 'keyword' %}checked{% endif %}
+                           hx-get="/search" 
+                           hx-trigger="change" 
+                           hx-include="[name='q'], [name='folder']"
+                           hx-target="body"
+                           hx-swap="outerHTML"
                            class="text-primary bg-gray-900 border-gray-700 focus:ring-primary">
                     <span class="text-sm text-gray-300">Keyword Search</span>
                 </label>
                 {% if supports_semantic %}
                 <label class="flex items-center space-x-2 cursor-pointer group">
                     <input type="radio" name="mode" value="semantic" {% if mode == 'semantic' %}checked{% endif %}
+                           hx-get="/search" 
+                           hx-trigger="change" 
+                           hx-include="[name='q'], [name='folder']"
+                           hx-target="body"
+                           hx-swap="outerHTML"
                            class="text-primary bg-gray-900 border-gray-700 focus:ring-primary">
                     <span class="text-sm text-gray-300 flex items-center gap-1.5">
                         <span class="text-purple-400">✨</span> Semantic (AI)
                         <span class="text-xs text-gray-500 group-hover:text-gray-400">(find by meaning)</span>
+                    </span>
+                </label>
+                {% else %}
+                <label class="flex items-center space-x-2 opacity-50 cursor-not-allowed">
+                    <input type="radio" name="mode" value="semantic" disabled
+                           class="text-primary bg-gray-900 border-gray-700">
+                    <span class="text-sm text-gray-500 flex items-center gap-1.5">
+                        <span>✨</span> Semantic (AI)
+                        <span class="text-xs">(requires embeddings enabled)</span>
                     </span>
                 </label>
                 {% endif %}

@@ -9,6 +9,7 @@ from workspace_secretary.web.auth import require_auth, Session
 from workspace_secretary.web.alerting import check_and_alert
 
 router = APIRouter()
+
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
@@ -22,25 +23,29 @@ def get_mutation_stats() -> dict:
             cur.execute(
                 "SELECT COUNT(*) FROM mutation_journal WHERE status = 'PENDING'"
             )
-            pending = cur.fetchone()[0]
+            row = cur.fetchone()
+            pending = row[0] if row else 0
 
             cur.execute(
                 "SELECT COUNT(*) FROM mutation_journal WHERE status = 'PENDING' AND created_at < %s",
                 (hour_ago,),
             )
-            stuck = cur.fetchone()[0]
+            row = cur.fetchone()
+            stuck = row[0] if row else 0
 
             cur.execute(
                 "SELECT COUNT(*) FROM mutation_journal WHERE status = 'FAILED' AND created_at > %s",
                 (day_ago,),
             )
-            failed_24h = cur.fetchone()[0]
+            row = cur.fetchone()
+            failed_24h = row[0] if row else 0
 
             cur.execute(
                 "SELECT COUNT(*) FROM mutation_journal WHERE status = 'COMPLETED' AND created_at > %s",
                 (day_ago,),
             )
-            completed_24h = cur.fetchone()[0]
+            row = cur.fetchone()
+            completed_24h = row[0] if row else 0
 
             cur.execute(
                 """
@@ -51,7 +56,7 @@ def get_mutation_stats() -> dict:
                 LIMIT 20
                 """
             )
-            columns = [desc[0] for desc in cur.description]
+            columns = [desc[0] for desc in (cur.description or [])]
             recent_issues = [dict(zip(columns, row)) for row in cur.fetchall()]
 
             return {
@@ -84,14 +89,16 @@ def get_sync_stats() -> dict:
             last_sync_folder = row[0] if row else None
 
             cur.execute("SELECT COUNT(*) FROM folder_state")
-            folder_count = cur.fetchone()[0]
+            row = cur.fetchone()
+            folder_count = row[0] if row else 0
 
             day_ago = datetime.now(timezone.utc) - timedelta(days=1)
             cur.execute(
                 "SELECT COUNT(*) FROM sync_errors WHERE created_at > %s AND resolved_at IS NULL",
                 (day_ago,),
             )
-            unresolved_errors = cur.fetchone()[0]
+            row = cur.fetchone()
+            unresolved_errors = row[0] if row else 0
 
             cur.execute(
                 """
@@ -102,7 +109,7 @@ def get_sync_stats() -> dict:
                 LIMIT 10
                 """
             )
-            columns = [desc[0] for desc in cur.description]
+            columns = [desc[0] for desc in (cur.description or [])]
             recent_errors = [dict(zip(columns, row)) for row in cur.fetchall()]
 
             sync_age_minutes = None
@@ -133,13 +140,16 @@ def get_db_stats() -> dict:
     with db.get_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM emails")
-            total_emails = cur.fetchone()[0]
+            row = cur.fetchone()
+            total_emails = row[0] if row else 0
 
             cur.execute("SELECT COUNT(DISTINCT folder) FROM emails")
-            folder_count = cur.fetchone()[0]
+            row = cur.fetchone()
+            folder_count = row[0] if row else 0
 
             cur.execute("SELECT COUNT(*) FROM emails WHERE is_unread = true")
-            unread_count = cur.fetchone()[0]
+            row = cur.fetchone()
+            unread_count = row[0] if row else 0
 
             cur.execute(
                 """
@@ -181,7 +191,7 @@ def get_integrity_stats() -> dict:
                 ORDER BY fs.folder
                 """
             )
-            columns = [desc[0] for desc in cur.description]
+            columns = [desc[0] for desc in (cur.description or [])]
             folder_integrity = [dict(zip(columns, row)) for row in cur.fetchall()]
 
             cur.execute(
@@ -192,7 +202,8 @@ def get_integrity_stats() -> dict:
                 )
                 """
             )
-            orphaned_emails = cur.fetchone()[0]
+            row = cur.fetchone()
+            orphaned_emails = row[0] if row else 0
 
             return {
                 "folder_integrity": folder_integrity,

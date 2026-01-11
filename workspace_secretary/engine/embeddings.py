@@ -286,7 +286,7 @@ class EmbeddingsSyncWorker:
 
     def __init__(
         self,
-        client: EmbeddingsClient,
+        client: "EmbeddingsClientType | FallbackEmbeddingsClient",  # type: ignore[name-defined]
         database: Any,  # DatabaseInterface
         folders: list[str],
         batch_size: int = 50,
@@ -437,7 +437,7 @@ class CohereEmbeddingsClient:
         max_chars: int = 500000,
     ):
         try:
-            import cohere
+            import cohere  # type: ignore[import-not-found]
         except ImportError:
             raise ImportError("cohere package required: pip install cohere")
 
@@ -550,6 +550,8 @@ class CohereEmbeddingsClient:
         estimated_tokens = self._estimate_tokens(filtered_texts)
         await self._wait_for_rate_limit(estimated_tokens)
 
+        response = None
+        response = None
         max_retries = 5
         for attempt in range(max_retries):
             try:
@@ -579,7 +581,11 @@ class CohereEmbeddingsClient:
                     logger.error(f"Cohere embeddings API error: {e}")
                     raise
 
+        if response is None:
+            raise RuntimeError("Cohere embeddings API returned no response")
+
         embeddings = response.embeddings.float_ or []
+
         results = []
         for i, embedding in enumerate(embeddings):
             vec = self._normalize(list(embedding))
@@ -626,9 +632,11 @@ class GeminiEmbeddingsClient:
         max_chars: int = 500000,
     ):
         try:
-            from google import genai
-        except ImportError:
-            raise ImportError("google-genai package required: pip install google-genai")
+            from google import genai  # type: ignore[import-not-found]
+        except ImportError as e:
+            raise ImportError(
+                "google-genai package required: pip install google-genai"
+            ) from e
 
         self.client = genai.Client(api_key=api_key)
         self.model = model
@@ -680,7 +688,7 @@ class GeminiEmbeddingsClient:
         return results
 
     async def _embed_batch(self, texts: list[str]) -> list[EmbeddingResult]:
-        from google.genai import types
+        from google.genai import types  # type: ignore
 
         def is_valid_text(t: str) -> bool:
             if not t or not t.strip():

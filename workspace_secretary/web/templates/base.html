@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
+    <meta name="csrf-token" content="{{ csrf_token or '' }}">
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -29,7 +30,33 @@
     </style>
 
 </head>
-<body class="h-full bg-gray-950 text-gray-100" x-data="{ darkMode: {% if theme == 'system' %}localStorage.getItem('darkMode') !== 'false'{% elif theme == 'dark' %}true{% else %}false{% endif %} }" x-init="if(!darkMode) document.documentElement.classList.remove('dark'); else document.documentElement.classList.add('dark')" :class="{ 'bg-gray-50 text-gray-900': !darkMode, 'bg-gray-950 text-gray-100': darkMode }">
+<body class="h-full bg-gray-950 text-gray-100" x-data="{ 
+    darkMode: {% if theme == 'system' %}window.matchMedia('(prefers-color-scheme: dark)').matches{% elif theme == 'dark' %}true{% else %}false{% endif %},
+    async toggleTheme() {
+        this.darkMode = !this.darkMode;
+        if(this.darkMode) {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+        try {
+            const csrfToken = document.querySelector('meta[name=csrf-token]')?.content;
+            await fetch('/api/settings/ui', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': csrfToken
+                },
+                body: JSON.stringify({
+                    theme: this.darkMode ? 'dark' : 'light',
+                    density: '{{ density }}'
+                })
+            });
+        } catch (e) {
+            console.error('Failed to save theme preference:', e);
+        }
+    }
+}" x-init="if(!darkMode) document.documentElement.classList.remove('dark'); else document.documentElement.classList.add('dark')" :class="{ 'bg-gray-50 text-gray-900': !darkMode, 'bg-gray-950 text-gray-100': darkMode }">
     <div class="min-h-full">
         <nav class="bg-gray-900 border-b border-gray-800" :class="{ 'bg-white border-gray-200': !darkMode, 'bg-gray-900 border-gray-800': darkMode }">
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -118,7 +145,7 @@
                             </div>
                         </div>
                         
-                        <button @click="darkMode = !darkMode; localStorage.setItem('darkMode', darkMode); if(darkMode) document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark')" 
+                        <button @click="toggleTheme()" 
                                 class="p-2 rounded-md text-gray-400 hover:bg-gray-800" :class="{ 'hover:bg-gray-100': !darkMode, 'hover:bg-gray-800': darkMode }">
                             <span x-show="!darkMode">🌙</span>
                             <span x-show="darkMode" x-cloak>☀️</span>
@@ -127,6 +154,35 @@
                 </div>
             </div>
         </nav>
+
+        <div id="service-health-banner" 
+             x-data="{ services: null, checking: false }"
+             x-init="
+                setInterval(async () => {
+                    if (checking) return;
+                    checking = true;
+                    try {
+                        const res = await fetch('/api/health/services');
+                        const data = await res.json();
+                        services = data;
+                    } catch (e) {
+                        services = { status: 'error', services: { engine: { status: 'down', error: e.message } } };
+                    } finally {
+                        checking = false;
+                    }
+                }, 30000);
+             "
+             x-show="services && services.status !== 'healthy'"
+             x-cloak
+             class="bg-yellow-900/90 border-b border-yellow-700 text-yellow-100 px-4 py-2 text-sm">
+            <div class="max-w-7xl mx-auto flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <span>⚠️</span>
+                    <span>Some services are unavailable. Calendar and contacts features may not work.</span>
+                </div>
+                <button @click="services = null" class="text-yellow-200 hover:text-white">&times;</button>
+            </div>
+        </div>
 
         <main class="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
             {% block content %}{% endblock %}
@@ -146,6 +202,7 @@
 
     <div id="toast-container" class="fixed bottom-4 right-4 z-[90] space-y-2"></div>
     
+    <script src="/static/js/app.js"></script>
     <script>
         // Consolidated Toast Notification System
         window.showToast = function({ message, type = 'info', duration = 5000, onUndo = null }) {
@@ -283,7 +340,7 @@
                     const permission = await Notification.requestPermission();
                     this.notificationsEnabled = permission === 'granted';
                     if (this.notificationsEnabled) {
-                        window.showToast('Desktop notifications enabled', 'success');
+                        window.showToast({ message: 'Desktop notifications enabled', type: 'success' });
                     }
                 },
                 

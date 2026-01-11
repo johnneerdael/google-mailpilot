@@ -1,12 +1,8 @@
-"""
-Abstract database interface for swappable backends (SQLite/PostgreSQL).
+from __future__ import annotations
 
-This module provides a unified interface for database operations, allowing
-the engine to use either SQLite (default) or PostgreSQL with pgvector
-for semantic search capabilities.
-"""
-
+import json
 import logging
+import sqlite3
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from datetime import datetime
@@ -17,8 +13,6 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseConnection(Protocol):
-    """Protocol for database connections."""
-
     def execute(self, query: str, params: tuple[Any, ...] = ()) -> Any: ...
     def executemany(self, query: str, params: list[tuple[Any, ...]]) -> Any: ...
     def fetchone(self) -> Optional[dict[str, Any]]: ...
@@ -28,25 +22,72 @@ class DatabaseConnection(Protocol):
 
 
 class DatabaseInterface(ABC):
-    """Abstract base class for database backends."""
-
     @abstractmethod
     def initialize(self) -> None:
-        """Initialize database schema."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     @contextmanager
     def connection(self) -> Iterator[Any]:
-        """Get a database connection context manager."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def close(self) -> None:
-        """Close any persistent connections."""
-        pass
+        raise NotImplementedError
 
-    # Email operations
+    def supports_embeddings(self) -> bool:
+        return False
+
+    def get_synced_uids(self, folder: str) -> list[int]:
+        raise NotImplementedError
+
+    def count_emails(self, folder: str) -> int:
+        raise NotImplementedError
+
+    def upsert_embedding(
+        self,
+        uid: int,
+        folder: str,
+        embedding: list[float],
+        model: str,
+        content_hash: str,
+    ) -> None:
+        raise NotImplementedError
+
+    def get_synced_folders(self) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def get_thread_emails(
+        self, uid: int, folder: str = "INBOX"
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def semantic_search(
+        self,
+        query_embedding: list[float],
+        folder: str = "INBOX",
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def semantic_search_filtered(
+        self,
+        query_embedding: list[float],
+        folder: Optional[str] = None,
+        from_addr: Optional[str] = None,
+        to_addr: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        has_attachments: Optional[bool] = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+    def find_similar_emails(
+        self, uid: int, folder: str = "INBOX", limit: int = 5
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
     @abstractmethod
     def upsert_email(
         self,
@@ -74,9 +115,14 @@ class DatabaseInterface(ABC):
         gmail_labels: Optional[list[str]],
         has_attachments: bool,
         attachment_filenames: Optional[list[str]],
+        auth_results_raw: Optional[str] = None,
+        spf: Optional[str] = None,
+        dkim: Optional[str] = None,
+        dmarc: Optional[str] = None,
+        is_suspicious_sender: bool = False,
+        suspicious_sender_signals: Optional[dict[str, Any]] = None,
     ) -> None:
-        """Insert or update an email record."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def update_email_flags(
@@ -88,18 +134,15 @@ class DatabaseInterface(ABC):
         modseq: int,
         gmail_labels: Optional[list[str]] = None,
     ) -> None:
-        """Update only flags/labels for existing email (CONDSTORE optimization)."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_email_by_uid(self, uid: int, folder: str) -> Optional[dict[str, Any]]:
-        """Get a single email by UID and folder."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_emails_by_uids(self, uids: list[int], folder: str) -> list[dict[str, Any]]:
-        """Get multiple emails by UIDs."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def search_emails(
@@ -112,57 +155,40 @@ class DatabaseInterface(ABC):
         body_contains: Optional[str] = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        """Search emails with filters."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def delete_email(self, uid: int, folder: str) -> None:
-        """Delete an email from the database."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def mark_email_read(self, uid: int, folder: str, is_read: bool) -> None:
-        """Mark an email as read or unread."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def get_folder_state(self, folder: str) -> Optional[dict[str, Any]]:
-        """Get sync state for a folder."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def save_folder_state(
         self, folder: str, uidvalidity: int, uidnext: int, highestmodseq: int = 0
     ) -> None:
-        """Save sync state for a folder."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
     def clear_folder(self, folder: str) -> int:
-        """Clear all emails from a folder. Returns count deleted."""
-        pass
+        raise NotImplementedError
 
     @abstractmethod
-    def count_emails(self, folder: str) -> int:
-        """Count emails in a folder."""
-        pass
+    def log_sync_error(
+        self,
+        error_type: str,
+        error_message: str,
+        folder: Optional[str] = None,
+        email_uid: Optional[int] = None,
+    ) -> None:
+        raise NotImplementedError
 
-    @abstractmethod
-    def get_synced_uids(self, folder: str) -> list[int]:
-        """Get all UIDs synced for a folder."""
-        pass
-
-    @abstractmethod
-    def get_synced_folders(self) -> list[dict[str, Any]]:
-        """Get list of all synced folders with their state."""
-        pass
-
-    @abstractmethod
-    def get_thread_emails(self, uid: int, folder: str) -> list[dict[str, Any]]:
-        """Get all emails in a thread based on References/In-Reply-To headers."""
-        pass
-
-    @abstractmethod
     def create_mutation(
         self,
         email_uid: int,
@@ -171,119 +197,55 @@ class DatabaseInterface(ABC):
         params: Optional[dict] = None,
         pre_state: Optional[dict] = None,
     ) -> int:
-        """Record a pending mutation. Returns the mutation ID."""
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def update_mutation_status(
         self, mutation_id: int, status: str, error: Optional[str] = None
     ) -> None:
-        """Update mutation status (PENDING -> COMPLETED/FAILED)."""
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def get_pending_mutations(self, email_uid: int, email_folder: str) -> list[dict]:
-        """Get pending mutations for an email (to avoid sync clobbering)."""
-        pass
+        raise NotImplementedError
 
-    @abstractmethod
     def get_mutation(self, mutation_id: int) -> Optional[dict]:
-        """Get a mutation by ID (for restore/undo)."""
-        pass
-
-    # Embedding operations (optional - only for PostgreSQL with pgvector)
-    def supports_embeddings(self) -> bool:
-        """Check if this backend supports vector embeddings."""
-        return False
-
-    def upsert_embedding(
-        self,
-        email_uid: int,
-        email_folder: str,
-        embedding: list[float],
-        model: str,
-        content_hash: str,
-    ) -> None:
-        """Store embedding for an email. Only available with pgvector."""
-        raise NotImplementedError("Embeddings not supported by this backend")
-
-    def get_embedding(
-        self, email_uid: int, email_folder: str
-    ) -> Optional[dict[str, Any]]:
-        """Get embedding for an email."""
-        raise NotImplementedError("Embeddings not supported by this backend")
-
-    def semantic_search(
-        self,
-        query_embedding: list[float],
-        limit: int = 20,
-        folder: Optional[str] = None,
-        similarity_threshold: float = 0.7,
-    ) -> list[dict[str, Any]]:
-        """Search emails by semantic similarity. Only available with pgvector."""
-        raise NotImplementedError("Embeddings not supported by this backend")
-
-    def find_similar_emails(
-        self, email_uid: int, email_folder: str, limit: int = 10
-    ) -> list[dict[str, Any]]:
-        """Find emails similar to a given email. Only available with pgvector."""
-        raise NotImplementedError("Embeddings not supported by this backend")
-
-    def semantic_search_filtered(
-        self,
-        query_embedding: list[float],
-        limit: int = 20,
-        folder: Optional[str] = None,
-        from_addr: Optional[str] = None,
-        to_addr: Optional[str] = None,
-        date_from: Optional[str] = None,
-        date_to: Optional[str] = None,
-        has_attachments: Optional[bool] = None,
-        similarity_threshold: float = 0.5,
-    ) -> list[dict[str, Any]]:
-        """Metadata-augmented semantic search. Only available with pgvector."""
-        raise NotImplementedError("Embeddings not supported by this backend")
-
-    def get_emails_needing_embedding(
-        self, folder: str, limit: int = 100
-    ) -> list[dict[str, Any]]:
-        """Get emails that don't have embeddings yet."""
-        raise NotImplementedError("Embeddings not supported by this backend")
-
-    def count_emails_needing_embedding(self, folder: str) -> int:
-        """Count emails that don't have embeddings yet."""
-        raise NotImplementedError("Embeddings not supported by this backend")
+        raise NotImplementedError
 
 
 class SqliteDatabase(DatabaseInterface):
-    """SQLite database backend with FTS5 for keyword search."""
+    def __init__(self, db_path: str = "config/secretary.db"):
+        self.db_path = db_path
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
-    def __init__(
-        self,
-        email_cache_path: str = "config/email_cache.db",
-    ):
-        import sqlite3
+    def supports_embeddings(self) -> bool:
+        return False
 
-        self.email_db_path = Path(email_cache_path)
-        self._sqlite3 = sqlite3
+    @contextmanager
+    def _get_email_connection(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
 
     def initialize(self) -> None:
-        """Initialize email database."""
         self._init_email_db()
 
-    def _init_email_db(self) -> None:
-        """Initialize email database schema."""
-        self.email_db_path.parent.mkdir(parents=True, exist_ok=True)
-
+    @contextmanager
+    def connection(self) -> Iterator[Any]:
         with self._get_email_connection() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
+            yield conn
 
+    def close(self) -> None:
+        return
+
+    def _init_email_db(self) -> None:
+        with self._get_email_connection() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS emails (
-                    uid INTEGER NOT NULL,
-                    folder TEXT NOT NULL,
+                    uid INTEGER,
+                    folder TEXT,
                     message_id TEXT,
                     subject TEXT,
                     from_addr TEXT,
@@ -295,8 +257,8 @@ class SqliteDatabase(DatabaseInterface):
                     body_text TEXT,
                     body_html TEXT,
                     flags TEXT,
-                    is_unread BOOLEAN,
-                    is_important BOOLEAN,
+                    is_unread INTEGER,
+                    is_important INTEGER,
                     size INTEGER,
                     modseq INTEGER,
                     synced_at TEXT,
@@ -308,10 +270,31 @@ class SqliteDatabase(DatabaseInterface):
                     gmail_labels TEXT,
                     has_attachments INTEGER DEFAULT 0,
                     attachment_filenames TEXT,
+                    auth_results_raw TEXT,
+                    spf TEXT,
+                    dkim TEXT,
+                    dmarc TEXT,
+                    is_suspicious_sender INTEGER DEFAULT 0,
+                    suspicious_sender_signals TEXT,
                     PRIMARY KEY (uid, folder)
                 )
                 """
             )
+
+            for col_def in [
+                ("auth_results_raw", "TEXT"),
+                ("spf", "TEXT"),
+                ("dkim", "TEXT"),
+                ("dmarc", "TEXT"),
+                ("is_suspicious_sender", "INTEGER DEFAULT 0"),
+                ("suspicious_sender_signals", "TEXT"),
+            ]:
+                try:
+                    conn.execute(
+                        f"ALTER TABLE emails ADD COLUMN {col_def[0]} {col_def[1]}"
+                    )
+                except Exception:
+                    pass
 
             conn.execute(
                 """
@@ -370,62 +353,80 @@ class SqliteDatabase(DatabaseInterface):
                 """
             )
 
-            # Create indexes
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_folder ON emails(folder)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_unread ON emails(is_unread)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_date ON emails(date)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_from ON emails(from_addr)")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_message_id ON emails(message_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_content_hash ON emails(content_hash)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_gmail_thread_id ON emails(gmail_thread_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_has_attachments ON emails(has_attachments)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_internal_date ON emails(internal_date)"
-            )
-
-            # Create FTS5 virtual table for full-text search
             conn.execute(
                 """
-                CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
-                    subject, body_text, from_addr, to_addr,
-                    content='emails',
-                    content_rowid='rowid'
+                CREATE TABLE IF NOT EXISTS user_preferences (
+                    user_id TEXT PRIMARY KEY,
+                    prefs_json TEXT NOT NULL,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
 
+            conn.execute(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
+                    subject, from_addr, to_addr, body_text,
+                    content='emails', content_rowid='rowid'
+                )
+                """
+            )
+
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS emails_ai AFTER INSERT ON emails BEGIN
+                    INSERT INTO emails_fts(rowid, subject, from_addr, to_addr, body_text)
+                    VALUES (new.rowid, new.subject, new.from_addr, new.to_addr, new.body_text);
+                END
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS emails_ad AFTER DELETE ON emails BEGIN
+                    INSERT INTO emails_fts(emails_fts, rowid, subject, from_addr, to_addr, body_text)
+                    VALUES('delete', old.rowid, old.subject, old.from_addr, old.to_addr, old.body_text);
+                END
+                """
+            )
+            conn.execute(
+                """
+                CREATE TRIGGER IF NOT EXISTS emails_au AFTER UPDATE ON emails BEGIN
+                    INSERT INTO emails_fts(emails_fts, rowid, subject, from_addr, to_addr, body_text)
+                    VALUES('delete', old.rowid, old.subject, old.from_addr, old.to_addr, old.body_text);
+                    INSERT INTO emails_fts(rowid, subject, from_addr, to_addr, body_text)
+                    VALUES (new.rowid, new.subject, new.from_addr, new.to_addr, new.body_text);
+                END
+                """
+            )
+
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_unread ON emails(is_unread)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_from ON emails(from_addr)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_content_hash ON emails(content_hash)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_gmail_thread_id ON emails(gmail_thread_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_has_attachments ON emails(has_attachments)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_internal_date ON emails(internal_date)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_emails_is_suspicious_sender ON emails(is_suspicious_sender)"
+            )
+
             conn.commit()
-            logger.info(f"Email database initialized at {self.email_db_path}")
 
-    @contextmanager
-    def _get_email_connection(self) -> Iterator[Any]:
-        """Get email database connection."""
-        conn = self._sqlite3.connect(str(self.email_db_path))
-        conn.row_factory = self._sqlite3.Row
-        try:
-            yield conn
-        finally:
-            conn.close()
-
-    @contextmanager
-    def connection(self) -> Iterator[Any]:
-        """Get email database connection (default)."""
-        with self._get_email_connection() as conn:
-            yield conn
-
-    def close(self) -> None:
-        """SQLite connections are managed per-operation."""
-        pass
-
-    # Email operations
     def upsert_email(
         self,
         uid: int,
@@ -452,17 +453,24 @@ class SqliteDatabase(DatabaseInterface):
         gmail_labels: Optional[list[str]],
         has_attachments: bool,
         attachment_filenames: Optional[list[str]],
+        auth_results_raw: Optional[str] = None,
+        spf: Optional[str] = None,
+        dkim: Optional[str] = None,
+        dmarc: Optional[str] = None,
+        is_suspicious_sender: bool = False,
+        suspicious_sender_signals: Optional[dict[str, Any]] = None,
     ) -> None:
         import hashlib
 
-        # Generate content hash for deduplication and embedding tracking
         content = f"{subject or ''}{body_text}"
         content_hash = hashlib.sha256(content.encode()).hexdigest()[:32]
 
-        # Convert lists to comma-separated strings for SQLite
         gmail_labels_str = ",".join(gmail_labels) if gmail_labels else None
         attachment_filenames_str = (
-            ",".join(attachment_filenames) if attachment_filenames else None
+            json.dumps(attachment_filenames) if attachment_filenames else None
+        )
+        suspicious_sender_signals_str = (
+            json.dumps(suspicious_sender_signals) if suspicious_sender_signals else None
         )
 
         with self._get_email_connection() as conn:
@@ -473,8 +481,9 @@ class SqliteDatabase(DatabaseInterface):
                     bcc_addr, date, internal_date, body_text, body_html, flags,
                     is_unread, is_important, size, modseq, synced_at, in_reply_to,
                     references_header, content_hash, gmail_thread_id, gmail_msgid,
-                    gmail_labels, has_attachments, attachment_filenames
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    gmail_labels, has_attachments, attachment_filenames,
+                    auth_results_raw, spf, dkim, dmarc, is_suspicious_sender, suspicious_sender_signals
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     uid,
@@ -490,8 +499,8 @@ class SqliteDatabase(DatabaseInterface):
                     body_text,
                     body_html,
                     flags,
-                    is_unread,
-                    is_important,
+                    1 if is_unread else 0,
+                    1 if is_important else 0,
                     size,
                     modseq,
                     datetime.utcnow().isoformat(),
@@ -503,6 +512,12 @@ class SqliteDatabase(DatabaseInterface):
                     gmail_labels_str,
                     1 if has_attachments else 0,
                     attachment_filenames_str,
+                    auth_results_raw,
+                    spf,
+                    dkim,
+                    dmarc,
+                    1 if is_suspicious_sender else 0,
+                    suspicious_sender_signals_str,
                 ),
             )
             conn.commit()
@@ -516,19 +531,18 @@ class SqliteDatabase(DatabaseInterface):
         modseq: int,
         gmail_labels: Optional[list[str]] = None,
     ) -> None:
-        """Update only flags/labels for existing email (CONDSTORE optimization)."""
         gmail_labels_str = ",".join(gmail_labels) if gmail_labels else None
 
         with self._get_email_connection() as conn:
             conn.execute(
                 """
-                UPDATE emails SET flags = ?, is_unread = ?, modseq = ?, 
+                UPDATE emails SET flags = ?, is_unread = ?, modseq = ?,
                     gmail_labels = COALESCE(?, gmail_labels), synced_at = ?
                 WHERE uid = ? AND folder = ?
                 """,
                 (
                     flags,
-                    is_unread,
+                    1 if is_unread else 0,
                     modseq,
                     gmail_labels_str,
                     datetime.utcnow().isoformat(),
@@ -557,6 +571,42 @@ class SqliteDatabase(DatabaseInterface):
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def _fts_search(
+        self,
+        folder: str,
+        query_text: str,
+        is_unread: Optional[bool],
+        from_addr: Optional[str],
+        to_addr: Optional[str],
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        with self._get_email_connection() as conn:
+            fts_query = f'"{query_text}"'
+            base_query = """
+                SELECT e.* FROM emails e
+                JOIN emails_fts ON e.rowid = emails_fts.rowid
+                WHERE emails_fts MATCH ? AND e.folder = ?
+            """
+            params: list[Any] = [fts_query, folder]
+
+            if is_unread is not None:
+                base_query += " AND e.is_unread = ?"
+                params.append(1 if is_unread else 0)
+
+            if from_addr:
+                base_query += " AND e.from_addr LIKE ?"
+                params.append(f"%{from_addr}%")
+
+            if to_addr:
+                base_query += " AND e.to_addr LIKE ?"
+                params.append(f"%{to_addr}%")
+
+            base_query += " ORDER BY e.date DESC LIMIT ?"
+            params.append(limit)
+
+            cursor = conn.execute(base_query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
     def search_emails(
         self,
         folder: str = "INBOX",
@@ -567,7 +617,6 @@ class SqliteDatabase(DatabaseInterface):
         body_contains: Optional[str] = None,
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        # Use FTS5 if body_contains is specified
         if body_contains:
             return self._fts_search(
                 folder, body_contains, is_unread, from_addr, to_addr, limit
@@ -578,7 +627,7 @@ class SqliteDatabase(DatabaseInterface):
 
         if is_unread is not None:
             query += " AND is_unread = ?"
-            params.append(is_unread)
+            params.append(1 if is_unread else 0)
 
         if from_addr:
             query += " AND from_addr LIKE ?"
@@ -599,45 +648,6 @@ class SqliteDatabase(DatabaseInterface):
             cursor = conn.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
-    def _fts_search(
-        self,
-        folder: str,
-        query_text: str,
-        is_unread: Optional[bool],
-        from_addr: Optional[str],
-        to_addr: Optional[str],
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        """Full-text search using FTS5."""
-        with self._get_email_connection() as conn:
-            # Build FTS query
-            fts_query = f'"{query_text}"'
-
-            base_query = """
-                SELECT e.* FROM emails e
-                JOIN emails_fts ON e.rowid = emails_fts.rowid
-                WHERE emails_fts MATCH ? AND e.folder = ?
-            """
-            params: list[Any] = [fts_query, folder]
-
-            if is_unread is not None:
-                base_query += " AND e.is_unread = ?"
-                params.append(is_unread)
-
-            if from_addr:
-                base_query += " AND e.from_addr LIKE ?"
-                params.append(f"%{from_addr}%")
-
-            if to_addr:
-                base_query += " AND e.to_addr LIKE ?"
-                params.append(f"%{to_addr}%")
-
-            base_query += " ORDER BY e.date DESC LIMIT ?"
-            params.append(limit)
-
-            cursor = conn.execute(base_query, params)
-            return [dict(row) for row in cursor.fetchall()]
-
     def delete_email(self, uid: int, folder: str) -> None:
         with self._get_email_connection() as conn:
             conn.execute(
@@ -650,8 +660,8 @@ class SqliteDatabase(DatabaseInterface):
             if is_read:
                 conn.execute(
                     """
-                    UPDATE emails SET is_unread = 0, 
-                    flags = CASE WHEN flags NOT LIKE '%\\Seen%' 
+                    UPDATE emails SET is_unread = 0,
+                    flags = CASE WHEN flags NOT LIKE '%\\Seen%'
                         THEN flags || ',\\Seen' ELSE flags END
                     WHERE uid = ? AND folder = ?
                     """,
@@ -702,71 +712,6 @@ class SqliteDatabase(DatabaseInterface):
             conn.commit()
             return cursor.rowcount
 
-    def count_emails(self, folder: str) -> int:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT COUNT(*) FROM emails WHERE folder = ?", (folder,)
-            )
-            return cursor.fetchone()[0]
-
-    def get_synced_uids(self, folder: str) -> list[int]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute("SELECT uid FROM emails WHERE folder = ?", (folder,))
-            return [row[0] for row in cursor.fetchall()]
-
-    def get_synced_folders(self) -> list[dict[str, Any]]:
-        """Get list of all synced folders with their state."""
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT folder, uidvalidity, uidnext, highestmodseq, last_sync FROM folder_state ORDER BY folder"
-            )
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_thread_emails(self, uid: int, folder: str) -> list[dict[str, Any]]:
-        """Get all emails in a thread based on References/In-Reply-To headers."""
-        with self._get_email_connection() as conn:
-            # First get the email to find its message_id and references
-            cursor = conn.execute(
-                "SELECT message_id, in_reply_to, references_header FROM emails WHERE uid = ? AND folder = ?",
-                (uid, folder),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return []
-
-            message_id = row["message_id"]
-            in_reply_to = row["in_reply_to"] or ""
-            references = row["references_header"] or ""
-
-            # Collect all related message IDs
-            related_ids = set()
-            if message_id:
-                related_ids.add(message_id)
-            for ref in (in_reply_to + " " + references).split():
-                ref = ref.strip()
-                if ref:
-                    related_ids.add(ref)
-
-            if not related_ids:
-                # No thread info, return just this email
-                cursor = conn.execute(
-                    "SELECT * FROM emails WHERE uid = ? AND folder = ?",
-                    (uid, folder),
-                )
-                result = cursor.fetchone()
-                return [dict(result)] if result else []
-
-            # Find all emails that reference any of these IDs or are referenced by them
-            placeholders = ",".join("?" * len(related_ids))
-            query = f"""
-                SELECT * FROM emails 
-                WHERE message_id IN ({placeholders})
-                   OR in_reply_to IN ({placeholders})
-                ORDER BY date
-            """
-            cursor = conn.execute(query, list(related_ids) + list(related_ids))
-            return [dict(row) for row in cursor.fetchall()]
-
     def create_mutation(
         self,
         email_uid: int,
@@ -775,8 +720,6 @@ class SqliteDatabase(DatabaseInterface):
         params: Optional[dict] = None,
         pre_state: Optional[dict] = None,
     ) -> int:
-        import json
-
         with self._get_email_connection() as conn:
             cursor = conn.execute(
                 """
@@ -792,7 +735,8 @@ class SqliteDatabase(DatabaseInterface):
                 ),
             )
             conn.commit()
-            return cursor.lastrowid
+            last_id = cursor.lastrowid
+            return int(last_id) if last_id is not None else 0
 
     def update_mutation_status(
         self, mutation_id: int, status: str, error: Optional[str] = None
@@ -800,7 +744,7 @@ class SqliteDatabase(DatabaseInterface):
         with self._get_email_connection() as conn:
             conn.execute(
                 """
-                UPDATE mutation_journal 
+                UPDATE mutation_journal
                 SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -812,7 +756,7 @@ class SqliteDatabase(DatabaseInterface):
         with self._get_email_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT * FROM mutation_journal 
+                SELECT * FROM mutation_journal
                 WHERE email_uid = ? AND email_folder = ? AND status = 'PENDING'
                 ORDER BY created_at
                 """,
@@ -828,10 +772,52 @@ class SqliteDatabase(DatabaseInterface):
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def log_sync_error(
+        self,
+        error_type: str,
+        error_message: str,
+        folder: Optional[str] = None,
+        email_uid: Optional[int] = None,
+    ) -> None:
+        with self._get_email_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO sync_errors (folder, email_uid, error_type, error_message)
+                VALUES (?, ?, ?, ?)
+                """,
+                (folder, email_uid, error_type, error_message),
+            )
+            conn.commit()
+
+    def get_synced_uids(self, folder: str) -> list[int]:
+        with self._get_email_connection() as conn:
+            cursor = conn.execute(
+                "SELECT uid FROM emails WHERE folder = ?",
+                (folder,),
+            )
+            return [int(row[0]) for row in cursor.fetchall()]
+
+    def count_emails(self, folder: str) -> int:
+        with self._get_email_connection() as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM emails WHERE folder = ?",
+                (folder,),
+            )
+            row = cursor.fetchone()
+            return int(row[0]) if row else 0
+
+    def upsert_embedding(
+        self,
+        uid: int,
+        folder: str,
+        embedding: list[float],
+        model: str,
+        content_hash: str,
+    ) -> None:
+        raise NotImplementedError
+
 
 class PostgresDatabase(DatabaseInterface):
-    """PostgreSQL database backend with pgvector for semantic search."""
-
     def __init__(
         self,
         host: str = "localhost",
@@ -842,6 +828,8 @@ class PostgresDatabase(DatabaseInterface):
         ssl_mode: str = "prefer",
         embedding_dimensions: int = 1536,
     ):
+        super().__init__()
+
         self.host = host
         self.port = port
         self.database = database
@@ -850,26 +838,23 @@ class PostgresDatabase(DatabaseInterface):
         self.ssl_mode = ssl_mode
         self.embedding_dimensions = embedding_dimensions
         self._pool: Any = None
-
-        # Use halfvec for dimensions > 2000 (HNSW index limit for regular vector)
-        # halfvec uses 16-bit floats, allowing up to ~4000 dimensions
         self._vector_type = "halfvec" if embedding_dimensions > 2000 else "vector"
         self._vector_ops = (
             "halfvec_ip_ops" if embedding_dimensions > 2000 else "vector_ip_ops"
         )
 
+    def supports_embeddings(self) -> bool:
+        return True
+
     def _get_connection_string(self) -> str:
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}?sslmode={self.ssl_mode}"
 
     def initialize(self) -> None:
-        """Initialize PostgreSQL schema with pgvector extension."""
         try:
-            import psycopg
             from psycopg_pool import ConnectionPool
         except ImportError:
             raise ImportError(
-                "PostgreSQL support requires psycopg[binary] and psycopg_pool. "
-                "Install with: pip install 'psycopg[binary]' psycopg_pool"
+                "PostgreSQL support requires psycopg[binary] and psycopg_pool. Install with: pip install 'psycopg[binary]' psycopg_pool"
             )
 
         self._pool = ConnectionPool(
@@ -878,10 +863,7 @@ class PostgresDatabase(DatabaseInterface):
 
         with self._pool.connection() as conn:
             with conn.cursor() as cur:
-                # Enable pgvector extension
                 cur.execute("CREATE EXTENSION IF NOT EXISTS vector")
-
-                # Create emails table
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS emails (
@@ -911,12 +893,29 @@ class PostgresDatabase(DatabaseInterface):
                         gmail_labels JSONB,
                         has_attachments BOOLEAN DEFAULT FALSE,
                         attachment_filenames JSONB,
+                        auth_results_raw TEXT,
+                        spf TEXT,
+                        dkim TEXT,
+                        dmarc TEXT,
+                        is_suspicious_sender BOOLEAN DEFAULT FALSE,
+                        suspicious_sender_signals JSONB,
                         PRIMARY KEY (uid, folder)
                     )
                     """
                 )
 
-                # Create folder_state table
+                cur.execute(
+                    "ALTER TABLE emails ADD COLUMN IF NOT EXISTS auth_results_raw TEXT"
+                )
+                cur.execute("ALTER TABLE emails ADD COLUMN IF NOT EXISTS spf TEXT")
+                cur.execute("ALTER TABLE emails ADD COLUMN IF NOT EXISTS dkim TEXT")
+                cur.execute("ALTER TABLE emails ADD COLUMN IF NOT EXISTS dmarc TEXT")
+                cur.execute(
+                    "ALTER TABLE emails ADD COLUMN IF NOT EXISTS is_suspicious_sender BOOLEAN DEFAULT FALSE"
+                )
+                cur.execute(
+                    "ALTER TABLE emails ADD COLUMN IF NOT EXISTS suspicious_sender_signals JSONB"
+                )
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS folder_state (
@@ -928,8 +927,6 @@ class PostgresDatabase(DatabaseInterface):
                     )
                     """
                 )
-
-                # Create mutation_journal table
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS mutation_journal (
@@ -947,8 +944,6 @@ class PostgresDatabase(DatabaseInterface):
                     )
                     """
                 )
-
-                # Create system_health table for tracking metrics
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS system_health (
@@ -960,8 +955,6 @@ class PostgresDatabase(DatabaseInterface):
                     )
                     """
                 )
-
-                # Create sync_errors table for tracking sync failures
                 cur.execute(
                     """
                     CREATE TABLE IF NOT EXISTS sync_errors (
@@ -976,9 +969,15 @@ class PostgresDatabase(DatabaseInterface):
                     )
                     """
                 )
-
-                # Create embeddings table with vector column
-                # Use halfvec for dimensions > 2000 (HNSW limit is ~2000 for 32-bit vector)
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_preferences (
+                        user_id TEXT PRIMARY KEY,
+                        prefs_json TEXT NOT NULL,
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                    """
+                )
                 cur.execute(
                     f"""
                     CREATE TABLE IF NOT EXISTS email_embeddings (
@@ -993,8 +992,6 @@ class PostgresDatabase(DatabaseInterface):
                     )
                     """
                 )
-
-                # Create indexes
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder)"
                 )
@@ -1022,44 +1019,35 @@ class PostgresDatabase(DatabaseInterface):
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_emails_internal_date ON emails(internal_date)"
                 )
-
-                # Create HNSW index for vector similarity search
-                # Using inner product (*_ip_ops) - faster than cosine for normalized vectors
-                # All vectors are L2-normalized before storage, so inner product = cosine similarity
-                # Use halfvec_ip_ops for halfvec columns (dimensions > 2000)
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_emails_is_suspicious_sender ON emails(is_suspicious_sender)"
+                )
                 cur.execute(
                     f"""
-                    CREATE INDEX IF NOT EXISTS idx_embeddings_vector 
+                    CREATE INDEX IF NOT EXISTS idx_embeddings_vector
                     ON email_embeddings USING hnsw (embedding {self._vector_ops})
                     """
                 )
-
-                # Create GIN index for full-text search
                 cur.execute(
                     """
-                    CREATE INDEX IF NOT EXISTS idx_emails_fts 
+                    CREATE INDEX IF NOT EXISTS idx_emails_fts
                     ON emails USING gin(to_tsvector('english', COALESCE(subject, '') || ' ' || COALESCE(body_text, '')))
                     """
                 )
-
                 conn.commit()
-                logger.info("PostgreSQL database initialized with pgvector")
 
     @contextmanager
     def connection(self) -> Iterator[Any]:
-        """Get a database connection from the pool."""
         if not self._pool:
             raise RuntimeError("Database not initialized. Call initialize() first.")
         with self._pool.connection() as conn:
             yield conn
 
     def close(self) -> None:
-        """Close the connection pool."""
         if self._pool:
             self._pool.close()
             self._pool = None
 
-    # Email operations
     def upsert_email(
         self,
         uid: int,
@@ -1086,17 +1074,24 @@ class PostgresDatabase(DatabaseInterface):
         gmail_labels: Optional[list[str]],
         has_attachments: bool,
         attachment_filenames: Optional[list[str]],
+        auth_results_raw: Optional[str] = None,
+        spf: Optional[str] = None,
+        dkim: Optional[str] = None,
+        dmarc: Optional[str] = None,
+        is_suspicious_sender: bool = False,
+        suspicious_sender_signals: Optional[dict[str, Any]] = None,
     ) -> None:
         import hashlib
-        import json
 
         content = f"{subject or ''}{body_text}"
         content_hash = hashlib.sha256(content.encode()).hexdigest()[:32]
 
-        # Convert lists to JSON for PostgreSQL JSONB columns
         gmail_labels_json = json.dumps(gmail_labels) if gmail_labels else None
         attachment_filenames_json = (
             json.dumps(attachment_filenames) if attachment_filenames else None
+        )
+        suspicious_sender_signals_json = (
+            json.dumps(suspicious_sender_signals) if suspicious_sender_signals else None
         )
 
         with self.connection() as conn:
@@ -1108,8 +1103,9 @@ class PostgresDatabase(DatabaseInterface):
                         bcc_addr, date, internal_date, body_text, body_html, flags,
                         is_unread, is_important, size, modseq, synced_at, in_reply_to,
                         references_header, content_hash, gmail_thread_id, gmail_msgid,
-                        gmail_labels, has_attachments, attachment_filenames
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s)
+                        gmail_labels, has_attachments, attachment_filenames,
+                        auth_results_raw, spf, dkim, dmarc, is_suspicious_sender, suspicious_sender_signals
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (uid, folder) DO UPDATE SET
                         message_id = EXCLUDED.message_id,
                         subject = EXCLUDED.subject,
@@ -1134,7 +1130,13 @@ class PostgresDatabase(DatabaseInterface):
                         gmail_msgid = EXCLUDED.gmail_msgid,
                         gmail_labels = EXCLUDED.gmail_labels,
                         has_attachments = EXCLUDED.has_attachments,
-                        attachment_filenames = EXCLUDED.attachment_filenames
+                        attachment_filenames = EXCLUDED.attachment_filenames,
+                        auth_results_raw = EXCLUDED.auth_results_raw,
+                        spf = EXCLUDED.spf,
+                        dkim = EXCLUDED.dkim,
+                        dmarc = EXCLUDED.dmarc,
+                        is_suspicious_sender = EXCLUDED.is_suspicious_sender,
+                        suspicious_sender_signals = EXCLUDED.suspicious_sender_signals
                     """,
                     (
                         uid,
@@ -1162,6 +1164,12 @@ class PostgresDatabase(DatabaseInterface):
                         gmail_labels_json,
                         has_attachments,
                         attachment_filenames_json,
+                        auth_results_raw,
+                        spf,
+                        dkim,
+                        dmarc,
+                        is_suspicious_sender,
+                        suspicious_sender_signals_json,
                     ),
                 )
                 conn.commit()
@@ -1175,9 +1183,6 @@ class PostgresDatabase(DatabaseInterface):
         modseq: int,
         gmail_labels: Optional[list[str]] = None,
     ) -> None:
-        """Update only flags/labels for existing email (CONDSTORE optimization)."""
-        import json
-
         gmail_labels_json = json.dumps(gmail_labels) if gmail_labels else None
 
         with self.connection() as conn:
@@ -1245,20 +1250,8 @@ class PostgresDatabase(DatabaseInterface):
             conditions.append("subject ILIKE %s")
             params.append(f"%{subject_contains}%")
 
-        if body_contains:
-            # Use PostgreSQL full-text search
-            conditions.append(
-                "to_tsvector('english', COALESCE(subject, '') || ' ' || COALESCE(body_text, '')) @@ plainto_tsquery('english', %s)"
-            )
-            params.append(body_contains)
-
+        query = f"SELECT * FROM emails WHERE {' AND '.join(conditions)} ORDER BY date DESC LIMIT %s"
         params.append(limit)
-
-        query = f"""
-            SELECT * FROM emails 
-            WHERE {" AND ".join(conditions)}
-            ORDER BY date DESC LIMIT %s
-        """
 
         with self.connection() as conn:
             with conn.cursor() as cur:
@@ -1277,10 +1270,22 @@ class PostgresDatabase(DatabaseInterface):
     def mark_email_read(self, uid: int, folder: str, is_read: bool) -> None:
         with self.connection() as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "UPDATE emails SET is_unread = %s WHERE uid = %s AND folder = %s",
-                    (not is_read, uid, folder),
-                )
+                if is_read:
+                    cur.execute(
+                        """
+                        UPDATE emails SET is_unread = false
+                        WHERE uid = %s AND folder = %s
+                        """,
+                        (uid, folder),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE emails SET is_unread = true
+                        WHERE uid = %s AND folder = %s
+                        """,
+                        (uid, folder),
+                    )
                 conn.commit()
 
     def get_folder_state(self, folder: str) -> Optional[dict[str, Any]]:
@@ -1319,81 +1324,9 @@ class PostgresDatabase(DatabaseInterface):
         with self.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM emails WHERE folder = %s", (folder,))
-                count = cur.rowcount
+                deleted = cur.rowcount
                 conn.commit()
-                return count
-
-    def count_emails(self, folder: str) -> int:
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM emails WHERE folder = %s", (folder,))
-                return cur.fetchone()[0]
-
-    def get_synced_uids(self, folder: str) -> list[int]:
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT uid FROM emails WHERE folder = %s", (folder,))
-                return [row[0] for row in cur.fetchall()]
-
-    def get_synced_folders(self) -> list[dict[str, Any]]:
-        """Get list of all synced folders with their state."""
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT folder, uidvalidity, uidnext, highestmodseq, last_sync FROM folder_state ORDER BY folder"
-                )
-                columns = [desc[0] for desc in cur.description]
-                return [dict(zip(columns, row)) for row in cur.fetchall()]
-
-    def get_thread_emails(self, uid: int, folder: str) -> list[dict[str, Any]]:
-        """Get all emails in a thread based on References/In-Reply-To headers."""
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                # First get the email to find its message_id and references
-                cur.execute(
-                    "SELECT message_id, in_reply_to, references_header FROM emails WHERE uid = %s AND folder = %s",
-                    (uid, folder),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return []
-
-                message_id, in_reply_to, references = row
-                in_reply_to = in_reply_to or ""
-                references = references or ""
-
-                # Collect all related message IDs
-                related_ids = set()
-                if message_id:
-                    related_ids.add(message_id)
-                for ref in (in_reply_to + " " + references).split():
-                    ref = ref.strip()
-                    if ref:
-                        related_ids.add(ref)
-
-                if not related_ids:
-                    # No thread info, return just this email
-                    cur.execute(
-                        "SELECT * FROM emails WHERE uid = %s AND folder = %s",
-                        (uid, folder),
-                    )
-                    columns = [desc[0] for desc in cur.description]
-                    row = cur.fetchone()
-                    return [dict(zip(columns, row))] if row else []
-
-                # Find all emails that reference any of these IDs
-                related_list = list(related_ids)
-                cur.execute(
-                    """
-                    SELECT * FROM emails 
-                    WHERE message_id = ANY(%s)
-                       OR in_reply_to = ANY(%s)
-                    ORDER BY date
-                    """,
-                    (related_list, related_list),
-                )
-                columns = [desc[0] for desc in cur.description]
-                return [dict(zip(columns, row)) for row in cur.fetchall()]
+                return deleted
 
     def create_mutation(
         self,
@@ -1403,8 +1336,6 @@ class PostgresDatabase(DatabaseInterface):
         params: Optional[dict] = None,
         pre_state: Optional[dict] = None,
     ) -> int:
-        import json
-
         with self.connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -1423,7 +1354,7 @@ class PostgresDatabase(DatabaseInterface):
                 )
                 mutation_id = cur.fetchone()[0]
                 conn.commit()
-                return mutation_id
+                return int(mutation_id)
 
     def update_mutation_status(
         self, mutation_id: int, status: str, error: Optional[str] = None
@@ -1432,7 +1363,7 @@ class PostgresDatabase(DatabaseInterface):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    UPDATE mutation_journal 
+                    UPDATE mutation_journal
                     SET status = %s, error = %s, updated_at = NOW()
                     WHERE id = %s
                     """,
@@ -1445,7 +1376,7 @@ class PostgresDatabase(DatabaseInterface):
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT * FROM mutation_journal 
+                    SELECT * FROM mutation_journal
                     WHERE email_uid = %s AND email_folder = %s AND status = 'PENDING'
                     ORDER BY created_at
                     """,
@@ -1466,14 +1397,42 @@ class PostgresDatabase(DatabaseInterface):
                     return dict(zip(columns, row))
                 return None
 
-    # Embedding operations (pgvector specific)
-    def supports_embeddings(self) -> bool:
-        return True
+    def log_sync_error(
+        self,
+        error_type: str,
+        error_message: str,
+        folder: Optional[str] = None,
+        email_uid: Optional[int] = None,
+    ) -> None:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO sync_errors (folder, email_uid, error_type, error_message)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (folder, email_uid, error_type, error_message),
+                )
+                conn.commit()
+
+    def get_synced_uids(self, folder: str) -> list[int]:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT uid FROM emails WHERE folder = %s", (folder,))
+                rows = cur.fetchall()
+                return [int(row[0]) for row in rows]
+
+    def count_emails(self, folder: str) -> int:
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM emails WHERE folder = %s", (folder,))
+                row = cur.fetchone()
+                return int(row[0]) if row else 0
 
     def upsert_embedding(
         self,
-        email_uid: int,
-        email_folder: str,
+        uid: int,
+        folder: str,
         embedding: list[float],
         model: str,
         content_hash: str,
@@ -1490,210 +1449,22 @@ class PostgresDatabase(DatabaseInterface):
                         content_hash = EXCLUDED.content_hash,
                         created_at = NOW()
                     """,
-                    (email_uid, email_folder, embedding, model, content_hash),
+                    (uid, folder, embedding, model, content_hash),
                 )
                 conn.commit()
 
-    def get_embedding(
-        self, email_uid: int, email_folder: str
-    ) -> Optional[dict[str, Any]]:
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT * FROM email_embeddings WHERE email_uid = %s AND email_folder = %s",
-                    (email_uid, email_folder),
-                )
-                row = cur.fetchone()
-                if row:
-                    columns = [desc[0] for desc in cur.description]
-                    return dict(zip(columns, row))
-                return None
-
-    def semantic_search(
-        self,
-        query_embedding: list[float],
-        limit: int = 20,
-        folder: Optional[str] = None,
-        similarity_threshold: float = 0.7,
-    ) -> list[dict[str, Any]]:
-        """Search emails by semantic similarity using pgvector.
-
-        Uses inner product (<#>) operator which is faster than cosine for normalized vectors.
-        All vectors are L2-normalized before storage, so inner product equals cosine similarity.
-        Note: <#> returns negative inner product, so we negate it for similarity score.
-        """
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT e.*, -(emb.embedding <#> %s::{self._vector_type}) as similarity
-                    FROM emails e
-                    JOIN email_embeddings emb ON e.uid = emb.email_uid AND e.folder = emb.email_folder
-                    WHERE -(emb.embedding <#> %s::{self._vector_type}) >= %s
-                    {"AND emb.email_folder = %s" if folder else ""}
-                    ORDER BY emb.embedding <#> %s::{self._vector_type}
-                    LIMIT %s
-                    """,
-                    (
-                        query_embedding,
-                        query_embedding,
-                        similarity_threshold,
-                        *([folder] if folder else []),
-                        query_embedding,
-                        limit,
-                    ),
-                )
-                columns = [desc[0] for desc in cur.description]
-                return [dict(zip(columns, row)) for row in cur.fetchall()]
-
-    def find_similar_emails(
-        self, email_uid: int, email_folder: str, limit: int = 10
-    ) -> list[dict[str, Any]]:
-        """Find emails similar to a given email.
-
-        Uses inner product (<#>) for faster similarity search on normalized vectors.
-        """
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT e.*, -(emb.embedding <#> source.embedding) as similarity
-                    FROM email_embeddings source
-                    JOIN email_embeddings emb ON emb.email_uid != source.email_uid OR emb.email_folder != source.email_folder
-                    JOIN emails e ON e.uid = emb.email_uid AND e.folder = emb.email_folder
-                    WHERE source.email_uid = %s AND source.email_folder = %s
-                    ORDER BY emb.embedding <#> source.embedding
-                    LIMIT %s
-                    """,
-                    (email_uid, email_folder, limit),
-                )
-                columns = [desc[0] for desc in cur.description]
-                return [dict(zip(columns, row)) for row in cur.fetchall()]
-
-    def semantic_search_filtered(
-        self,
-        query_embedding: list[float],
-        limit: int = 20,
-        folder: Optional[str] = None,
-        from_addr: Optional[str] = None,
-        to_addr: Optional[str] = None,
-        date_from: Optional[str] = None,
-        date_to: Optional[str] = None,
-        has_attachments: Optional[bool] = None,
-        similarity_threshold: float = 0.5,
-    ) -> list[dict[str, Any]]:
-        """Metadata-augmented semantic search - hard filters FIRST, then vector ranking.
-
-        This prevents "vector drift" by ensuring results match metadata constraints
-        before applying semantic similarity ranking.
-        """
-        conditions = [f"-(emb.embedding <#> %s::{self._vector_type}) >= %s"]
-        params: list[Any] = [query_embedding, similarity_threshold]
-
-        if folder:
-            conditions.append("e.folder = %s")
-            params.append(folder)
-
-        if from_addr:
-            conditions.append("e.from_addr ILIKE %s")
-            params.append(f"%{from_addr}%")
-
-        if to_addr:
-            conditions.append("(e.to_addrs ILIKE %s OR e.cc_addrs ILIKE %s)")
-            params.extend([f"%{to_addr}%", f"%{to_addr}%"])
-
-        if date_from:
-            conditions.append("e.date >= %s")
-            params.append(date_from)
-
-        if date_to:
-            conditions.append("e.date <= %s")
-            params.append(date_to)
-
-        if has_attachments is not None:
-            conditions.append("e.has_attachments = %s")
-            params.append(has_attachments)
-
-        params.extend([query_embedding, query_embedding, limit])
-
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    f"""
-                    SELECT e.*, -(emb.embedding <#> %s::{self._vector_type}) as similarity
-                    FROM emails e
-                    JOIN email_embeddings emb ON e.uid = emb.email_uid AND e.folder = emb.email_folder
-                    WHERE {" AND ".join(conditions)}
-                    ORDER BY emb.embedding <#> %s::{self._vector_type}
-                    LIMIT %s
-                    """,
-                    tuple(params),
-                )
-                columns = [desc[0] for desc in cur.description]
-                return [dict(zip(columns, row)) for row in cur.fetchall()]
-
-    def get_emails_needing_embedding(
-        self, folder: str, limit: int = 100
-    ) -> list[dict[str, Any]]:
-        """Get emails that don't have embeddings or have outdated embeddings."""
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT e.* FROM emails e
-                    LEFT JOIN email_embeddings ee ON e.uid = ee.email_uid AND e.folder = ee.email_folder
-                    WHERE e.folder = %s 
-                      AND (ee.email_uid IS NULL OR ee.content_hash != e.content_hash)
-                    ORDER BY e.date DESC
-                    LIMIT %s
-                    """,
-                    (folder, limit),
-                )
-                columns = [desc[0] for desc in cur.description]
-                return [dict(zip(columns, row)) for row in cur.fetchall()]
-
-    def count_emails_needing_embedding(self, folder: str) -> int:
-        """Count emails that don't have embeddings yet."""
-        with self.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT COUNT(*) FROM emails e
-                    LEFT JOIN email_embeddings ee ON e.uid = ee.email_uid AND e.folder = ee.email_folder
-                    WHERE e.folder = %s 
-                      AND (ee.email_uid IS NULL OR ee.content_hash != e.content_hash)
-                    """,
-                    (folder,),
-                )
-                return cur.fetchone()[0]
-
 
 def create_database(config: Any) -> DatabaseInterface:
-    """Factory function to create the appropriate database backend.
-
-    Args:
-        config: DatabaseConfig from server configuration
-
-    Returns:
-        DatabaseInterface implementation (SqliteDatabase or PostgresDatabase)
-    """
-    from workspace_secretary.config import DatabaseBackend
-
-    if config.backend == DatabaseBackend.SQLITE:
-        return SqliteDatabase(
-            email_cache_path=config.sqlite.email_cache_path,
-        )
-    elif config.backend == DatabaseBackend.POSTGRES:
-        if not config.postgres:
-            raise ValueError("PostgreSQL configuration required for postgres backend")
+    backend = getattr(config, "backend", "sqlite")
+    if backend == "postgres":
         return PostgresDatabase(
-            host=config.postgres.host,
-            port=config.postgres.port,
-            database=config.postgres.database,
-            user=config.postgres.user,
-            password=config.postgres.password,
-            ssl_mode=config.postgres.ssl_mode,
-            embedding_dimensions=config.embeddings.dimensions,
+            host=config.host,
+            port=config.port,
+            database=config.database,
+            user=config.user,
+            password=config.password,
+            ssl_mode=getattr(config, "ssl_mode", "prefer"),
+            embedding_dimensions=getattr(config, "embedding_dimensions", 1536),
         )
-    else:
-        raise ValueError(f"Unknown database backend: {config.backend}")
+
+    return SqliteDatabase(db_path=getattr(config, "path", "config/secretary.db"))

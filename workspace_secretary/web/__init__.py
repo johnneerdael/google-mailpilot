@@ -89,8 +89,18 @@ def init_web_app(config: Optional[WebConfig] = None):
 
     from workspace_secretary.web.auth import init_auth, router as auth_router
 
+    from workspace_secretary.web.auth import CSRFMiddleware
+
     init_auth(config)
     web_app.include_router(auth_router)
+
+    web_app.add_middleware(CSRFMiddleware)
+
+    web_app.mount(
+        "/static",
+        StaticFiles(directory=str(Path(__file__).parent / "static")),
+        name="static",
+    )
 
     logger.info("Web app initialized")
 
@@ -100,19 +110,44 @@ def get_web_config() -> Optional[WebConfig]:
 
 
 def get_template_context(request: Request, **kwargs) -> dict:
-    from workspace_secretary.web.auth import get_session
+    from workspace_secretary.web.auth import CSRF_COOKIE, get_session
+    from workspace_secretary.web.database import get_pool
+    import json
 
     session = get_session(request)
     theme = "dark"
+    density = "default"
+
+    if session:
+        try:
+            pool = get_pool()
+            with pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT prefs_json FROM user_preferences WHERE user_id = %s",
+                        (session.user_id,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        prefs = json.loads(row[0])
+                        theme = prefs.get("theme", theme)
+                        density = prefs.get("density", density)
+        except Exception:
+            pass
+
     if _web_config and _web_config.theme:
         theme = _web_config.theme
+
+    csrf_token = request.cookies.get(CSRF_COOKIE)
 
     return {
         "request": request,
         "theme": theme,
+        "density": density,
         "session": session,
         "user_name": session.name if session else None,
         "user_email": session.email if session else None,
+        "csrf_token": csrf_token,
         **kwargs,
     }
 

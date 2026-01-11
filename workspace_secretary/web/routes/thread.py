@@ -9,7 +9,7 @@ import httpx
 
 from workspace_secretary.web import database as db
 from workspace_secretary.web.auth import require_auth, Session
-from workspace_secretary.web.engine_client import ENGINE_URL
+from workspace_secretary.web.engine_client import ENGINE_URL, get_engine_url
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
@@ -214,71 +214,70 @@ async def thread_view(
 
 @router.get("/api/attachment/{folder}/{uid}/{filename}")
 async def download_attachment(
-    folder: str,
-    uid: int,
-    filename: str,
-    session: Session = Depends(require_auth)
+    folder: str, uid: int, filename: str, session: Session = Depends(require_auth)
 ):
     """Proxy attachment downloads from the engine API."""
     engine_url = get_engine_url()
     url = f"{engine_url}/api/email/{folder}/{uid}/attachment/{filename}"
-    
+
     async with httpx.AsyncClient() as client:
         response = await client.get(url, timeout=30.0)
-        
+
         if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail="Attachment not found")
-        
+            raise HTTPException(
+                status_code=response.status_code, detail="Attachment not found"
+            )
+
         return StreamingResponse(
             iter([response.content]),
             media_type=response.headers.get("Content-Type", "application/octet-stream"),
             headers={
-                "Content-Disposition": response.headers.get("Content-Disposition", f'attachment; filename="{filename}"')
-            }
+                "Content-Disposition": response.headers.get(
+                    "Content-Disposition", f'attachment; filename="{filename}"'
+                )
+            },
         )
 
 
 @router.get("/api/attachment/{folder}/{uid}/download-all")
 async def download_all_attachments(
-    folder: str,
-    uid: int,
-    session: Session = Depends(require_auth)
+    folder: str, uid: int, session: Session = Depends(require_auth)
 ):
     """Download all attachments as a zip file."""
     import zipfile
     import tempfile
     from pathlib import Path
-    
+
     engine_url = get_engine_url()
-    
+
     email = db.get_email(uid, folder)
-    if not email or not email.get('attachment_filenames'):
+    if not email or not email.get("attachment_filenames"):
         raise HTTPException(status_code=404, detail="No attachments found")
-    
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.zip') as tmp_file:
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_file:
         zip_path = Path(tmp_file.name)
-    
+
     try:
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zip_file:
             async with httpx.AsyncClient() as client:
-                for filename in email['attachment_filenames']:
+                for filename in email["attachment_filenames"]:
                     url = f"{engine_url}/api/email/{folder}/{uid}/attachment/{filename}"
                     response = await client.get(url, timeout=30.0)
-                    
+
                     if response.status_code == 200:
                         zip_file.writestr(filename, response.content)
-        
+
         def iterfile():
-            with open(zip_path, 'rb') as f:
+            with open(zip_path, "rb") as f:
                 yield from f
             zip_path.unlink()
-        
+
         return StreamingResponse(
             iterfile(),
-            media_type='application/zip',
+            media_type="application/zip",
             headers={
-                'Content-Disposition': f'attachment; filename="attachments_{uid}.zip"'
-            }
+                "Content-Disposition": f'attachment; filename="attachments_{uid}.zip"'
+            },
         )
     except Exception as e:
         if zip_path.exists():

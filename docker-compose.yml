@@ -7,7 +7,9 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
+      - "8080:8080"
     volumes:
       - ./config:/app/config
     environment:
       - LOG_LEVEL=INFO
+      - ENGINE_API_URL=http://127.0.0.1:8001
