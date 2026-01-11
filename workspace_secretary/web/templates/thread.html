@@ -2,7 +2,87 @@
 {% block title %}{{ subject }} - Secretary{% endblock %}
 
 {% block content %}
-<div class="flex flex-col lg:flex-row gap-4 lg:gap-6" x-data="{ showActions: false, deletedUid: null, deletedFolder: null, showAnalysis: false }">
+<div class="flex flex-col lg:flex-row gap-4 lg:gap-6" x-data="{ 
+    showActions: false, 
+    deletedUid: null, 
+    deletedFolder: null, 
+    showAnalysis: false,
+    showSearch: false,
+    searchQuery: '',
+    currentMatch: 0,
+    totalMatches: 0,
+    searchInThread() {
+        this.clearHighlights();
+        if (!this.searchQuery.trim()) return;
+        
+        const container = document.querySelector('.email-content-container');
+        const walker = document.createTreeWalker(
+            container,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+        
+        const matches = [];
+        let node;
+        const regex = new RegExp(this.searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        
+        while (node = walker.nextNode()) {
+            const text = node.textContent;
+            let match;
+            while ((match = regex.exec(text)) !== null) {
+                matches.push({ node, start: match.index, end: match.index + match[0].length });
+            }
+        }
+        
+        matches.forEach((match, index) => {
+            const range = document.createRange();
+            range.setStart(match.node, match.start);
+            range.setEnd(match.node, match.end);
+            
+            const mark = document.createElement('mark');
+            mark.className = 'search-highlight';
+            mark.dataset.matchIndex = index;
+            range.surroundContents(mark);
+        });
+        
+        this.totalMatches = matches.length;
+        this.currentMatch = this.totalMatches > 0 ? 1 : 0;
+        if (this.totalMatches > 0) {
+            this.scrollToMatch(0);
+        }
+    },
+    clearHighlights() {
+        document.querySelectorAll('.search-highlight').forEach(mark => {
+            const parent = mark.parentNode;
+            parent.replaceChild(document.createTextNode(mark.textContent), mark);
+            parent.normalize();
+        });
+        this.totalMatches = 0;
+        this.currentMatch = 0;
+    },
+    nextMatch() {
+        if (this.totalMatches === 0) return;
+        this.currentMatch = (this.currentMatch % this.totalMatches) + 1;
+        this.scrollToMatch(this.currentMatch - 1);
+    },
+    prevMatch() {
+        if (this.totalMatches === 0) return;
+        this.currentMatch = this.currentMatch === 1 ? this.totalMatches : this.currentMatch - 1;
+        this.scrollToMatch(this.currentMatch - 1);
+    },
+    scrollToMatch(index) {
+        document.querySelectorAll('.search-highlight').forEach((mark, i) => {
+            mark.classList.toggle('current-match', i === index);
+        });
+        const current = document.querySelector('.search-highlight.current-match');
+        if (current) {
+            current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+}" @keydown.window.ctrl.f.prevent="showSearch = true; $nextTick(() => $refs.searchInput?.focus())"
+   @keydown.window.meta.f.prevent="showSearch = true; $nextTick(() => $refs.searchInput?.focus())"
+   @keydown.escape.window="showSearch = false; clearHighlights()">
     <div class="flex-1 space-y-4 min-w-0">
         <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div class="flex items-start space-x-3 sm:space-x-4 min-w-0">
@@ -35,6 +115,12 @@
                 <h1 class="text-lg sm:text-xl font-bold break-words">{{ subject }}</h1>
             </div>
             <div class="flex items-center space-x-1 sm:space-x-2 flex-shrink-0 ml-6 sm:ml-0">
+                <button @click="showSearch = !showSearch; showSearch && $nextTick(() => $refs.searchInput?.focus())"
+                        class="p-2 sm:p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md touch-manipulation"
+                        :class="{ 'bg-gray-800 text-primary': showSearch }"
+                        title="Search in thread (Ctrl+F)">
+                    🔍
+                </button>
                 <button @click="showAnalysis = !showAnalysis"
                         class="p-2 sm:p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-md touch-manipulation lg:hidden"
                         :class="{ 'bg-gray-800 text-primary': showAnalysis }"
@@ -117,7 +203,40 @@
             </div>
         </div>
 
-        <div class="space-y-3 sm:space-y-4">
+        <div x-show="showSearch" x-cloak x-collapse 
+             class="bg-gray-900 border border-gray-700 rounded-lg p-3 flex items-center gap-2">
+            <input type="text" 
+                   x-ref="searchInput"
+                   x-model="searchQuery"
+                   @keydown.enter.prevent="searchInThread()"
+                   @keydown.escape="showSearch = false; clearHighlights()"
+                   placeholder="Search in thread..."
+                   class="flex-1 px-3 py-2 text-sm bg-gray-800 border border-gray-700 rounded text-white placeholder-gray-500 focus:ring-2 focus:ring-primary focus:border-transparent">
+            <button @click="searchInThread()"
+                    class="px-3 py-2 text-sm bg-primary text-white rounded hover:bg-primary/90">
+                Find
+            </button>
+            <div x-show="totalMatches > 0" class="flex items-center gap-2 text-sm text-gray-400">
+                <span x-text="`${currentMatch}/${totalMatches}`"></span>
+                <button @click="prevMatch()" 
+                        class="p-1 hover:text-white"
+                        title="Previous match">
+                    ↑
+                </button>
+                <button @click="nextMatch()" 
+                        class="p-1 hover:text-white"
+                        title="Next match">
+                    ↓
+                </button>
+            </div>
+            <button @click="showSearch = false; clearHighlights()"
+                    class="p-1 text-gray-400 hover:text-white"
+                    title="Close search">
+                ✕
+            </button>
+        </div>
+
+        <div class="space-y-3 sm:space-y-4 email-content-container">
             {% for message in messages %}
             <div class="bg-gray-900 rounded-lg overflow-hidden" 
                  x-data="{ expanded: {{ 'true' if loop.last else 'false' }} }">

@@ -49,6 +49,67 @@ def extract_name(addr: str) -> str:
     return addr.split("@")[0]
 
 
+def parse_search_operators(query: str) -> tuple[str, dict]:
+    """
+    Parse Gmail-style search operators from query string.
+
+    Supported operators:
+    - from:email@example.com
+    - to:email@example.com
+    - subject:keyword
+    - has:attachment
+    - attachment:filename.pdf
+    - is:unread
+    - is:read
+    - is:starred
+
+    Returns: (plain_query, filters_dict)
+    """
+    import re
+
+    filters = {}
+    remaining_parts = []
+
+    operators = {
+        "from": "from_addr",
+        "to": "to_addr",
+        "subject": "subject_contains",
+        "has": "has_type",
+        "is": "is_state",
+        "attachment": "attachment_filename",
+    }
+
+    pattern = r"(\w+):([^\s]+)"
+
+    for match in re.finditer(pattern, query):
+        operator = match.group(1).lower()
+        value = match.group(2)
+
+        if operator == "from":
+            filters["from_addr"] = value
+        elif operator == "to":
+            filters["to_addr"] = value
+        elif operator == "subject":
+            filters["subject_contains"] = value
+        elif operator == "attachment":
+            filters["attachment_filename"] = value
+        elif operator == "has":
+            if value == "attachment":
+                filters["has_attachments"] = True
+        elif operator == "is":
+            if value == "unread":
+                filters["is_unread"] = True
+            elif value == "read":
+                filters["is_unread"] = False
+            elif value == "starred":
+                filters["is_starred"] = True
+
+    plain_query = re.sub(pattern, "", query).strip()
+    plain_query = re.sub(r"\s+", " ", plain_query)
+
+    return plain_query, filters
+
+
 async def get_embedding(text: str) -> Optional[list[float]]:
     provider = os.environ.get("EMBEDDINGS_PROVIDER", "openai_compat")
 
@@ -116,7 +177,10 @@ async def search(
     supports_semantic = db.has_embeddings()
     folders = db.get_folders()
 
-    # Build filters dict
+    # Parse search operators from query string
+    parsed_query, parsed_filters = parse_search_operators(q)
+
+    # Build filters dict from URL params
     filters = {
         "from_addr": from_addr,
         "date_from": date_from,
@@ -125,23 +189,30 @@ async def search(
         "is_unread": is_unread,
     }
 
+    # Merge parsed operators (parsed_filters take precedence)
+    filters.update({k: v for k, v in parsed_filters.items() if v is not None})
+
     # Check if any filters are active
     has_filters = any(
         [
-            from_addr,
+            filters.get("from_addr"),
+            filters.get("to_addr"),
+            filters.get("subject_contains"),
             date_from,
             date_to,
-            has_attachments is not None,
-            is_unread is not None,
+            filters.get("has_attachments") is not None,
+            filters.get("is_unread") is not None,
+            filters.get("is_starred") is not None,
         ]
     )
 
-    if not q.strip() and not has_filters:
+    if not parsed_query.strip() and not has_filters:
         return templates.TemplateResponse(
             "search.html",
             {
                 "request": request,
-                "query": "",
+                "query": q,
+                "parsed_query": parsed_query,
                 "mode": mode,
                 "results": [],
                 "folder": folder,
@@ -153,14 +224,16 @@ async def search(
         )
 
     results_raw = []
-    if mode == "semantic" and supports_semantic and q.strip():
-        embedding = await get_embedding(q)
+    if mode == "semantic" and supports_semantic and parsed_query.strip():
+        embedding = await get_embedding(parsed_query)
         if embedding:
             results_raw = db.semantic_search_advanced(embedding, folder, limit, filters)
         else:
-            results_raw = db.search_emails_advanced(q, folder, limit, filters)
+            results_raw = db.search_emails_advanced(
+                parsed_query, folder, limit, filters
+            )
     else:
-        results_raw = db.search_emails_advanced(q, folder, limit, filters)
+        results_raw = db.search_emails_advanced(parsed_query, folder, limit, filters)
 
     results = [
         {
@@ -183,6 +256,7 @@ async def search(
         {
             "request": request,
             "query": q,
+            "parsed_query": parsed_query,
             "mode": mode,
             "results": results,
             "folder": folder,
@@ -190,6 +264,7 @@ async def search(
             "supports_semantic": supports_semantic,
             "filters": filters,
             "saved_searches": _saved_searches,
+            "active_operators": parsed_filters,
         },
     )
 

@@ -269,6 +269,22 @@ def search_emails_advanced(
         conditions.append("is_unread = %s")
         params.append(filters["is_unread"])
 
+    if filters.get("to_addr"):
+        conditions.append("to_addr ILIKE %s")
+        params.append(f"%{filters['to_addr']}%")
+
+    if filters.get("subject_contains"):
+        conditions.append("subject ILIKE %s")
+        params.append(f"%{filters['subject_contains']}%")
+
+    if filters.get("is_starred") is not None:
+        if filters["is_starred"]:
+            conditions.append("gmail_labels ? '\\\\Starred'")
+
+    if filters.get("attachment_filename"):
+        conditions.append("attachment_filenames::text ILIKE %s")
+        params.append(f"%{filters['attachment_filename']}%")
+
     params.append(limit)
 
     sql = f"""
@@ -316,6 +332,22 @@ def semantic_search_advanced(
     if filters.get("is_unread") is not None:
         conditions.append("e.is_unread = %s")
         params.append(filters["is_unread"])
+
+    if filters.get("to_addr"):
+        conditions.append("e.to_addr ILIKE %s")
+        params.append(f"%{filters['to_addr']}%")
+
+    if filters.get("subject_contains"):
+        conditions.append("e.subject ILIKE %s")
+        params.append(f"%{filters['subject_contains']}%")
+
+    if filters.get("is_starred") is not None:
+        if filters["is_starred"]:
+            conditions.append("e.gmail_labels ? '\\\\Starred'")
+
+    if filters.get("attachment_filename"):
+        conditions.append("e.attachment_filenames::text ILIKE %s")
+        params.append(f"%{filters['attachment_filename']}%")
 
     params.extend([query_embedding, query_embedding, limit])
 
