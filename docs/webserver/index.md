@@ -28,19 +28,20 @@ services:
   workspace-secretary:
     image: ghcr.io/johnneerdael/gmail-secretary-map:latest
     ports:
-      - "5000:5000"
+      - "8000:8000"  # MCP server
+      - "8080:8080"  # Web UI
     volumes:
       - ./config:/app/config
     environment:
       - LLM_API_BASE=https://api.openai.com/v1
       - LLM_API_KEY=${OPENAI_API_KEY}
       - LLM_MODEL=gpt-4o
-    command: ["web", "--config", "/app/config/config.yaml", "--port", "5000"]
+      - ENGINE_API_URL=http://127.0.0.1:8001
 ```
 
 ```bash
 docker compose up -d
-# Navigate to http://localhost:5000
+# Navigate to http://localhost:8080
 ```
 
 ### Local Development
@@ -50,7 +51,7 @@ docker compose up -d
 uv sync --extra postgres --extra cohere
 
 # Run web server
-uv run python -m workspace_secretary.web.app --config config.yaml --port 5000
+uv run python -m workspace_secretary.web.main --config config.yaml
 ```
 
 ## Features
@@ -257,7 +258,7 @@ EMBEDDINGS_MODEL=text-embedding-004
 
 # Optional: Server settings
 WEB_HOST=0.0.0.0
-WEB_PORT=5000
+WEB_PORT=8080
 WEB_DEBUG=false
 ```
 
@@ -268,7 +269,8 @@ services:
   workspace-secretary:
     image: ghcr.io/johnneerdael/gmail-secretary-map:latest
     ports:
-      - "5000:5000"
+      - "8000:8000"  # MCP server
+      - "8080:8080"  # Web UI
     volumes:
       - ./config:/app/config
     environment:
@@ -280,7 +282,7 @@ services:
       - EMBEDDINGS_PROVIDER=gemini
       - EMBEDDINGS_API_KEY=${GEMINI_API_KEY}
       - EMBEDDINGS_MODEL=text-embedding-004
-    command: ["web", "--config", "/app/config/config.yaml"]
+      - ENGINE_API_URL=http://127.0.0.1:8001
     depends_on:
       - postgres
 
@@ -371,7 +373,7 @@ server {
     auth_basic_user_file /etc/nginx/.htpasswd;
     
     location / {
-        proxy_pass http://localhost:5000;
+        proxy_pass http://localhost:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -388,7 +390,7 @@ mail.yourdomain.com {
         uri /api/verify?rd=https://auth.yourdomain.com
         copy_headers Remote-User Remote-Groups Remote-Email
     }
-    reverse_proxy workspace-secretary:5000
+    reverse_proxy workspace-secretary:8080
 }
 ```
 
@@ -471,7 +473,7 @@ Connection refused
 **Solutions**:
 1. Check container is running: `docker ps`
 2. Check logs: `docker logs workspace-secretary`
-3. Verify port mapping: `-p 5000:5000`
+3. Verify port mapping: `-p 8080:8080`
 
 ### AI Chat Not Working
 

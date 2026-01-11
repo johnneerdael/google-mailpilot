@@ -1,6 +1,99 @@
-# Architecture v4.2.4
+# Architecture v4.3.0
 
-This document describes the sync engine architecture including parallel folder sync, IMAP connection pooling, and the IDLE threading model.
+This document describes the Gmail Secretary architecture including the 3-process deployment model, sync engine implementation, IMAP connection pooling, and the IDLE threading model.
+
+## Deployment Architecture (v4.3.0+)
+
+Gmail Secretary runs as three coordinated processes managed by supervisord:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                        Docker Container (supervisord)                    │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐    │
+│  │  Engine API      │   │  MCP Server      │   │  Web UI          │    │
+│  │  Port: 8001      │   │  Port: 8000      │   │  Port: 8080      │    │
+│  │  (internal only) │   │  (exposed)       │   │  (exposed)       │    │
+│  ├──────────────────┤   ├──────────────────┤   ├──────────────────┤    │
+│  │ • IMAP sync      │◄──│ • Tool exposure  │   │ • Human UI       │    │
+│  │ • IDLE monitor   │   │ • Read from DB   │   │ • Dashboard      │    │
+│  │ • Mutations      │◄──┤ • Proxy writes   │◄──┤ • Settings       │    │
+│  │ • DB writes      │   │   to Engine      │   │ • AI chat        │    │
+│  │ • OAuth mgmt     │   │ • Bearer auth    │   └──────────────────┘    │
+│  └──────────────────┘   └──────────────────┘                            │
+│         │                                                                │
+│         ▼                                                                │
+│  ┌──────────────────────────────────────────┐                           │
+│  │  SQLite / PostgreSQL Database            │                           │
+│  │  • Email cache (FTS5)                    │                           │
+│  │  • Gmail labels (JSONB)                  │                           │
+│  │  • Embeddings (pgvector)                 │                           │
+│  └──────────────────────────────────────────┘                           │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    ┌──────────────────────┐
+                    │   Gmail IMAP/SMTP    │
+                    │   Google Calendar    │
+                    └──────────────────────┘
+```
+
+### Process Responsibilities
+
+| Process | Port | Exposed | Purpose |
+|---------|------|---------|---------|
+| **Engine API** | 8001 | No (internal) | Handles all mutations, IMAP sync, OAuth token management |
+| **MCP Server** | 8000 | Yes | Exposes tools to AI clients (Claude, etc.) |
+| **Web UI** | 8080 | Yes | Human web interface for email management |
+
+### Communication Flow
+
+```
+AI Client → MCP Server (8000) → Engine API (127.0.0.1:8001) → Gmail IMAP
+User Browser → Web UI (8080) → Engine API (127.0.0.1:8001) → Gmail IMAP
+```
+
+### Environment Variables
+
+The `ENGINE_API_URL` environment variable configures how MCP Server and Web UI communicate with the Engine:
+
+```yaml
+environment:
+  - ENGINE_API_URL=http://127.0.0.1:8001  # Default
+```
+
+**When to override**: Multi-container deployments where the engine runs on a separate host.
+
+### Why Three Processes?
+
+| Concern | Engine API | MCP Server | Web UI |
+|---------|------------|------------|--------|
+| **IMAP Connection** | Owns connection, IDLE loop | Never touches IMAP | Never touches IMAP |
+| **Database Writes** | All writes happen here | Read-only | Read-only |
+| **OAuth Tokens** | Manages tokens, refresh | Stateless | Stateless |
+| **Uptime** | Always running | Scales with AI requests | Always running |
+| **Scalability** | Single instance (IMAP limit) | Can scale horizontally | Can scale horizontally |
+
+### supervisord Configuration
+
+```ini
+[program:engine]
+command=uv run python -m workspace_secretary.engine --host 127.0.0.1 --port 8001
+autostart=true
+autorestart=true
+
+[program:mcp-server]
+command=uv run python -m workspace_secretary.server
+autostart=true
+autorestart=true
+
+[program:web-ui]
+command=uv run python -m workspace_secretary.web.main
+autostart=true
+autorestart=true
+```
 
 ## Sync Architecture Overview
 

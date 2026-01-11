@@ -120,12 +120,14 @@ services:
   workspace-secretary:
     image: ghcr.io/johnneerdael/gmail-secretary-map:latest
     ports:
-      - "8000:8000"
+      - "8000:8000"  # MCP server
+      - "8080:8080"  # Web UI
     volumes:
       - ./config:/app/config
     environment:
       - POSTGRES_PASSWORD=your-secure-password
       - OPENAI_API_KEY=sk-...  # For embeddings
+      - ENGINE_API_URL=http://127.0.0.1:8001
     depends_on:
       postgres:
         condition: service_healthy
@@ -318,6 +320,24 @@ Authorization: Bearer your-generated-uuid-here
 ```
 
 See the [Client Setup Guide](./clients) for Claude Desktop, VS Code, Cursor, and other MCP clients.
+
+## Port Configuration
+
+The Docker container exposes three services:
+
+| Port | Service | Purpose |
+|------|---------|---------|
+| 8000 | MCP Server | AI client connections |
+| 8001 | Engine API | Internal only (not exposed) |
+| 8080 | Web UI | Human interface |
+
+**Port mapping in docker-compose.yml:**
+```yaml
+ports:
+  - "8000:8000"  # MCP server
+  - "8080:8080"  # Web UI
+  # Note: 8001 is internal only, do not expose
+```
 
 ## Troubleshooting
 

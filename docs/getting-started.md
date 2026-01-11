@@ -92,9 +92,10 @@ Add the generated token to your `config.yaml` under `bearer_auth.token`.
 
 ### Step 3: Create Docker Compose
 
-The container runs both the **MCP Server** and **Engine** internally via supervisor:
-- **MCP Server** - Exposes tools to AI clients via HTTP
-- **Engine** - Maintains persistent IMAP connection, handles sync and mutations
+The container runs three processes via supervisord:
+- **Engine API** (port 8001, internal) - IMAP sync, mutations, OAuth management
+- **MCP Server** (port 8000, exposed) - Tool exposure for AI clients
+- **Web UI** (port 8080, exposed) - Human web interface
 
 ```yaml
 # docker-compose.yml
@@ -104,15 +105,22 @@ services:
     container_name: workspace-secretary
     restart: always
     ports:
-      - "8000:8000"
+      - "8000:8000"  # MCP server
+      - "8080:8080"  # Web UI
     volumes:
       - ./config:/app/config
     environment:
       - LOG_LEVEL=INFO
+      - ENGINE_API_URL=http://127.0.0.1:8001
 ```
 
-::: tip Single Container, Two Processes
-The container internally runs both the MCP server and the sync engine via supervisor. The engine keeps IMAP connection alive and syncs every 5 minutes. No need for multiple containers.
+::: tip Three-Process Architecture
+The container internally runs three coordinated processes:
+1. **Engine API**: Maintains IMAP connection, handles all mutations
+2. **MCP Server**: Exposes tools to AI, proxies writes to Engine
+3. **Web UI**: Human interface, proxies writes to Engine
+
+The Engine API runs on port 8001 (internal only, not exposed).
 :::
 
 ### Step 4: Run OAuth Setup
@@ -311,7 +319,8 @@ See [Semantic Search Guide](/guide/semantic-search) and [Embeddings Guide](/embe
 
 ## Connecting AI Clients
 
-Server endpoint: `http://localhost:8000/mcp`
+MCP Server endpoint: `http://localhost:8000/mcp`  
+Web UI: `http://localhost:8080`
 
 ### Claude Desktop
 

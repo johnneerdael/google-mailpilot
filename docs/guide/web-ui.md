@@ -1,6 +1,6 @@
 # Web UI
 
-The Gmail Secretary includes a full-featured web interface for managing your inbox without an MCP client. Access it at `http://localhost:5000` when running the web server.
+The Gmail Secretary includes a full-featured web interface for managing your inbox without an MCP client. Access it at `http://localhost:8080` when running the web server.
 
 ## Getting Started
 
@@ -11,13 +11,12 @@ The Gmail Secretary includes a full-featured web interface for managing your inb
 docker compose up -d
 
 # Or locally with uv
-uv run python -m workspace_secretary.web.app --config config.yaml
+uv run python -m workspace_secretary.web.main --config config.yaml
 
-# Or with the CLI
-workspace-secretary web --config config.yaml --port 5000
+# The web UI runs on port 8080 by default
 ```
 
-The web UI runs on port 5000 by default. Navigate to `http://localhost:5000` to access your inbox.
+Navigate to `http://localhost:8080` to access your inbox. The web UI is automatically started by supervisord in the Docker container.
 
 ### Environment Variables
 
@@ -187,14 +186,15 @@ services:
   workspace-secretary:
     image: ghcr.io/johnneerdael/gmail-secretary-map:latest
     ports:
-      - "5000:5000"
+      - "8000:8000"  # MCP server
+      - "8080:8080"  # Web UI
     volumes:
       - ./config:/app/config
     environment:
       - LLM_API_BASE=https://api.openai.com/v1
       - LLM_API_KEY=${OPENAI_API_KEY}
       - LLM_MODEL=gpt-4o
-    command: ["web", "--config", "/app/config/config.yaml", "--port", "5000"]
+      - ENGINE_API_URL=http://127.0.0.1:8001
 ```
 
 ## Authentication
@@ -282,7 +282,7 @@ docker compose restart workspace-secretary
 
 #### Logging In
 
-1. Navigate to `http://localhost:5000/auth/login`
+1. Navigate to `http://localhost:8080/auth/login`
 2. **Enter your plaintext password** (NOT the hash)
    - If you hashed `mySecurePassword123`, type `mySecurePassword123`
 3. Click "Login"
@@ -324,7 +324,7 @@ server {
     auth_basic_user_file /etc/nginx/.htpasswd;
     
     location / {
-        proxy_pass http://localhost:5000;
+        proxy_pass http://localhost:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
     }
