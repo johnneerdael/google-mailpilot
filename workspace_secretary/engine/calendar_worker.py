@@ -38,19 +38,34 @@ class CalendarWorker:
 
         calendar_config = self.config.calendar
         if not calendar_config or not calendar_config.enabled:
-            logger.error("Calendar not enabled in config")
-            sys.exit(1)
+            logger.warning(
+                "Calendar not enabled in config - worker will exit gracefully"
+            )
+            logger.info(
+                "To enable calendar sync, set calendar.enabled: true in config.yaml"
+            )
+            sys.exit(0)
 
         if not self.config.imap.oauth2:
-            logger.error("OAuth2 configuration required for Calendar API")
-            sys.exit(1)
+            logger.warning(
+                "OAuth2 not configured - calendar worker will exit gracefully"
+            )
+            logger.info("Calendar sync requires OAuth2. Run auth_setup to configure.")
+            sys.exit(0)
 
-        self.calendar_client = CalendarClient(self.config)
-        self.calendar_client.connect()
-        logger.info("Calendar client initialized")
+        logger.info("OAuth2 configuration found")
+
+        try:
+            self.calendar_client = CalendarClient(self.config)
+            self.calendar_client.connect()
+            logger.info("Calendar client initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize calendar client: {e}")
+            logger.info("Calendar worker will exit. Check OAuth2 token validity.")
+            sys.exit(0)
 
         self.running = True
-        logger.info("Calendar worker initialized successfully")
+        logger.info("Calendar worker ready for sync operations")
 
     def compute_window(self):
         now = datetime.utcnow()
