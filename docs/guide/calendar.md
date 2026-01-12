@@ -376,7 +376,7 @@ Uses cached events for instant freebusy calculation.
 
 ## Next Steps
 
-- [Configuration Guide](./configuration.md) - Full config reference
-- [Web UI Guide](./web-ui.md) - Web interface documentation
-- [MCP Tools Reference](../tools/calendar.md) - Complete tool API
-- [Architecture](../architecture/calendar-caching.md) - Technical deep dive
+- [Configuration Guide](./configuration) - Full config reference
+- [Web UI Guide](./web-ui) - Web interface documentation
+- [Docker Deployment](./docker) - Deployment guide
+- [Security](./security) - Security best practices

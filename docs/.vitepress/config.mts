@@ -44,7 +44,9 @@ export default defineConfig({
               { text: 'OpenCode Integration', link: '/guide/opencode' },
               { text: 'Mutation Journal', link: '/guide/mutation-journal' }
             ]
-          },
+          }
+      ]
+    },
 
     socialLinks: [
       { icon: 'github', link: 'https://github.com/johnneerdael/gmail-secretary-mcp' }
