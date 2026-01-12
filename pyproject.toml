@@ -46,6 +46,7 @@ dependencies = [
     "argon2-cffi>=23.1.0",
     "bcrypt>=4.0.0",
     "psycopg[binary,pool]>=3.3.2",
+    "python-dateutil>=2.8.2",
     "cohere>=5.20.1",
     "google-genai>=1.57.0",
 ]
