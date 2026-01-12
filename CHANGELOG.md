@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.2] - 2026-01-12
+
+### Fixed
+- **Critical OAuth2 token persistence bug**: Refreshed tokens now properly persisted to disk
+  - `get_access_token()` in both `oauth2.py` and `engine/oauth2.py` now write refreshed tokens to `token.json`
+  - Prevents repeated token refreshes on every process restart
+  - Uses atomic write-and-replace pattern to prevent corruption (write to `.tmp`, then rename)
+  - Includes `fsync()` for durability guarantee
+  - Gracefully handles cases where token file doesn't exist or is corrupted
+  - Fixes issue where tokens would refresh successfully in memory but file remained stale
+
+### Technical Details
+- Token refresh now follows safe write pattern:
+  1. Read existing `token.json`
+  2. Update `access_token` and `token_expiry` fields
+  3. Write to `token.json.tmp` with `fsync()`
+  4. Atomic rename to `token.json`
+- Both `workspace_secretary/oauth2.py` (used by IMAP/SMTP clients) and `workspace_secretary/engine/oauth2.py` (used by engine) updated with identical persistence logic
+
 ## [4.7.1] - 2026-01-12
 
 ### Fixed

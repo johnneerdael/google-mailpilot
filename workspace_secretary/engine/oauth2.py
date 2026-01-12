@@ -3,7 +3,9 @@
 import base64
 import json
 import logging
+import os
 import time
+from pathlib import Path
 from typing import Optional, Tuple
 
 import requests  # type: ignore
@@ -75,8 +77,38 @@ def _parse_token_expiry(token_expiry) -> int:
             return 0
 
 
+def _save_refreshed_tokens(
+    oauth2_config: OAuth2Config, access_token: str, expiry: int
+) -> None:
+    token_path = Path(os.environ.get("TOKEN_PATH", "config/token.json"))
+
+    if not token_path.exists():
+        logger.warning(f"Token file {token_path} does not exist, skipping persist")
+        return
+
+    try:
+        with open(token_path, "r") as f:
+            token_data = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        logger.warning(f"Failed to read token file for update: {e}, skipping persist")
+        return
+
+    token_data["access_token"] = access_token
+    token_data["token_expiry"] = expiry
+
+    try:
+        token_path_tmp = token_path.with_suffix(".tmp")
+        with open(token_path_tmp, "w") as f:
+            json.dump(token_data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        token_path_tmp.replace(token_path)
+        logger.info(f"Persisted refreshed tokens to {token_path}")
+    except IOError as e:
+        logger.error(f"Failed to persist refreshed tokens: {e}")
+
+
 def get_access_token(oauth2_config: OAuth2Config) -> Tuple[str, int]:
-    """Get a valid access token, refreshing if needed."""
     current_time = int(time.time())
     token_expiry = _parse_token_expiry(oauth2_config.token_expiry)
 
@@ -109,6 +141,7 @@ def get_access_token(oauth2_config: OAuth2Config) -> Tuple[str, int]:
 
     oauth2_config.access_token = access_token
     oauth2_config.token_expiry = expiry
+    _save_refreshed_tokens(oauth2_config, access_token, expiry)
 
     return access_token, expiry
 
