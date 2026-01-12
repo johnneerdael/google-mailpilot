@@ -1,6 +1,6 @@
 # Gmail Secretary
 
-[![Version](https://img.shields.io/badge/version-4.6.0-blue.svg)](https://github.com/johnneerdael/gmail-secretary-map/releases)
+[![Version](https://img.shields.io/badge/version-4.7.1-blue.svg)](https://github.com/johnneerdael/gmail-secretary-map/releases)
 [![Status](https://img.shields.io/badge/status-Public%20Alpha-orange)](https://github.com/johnneerdael/gmail-secretary-map)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
