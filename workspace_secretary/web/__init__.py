@@ -11,6 +11,7 @@ Provides a human interface to the email system with:
 
 import logging
 import asyncio
+from datetime import datetime
 from typing import Optional
 from contextlib import asynccontextmanager
 
@@ -27,6 +28,23 @@ logger = logging.getLogger(__name__)
 # Initialize Jinja2 templates
 _templates_dir = Path(__file__).parent / "templates"
 templates = Jinja2Templates(directory=str(_templates_dir))
+
+
+def _strftime_filter(value, format_string: str) -> str:
+    """Format datetime value using strftime. Handles ISO strings and datetime objects."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+    if isinstance(value, datetime):
+        return value.strftime(format_string)
+    return str(value)
+
+
+templates.env.filters["strftime"] = _strftime_filter
 
 _web_config: Optional[WebConfig] = None
 

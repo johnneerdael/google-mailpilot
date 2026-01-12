@@ -598,6 +598,14 @@ class PostgresDatabase(DatabaseInterface):
     ) -> None:
         return emb_q.upsert_embedding(self, uid, folder, embedding, model, content_hash)
 
+    def count_emails_needing_embedding(self, folder: str) -> int:
+        return emb_q.count_emails_needing_embedding(self, folder)
+
+    def get_emails_needing_embedding(
+        self, folder: str, limit: int = 100
+    ) -> list[dict[str, Any]]:
+        return emb_q.get_emails_needing_embedding(self, folder, limit)
+
     def get_user_preferences(self, user_id: str) -> dict[str, Any]:
         return pref_q.get_user_preferences(self, user_id)
 

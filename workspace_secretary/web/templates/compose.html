@@ -210,9 +210,12 @@
                             title="Schedule send">
                         ⏰
                     </button>
-                    <input type="datetime-local" x-ref="scheduleInput" name="schedule_time" class="hidden"
+                    <input type="datetime-local" x-ref="scheduleInput" name="schedule_time" 
+                           class="absolute opacity-0 pointer-events-none"
                            @change="scheduleDateTime = $event.target.value">
-                    <span x-show="scheduleDateTime" class="text-xs text-muted">Scheduled</span>
+                    <span x-show="scheduleDateTime" class="text-xs text-muted">
+                        Scheduled <span x-text="new Date(scheduleDateTime).toLocaleString()"></span>
+                    </span>
                     
                     <span x-show="lastSaved" class="text-xs text-muted ml-2">
                         Saved <span x-text="Math.floor((Date.now() - lastSaved) / 1000)"></span>s ago

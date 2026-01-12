@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Better testability with pure query functions
   - Zero API changes - complete backward compatibility maintained
 
+### Fixed
+- **Calendar page 500 error**: Added missing `strftime` Jinja2 filter for date formatting
+- **Email sync type mismatch**: Fixed `is_unread` and `is_important` columns - now pass boolean directly instead of converting to integer (PostgreSQL expects BOOLEAN, not SMALLINT)
+- **Embedding sync errors**: Added missing `count_emails_needing_embedding()` and `get_emails_needing_embedding()` methods to PostgresDatabase and query module
+- **CSRF token not sent**: Fixed HTMX CSRF header injection - `document.body` was null when script ran in `<head>`, changed to `document.addEventListener`
+
 ### Technical Details
 - `engine/database.py`: Replaced SQL implementations with delegations to query modules
 - `web/database.py`: Delegates to shared query modules (read-only)

@@ -179,3 +179,41 @@ def has_embeddings(db: DatabaseInterface) -> bool:
                 return cur.fetchone() is not None
     except Exception:
         return False
+
+
+def count_emails_needing_embedding(db: DatabaseInterface, folder: str) -> int:
+    with db.connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*) FROM emails e
+                LEFT JOIN email_embeddings emb 
+                    ON e.uid = emb.email_uid AND e.folder = emb.email_folder
+                WHERE e.folder = %s AND emb.email_uid IS NULL
+                """,
+                (folder,),
+            )
+            row = cur.fetchone()
+            return row[0] if row else 0
+
+
+def get_emails_needing_embedding(
+    db: DatabaseInterface,
+    folder: str,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    with db.connection() as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                """
+                SELECT e.uid, e.folder, e.subject, e.body_text, e.content_hash
+                FROM emails e
+                LEFT JOIN email_embeddings emb 
+                    ON e.uid = emb.email_uid AND e.folder = emb.email_folder
+                WHERE e.folder = %s AND emb.email_uid IS NULL
+                ORDER BY e.date DESC
+                LIMIT %s
+                """,
+                (folder, limit),
+            )
+            return cur.fetchall()

@@ -759,7 +759,13 @@ Subject: Re: {subject}
                 return f"Error: API returned {e.response.status_code}"
             except Exception as e:
                 logger.exception(f"LLM error: {e}")
-                return f"Error: {str(e)}"
+                error_msg = str(e)
+                if (
+                    "No address associated with hostname" in error_msg
+                    or "getaddrinfo failed" in error_msg
+                ):
+                    return "Error: Unable to connect to LLM service. Please check that the AI assistant is properly configured in config.yaml under 'web.agent' section with a valid base_url and api_key."
+                return f"Error: {error_msg}"
 
         return "Reached maximum tool execution rounds. Please try a simpler request."
 
@@ -871,7 +877,14 @@ Subject: Re: {subject}
                 return
             except Exception as e:
                 logger.exception(f"LLM stream error: {e}")
-                yield f"\n\nError: {str(e)}"
+                error_msg = str(e)
+                if (
+                    "No address associated with hostname" in error_msg
+                    or "getaddrinfo failed" in error_msg
+                ):
+                    yield "\n\nError: Unable to connect to LLM service. Please check that the AI assistant is properly configured in config.yaml under 'web.agent' section with a valid base_url and api_key."
+                else:
+                    yield f"\n\nError: {error_msg}"
                 return
 
         yield "\n\nReached maximum tool execution rounds."

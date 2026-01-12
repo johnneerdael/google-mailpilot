@@ -124,6 +124,38 @@ The AI:
 3. Parses and presents the total
 :::
 
+## What's New in v4.8.0
+
+**Database Layer Refactoring & Bug Fixes**:
+
+- 🗄️ **Shared Query Modules**: All SQL queries extracted to `db/queries/` modules (56 functions total)
+- 📉 **~1,070 Lines Removed**: Eliminated duplicate SQL between engine and web layers
+- 🔧 **Bug Fixes**: 
+  - Calendar page no longer returns 500 error (missing `strftime` filter)
+  - Email sync works correctly (boolean type mismatch fixed)
+  - Embedding sync no longer errors (missing methods added)
+  - CSRF tokens now sent correctly with HTMX requests
+
+See the [Architecture Documentation](/architecture) for the new database layer structure.
+
+## What's New in v4.7.x
+
+**Critical Bug Fixes**:
+
+- 🔐 **OAuth2 Token Persistence**: Refreshed tokens now properly saved to disk (v4.7.2)
+- 🧠 **Embedding Dimensions**: Fixed config path for embedding dimensions (v4.7.1)
+- 🗄️ **Shared Database Layer**: New `workspace_secretary/db/` module for unified access
+
+## What's New in v4.6.0
+
+**Calendar Caching & Offline-First Architecture**:
+
+- ⚡ **Instant Calendar Reads**: 10x faster queries via intelligent caching
+- 🌐 **Offline-First Events**: Create/edit/delete events without internet
+- 🔄 **Background Worker**: Autonomous sync daemon with incremental updates
+- 🏷️ **Status Badges**: Visual indicators for pending sync and conflicts
+- ⚙️ **Calendar Selection**: Choose which calendars to display in settings
+
 ## What's New in v4.4.0
 
 **Web UI Configuration**:

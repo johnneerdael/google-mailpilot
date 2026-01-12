@@ -9,7 +9,7 @@
     <script src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
     <meta name="csrf-token" content="{{ csrf_token or '' }}">
     <script>
-        document.body.addEventListener('htmx:configRequest', (event) => {
+        document.addEventListener('htmx:configRequest', (event) => {
             const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
             if (csrfToken) {
                 event.detail.headers['X-CSRF-Token'] = csrfToken;
