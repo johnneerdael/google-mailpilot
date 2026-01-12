@@ -267,20 +267,14 @@ class BearerAuthConfig:
 class DatabaseBackend(Enum):
     """Database backend type."""
 
-    SQLITE = "sqlite"
     POSTGRES = "postgres"
 
     @classmethod
     def from_string(cls, value: str) -> "DatabaseBackend":
         normalized = value.lower().strip()
-        if normalized == "sqlite":
-            return cls.SQLITE
-        elif normalized in ("postgres", "postgresql"):
+        if normalized in ("postgres", "postgresql"):
             return cls.POSTGRES
-        else:
-            raise ValueError(
-                f"Invalid database backend '{value}'. Must be 'sqlite' or 'postgres'."
-            )
+        raise ValueError(f"Invalid database backend '{value}'. Must be 'postgres'.")
 
 
 class WebAuthMethod(Enum):
@@ -331,19 +325,6 @@ class WebApiFormat(Enum):
 
 
 @dataclass
-class SqliteConfig:
-    """SQLite database configuration."""
-
-    email_cache_path: str = "config/email_cache.db"
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "SqliteConfig":
-        return cls(
-            email_cache_path=data.get("email_cache_path", "config/email_cache.db"),
-        )
-
-
-@dataclass
 class PostgresConfig:
     """PostgreSQL database configuration."""
 
@@ -356,7 +337,6 @@ class PostgresConfig:
 
     @property
     def connection_string(self) -> str:
-        """Generate PostgreSQL connection string."""
         return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.database}?sslmode={self.ssl_mode}"
 
     @classmethod
@@ -425,43 +405,28 @@ class EmbeddingsConfig:
 class DatabaseConfig:
     """Database configuration."""
 
-    backend: DatabaseBackend = DatabaseBackend.SQLITE
-    sqlite: SqliteConfig = field(default_factory=SqliteConfig)
-    postgres: Optional[PostgresConfig] = None
+    postgres: PostgresConfig = field(default_factory=PostgresConfig)
     embeddings: EmbeddingsConfig = field(default_factory=EmbeddingsConfig)
 
+    @property
+    def backend(self) -> DatabaseBackend:
+        return DatabaseBackend.POSTGRES
+
     def __post_init__(self):
-        """Validate database configuration."""
-        if self.backend == DatabaseBackend.POSTGRES:
-            if not self.postgres:
-                raise ValueError(
-                    "PostgreSQL configuration required when backend is 'postgres'"
-                )
-            if not self.embeddings.enabled:
-                logger.warning(
-                    "PostgreSQL backend without embeddings - consider using SQLite for simpler deployment"
-                )
-            if self.embeddings.enabled and not self.embeddings.api_key:
-                raise ValueError(
-                    "Embeddings API key required when embeddings are enabled"
-                )
+        if self.embeddings.enabled and not self.embeddings.api_key:
+            raise ValueError("Embeddings API key required when embeddings are enabled")
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "DatabaseConfig":
-        backend_str = data.get("backend", "sqlite")
+        backend_str = data.get("backend", "postgres")
         backend = DatabaseBackend.from_string(backend_str)
+        if backend is not DatabaseBackend.POSTGRES:
+            raise ValueError("Only postgres is supported")
 
-        sqlite_config = SqliteConfig.from_dict(data.get("sqlite", {}))
-        postgres_config = (
-            PostgresConfig.from_dict(data.get("postgres", {}))
-            if data.get("postgres")
-            else None
-        )
+        postgres_config = PostgresConfig.from_dict(data.get("postgres", {}))
         embeddings_config = EmbeddingsConfig.from_dict(data.get("embeddings", {}))
 
         return cls(
-            backend=backend,
-            sqlite=sqlite_config,
             postgres=postgres_config,
             embeddings=embeddings_config,
         )
@@ -712,22 +677,15 @@ def save_config(config: ServerConfig, config_path: Optional[str] = None) -> Path
             "token": config.bearer_auth.token or "",
         },
         "database": {
-            "backend": config.database.backend.value,
-            "sqlite": {
-                "email_cache_path": config.database.sqlite.email_cache_path,
+            "backend": DatabaseBackend.POSTGRES.value,
+            "postgres": {
+                "host": config.database.postgres.host,
+                "port": config.database.postgres.port,
+                "database": config.database.postgres.database,
+                "user": config.database.postgres.user,
+                "password": config.database.postgres.password,
+                "ssl_mode": config.database.postgres.ssl_mode,
             },
-            "postgres": (
-                {
-                    "host": config.database.postgres.host,
-                    "port": config.database.postgres.port,
-                    "database": config.database.postgres.database,
-                    "user": config.database.postgres.user,
-                    "password": config.database.postgres.password,
-                    "ssl_mode": config.database.postgres.ssl_mode,
-                }
-                if config.database.postgres
-                else None
-            ),
             "embeddings": {
                 "enabled": config.database.embeddings.enabled,
                 "provider": config.database.embeddings.provider,

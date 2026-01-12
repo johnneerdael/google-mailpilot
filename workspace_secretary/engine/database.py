@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import uuid
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -312,947 +311,83 @@ class DatabaseInterface(ABC):
         raise NotImplementedError
 
 
-class SqliteDatabase(DatabaseInterface):
-    def __init__(self, db_path: str = "config/secretary.db"):
-        self.db_path = db_path
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-
-    def get_user_preferences(self, user_id: str) -> dict[str, Any]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT prefs_json FROM user_preferences WHERE user_id = ?",
-                (user_id,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return {}
-            try:
-                return json.loads(row[0]) if row[0] else {}
-            except Exception:
-                return {}
-
-    def upsert_user_preferences(self, user_id: str, prefs: dict[str, Any]) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO user_preferences (user_id, prefs_json, updated_at)
-                VALUES (?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    prefs_json = excluded.prefs_json,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, json.dumps(prefs)),
-            )
-            conn.commit()
-
-    def ensure_calendar_schema(self) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS calendar_sync_state (
-                    calendar_id TEXT PRIMARY KEY,
-                    sync_token TEXT,
-                    window_start TEXT NOT NULL,
-                    window_end TEXT NOT NULL,
-                    last_full_sync_at TEXT,
-                    last_incremental_sync_at TEXT,
-                    status TEXT NOT NULL DEFAULT 'ok',
-                    last_error TEXT
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS calendar_events_cache (
-                    calendar_id TEXT NOT NULL,
-                    event_id TEXT NOT NULL,
-                    etag TEXT,
-                    updated TEXT,
-                    status TEXT,
-                    start_ts_utc TEXT,
-                    end_ts_utc TEXT,
-                    start_date TEXT,
-                    end_date TEXT,
-                    is_all_day INTEGER NOT NULL DEFAULT 0,
-                    summary TEXT,
-                    location TEXT,
-                    local_status TEXT NOT NULL DEFAULT 'synced',
-                    raw_json TEXT NOT NULL,
-                    PRIMARY KEY (calendar_id, event_id)
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS calendar_outbox (
-                    id TEXT PRIMARY KEY,
-                    op_type TEXT NOT NULL,
-                    calendar_id TEXT NOT NULL,
-                    event_id TEXT,
-                    local_temp_id TEXT,
-                    payload_json TEXT NOT NULL,
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    attempt_count INTEGER NOT NULL DEFAULT 0,
-                    last_attempt_at TEXT,
-                    error TEXT,
-                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_cal_events_start_ts ON calendar_events_cache(calendar_id, start_ts_utc)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_cal_events_start_date ON calendar_events_cache(calendar_id, start_date)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_cal_outbox_status ON calendar_outbox(status, created_at)"
-            )
-            conn.commit()
-
-    def upsert_calendar_sync_state(
-        self,
-        calendar_id: str,
-        window_start: str,
-        window_end: str,
-        sync_token: Optional[str],
-        status: str = "ok",
-        last_error: Optional[str] = None,
-        last_full_sync_at: Optional[str] = None,
-        last_incremental_sync_at: Optional[str] = None,
-    ) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO calendar_sync_state (
-                    calendar_id, sync_token, window_start, window_end,
-                    last_full_sync_at, last_incremental_sync_at, status, last_error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(calendar_id) DO UPDATE SET
-                    sync_token = excluded.sync_token,
-                    window_start = excluded.window_start,
-                    window_end = excluded.window_end,
-                    last_full_sync_at = COALESCE(excluded.last_full_sync_at, calendar_sync_state.last_full_sync_at),
-                    last_incremental_sync_at = COALESCE(excluded.last_incremental_sync_at, calendar_sync_state.last_incremental_sync_at),
-                    status = excluded.status,
-                    last_error = excluded.last_error
-                """,
-                (
-                    calendar_id,
-                    sync_token,
-                    window_start,
-                    window_end,
-                    last_full_sync_at,
-                    last_incremental_sync_at,
-                    status,
-                    last_error,
-                ),
-            )
-            conn.commit()
-
-    def get_calendar_sync_state(self, calendar_id: str) -> Optional[dict[str, Any]]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM calendar_sync_state WHERE calendar_id = ?",
-                (calendar_id,),
-            )
-            row = cursor.fetchone()
-            return dict(row) if row else None
-
-    def list_calendar_sync_states(self) -> list[dict[str, Any]]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute("SELECT * FROM calendar_sync_state")
-            return [dict(row) for row in cursor.fetchall()]
-
-    def upsert_calendar_event_cache(
-        self,
-        calendar_id: str,
-        event_id: str,
-        raw_json: dict[str, Any],
-        etag: Optional[str] = None,
-        updated: Optional[str] = None,
-        status: Optional[str] = None,
-        start_ts_utc: Optional[str] = None,
-        end_ts_utc: Optional[str] = None,
-        start_date: Optional[str] = None,
-        end_date: Optional[str] = None,
-        is_all_day: bool = False,
-        summary: Optional[str] = None,
-        location: Optional[str] = None,
-        local_status: str = "synced",
-    ) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO calendar_events_cache (
-                    calendar_id, event_id, etag, updated, status,
-                    start_ts_utc, end_ts_utc, start_date, end_date, is_all_day,
-                    summary, location, local_status, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(calendar_id, event_id) DO UPDATE SET
-                    etag = excluded.etag,
-                    updated = excluded.updated,
-                    status = excluded.status,
-                    start_ts_utc = excluded.start_ts_utc,
-                    end_ts_utc = excluded.end_ts_utc,
-                    start_date = excluded.start_date,
-                    end_date = excluded.end_date,
-                    is_all_day = excluded.is_all_day,
-                    summary = excluded.summary,
-                    location = excluded.location,
-                    local_status = excluded.local_status,
-                    raw_json = excluded.raw_json
-                """,
-                (
-                    calendar_id,
-                    event_id,
-                    etag,
-                    updated,
-                    status,
-                    start_ts_utc,
-                    end_ts_utc,
-                    start_date,
-                    end_date,
-                    1 if is_all_day else 0,
-                    summary,
-                    location,
-                    local_status,
-                    json.dumps(raw_json),
-                ),
-            )
-            conn.commit()
-
-    def delete_calendar_event_cache(self, calendar_id: str, event_id: str) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                "DELETE FROM calendar_events_cache WHERE calendar_id = ? AND event_id = ?",
-                (calendar_id, event_id),
-            )
-            conn.commit()
-
-    def query_calendar_events_cached(
-        self,
-        calendar_ids: list[str],
-        time_min: str,
-        time_max: str,
-    ) -> list[dict[str, Any]]:
-        if not calendar_ids:
-            return []
-
-        placeholders = ",".join(["?"] * len(calendar_ids))
-        query = f"""
-            SELECT raw_json, local_status
-            FROM calendar_events_cache
-            WHERE calendar_id IN ({placeholders})
-              AND (
-                (is_all_day = 0 AND start_ts_utc < ? AND end_ts_utc > ?)
-                OR
-                (is_all_day = 1 AND start_date < substr(?, 1, 10) AND end_date > substr(?, 1, 10))
-              )
-            ORDER BY COALESCE(start_ts_utc, start_date) ASC
-        """
-
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                query,
-                [*calendar_ids, time_max, time_min, time_max, time_min],
-            )
-            results: list[dict[str, Any]] = []
-            for row in cursor.fetchall():
-                try:
-                    evt = json.loads(row[0])
-                except Exception:
-                    continue
-                evt["_local_status"] = row[1]
-                results.append(evt)
-            return results
-
-    def enqueue_calendar_outbox(
-        self,
-        op_type: str,
-        calendar_id: str,
-        payload_json: dict[str, Any],
-        event_id: Optional[str] = None,
-        local_temp_id: Optional[str] = None,
-    ) -> str:
-        outbox_id = str(uuid.uuid4())
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO calendar_outbox (id, op_type, calendar_id, event_id, local_temp_id, payload_json)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    outbox_id,
-                    op_type,
-                    calendar_id,
-                    event_id,
-                    local_temp_id,
-                    json.dumps(payload_json),
-                ),
-            )
-            conn.commit()
-        return outbox_id
-
-    def list_calendar_outbox(
-        self, statuses: Optional[list[str]] = None
-    ) -> list[dict[str, Any]]:
-        with self._get_email_connection() as conn:
-            if statuses:
-                placeholders = ",".join(["?"] * len(statuses))
-                cursor = conn.execute(
-                    f"SELECT * FROM calendar_outbox WHERE status IN ({placeholders}) ORDER BY created_at",
-                    statuses,
-                )
-            else:
-                cursor = conn.execute(
-                    "SELECT * FROM calendar_outbox ORDER BY created_at"
-                )
-            rows = [dict(r) for r in cursor.fetchall()]
-            for r in rows:
-                try:
-                    r["payload_json"] = (
-                        json.loads(r["payload_json"]) if r.get("payload_json") else {}
-                    )
-                except Exception:
-                    r["payload_json"] = {}
-            return rows
-
-    def update_calendar_outbox_status(
-        self,
-        outbox_id: str,
-        status: str,
-        error: Optional[str] = None,
-        event_id: Optional[str] = None,
-    ) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                UPDATE calendar_outbox
-                SET status = ?, error = ?, event_id = COALESCE(?, event_id),
-                    attempt_count = attempt_count + 1,
-                    last_attempt_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (status, error, event_id, outbox_id),
-            )
-            conn.commit()
-
-    def supports_embeddings(self) -> bool:
-        return False
-
-    @contextmanager
-    def _get_email_connection(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            yield conn
-        finally:
-            conn.close()
-
-    def initialize(self) -> None:
-        self._init_email_db()
-        self.ensure_calendar_schema()
-
-    @contextmanager
-    def connection(self) -> Iterator[Any]:
-        with self._get_email_connection() as conn:
-            yield conn
-
-    def close(self) -> None:
-        return
-
-    def _init_email_db(self) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS emails (
-                    uid INTEGER,
-                    folder TEXT,
-                    message_id TEXT,
-                    subject TEXT,
-                    from_addr TEXT,
-                    to_addr TEXT,
-                    cc_addr TEXT,
-                    bcc_addr TEXT,
-                    date TEXT,
-                    internal_date TEXT,
-                    body_text TEXT,
-                    body_html TEXT,
-                    flags TEXT,
-                    is_unread INTEGER,
-                    is_important INTEGER,
-                    size INTEGER,
-                    modseq INTEGER,
-                    synced_at TEXT,
-                    in_reply_to TEXT,
-                    references_header TEXT,
-                    content_hash TEXT,
-                    gmail_thread_id INTEGER,
-                    gmail_msgid INTEGER,
-                    gmail_labels TEXT,
-                    has_attachments INTEGER DEFAULT 0,
-                    attachment_filenames TEXT,
-                    auth_results_raw TEXT,
-                    spf TEXT,
-                    dkim TEXT,
-                    dmarc TEXT,
-                    is_suspicious_sender INTEGER DEFAULT 0,
-                    suspicious_sender_signals TEXT,
-                    security_score INTEGER DEFAULT 100,
-                    warning_type TEXT,
-                    PRIMARY KEY (uid, folder)
-                )
-                """
-            )
-
-            for col_def in [
-                ("auth_results_raw", "TEXT"),
-                ("spf", "TEXT"),
-                ("dkim", "TEXT"),
-                ("dmarc", "TEXT"),
-                ("is_suspicious_sender", "INTEGER DEFAULT 0"),
-                ("suspicious_sender_signals", "TEXT"),
-                ("security_score", "INTEGER DEFAULT 100"),
-                ("warning_type", "TEXT"),
-            ]:
-                try:
-                    conn.execute(
-                        f"ALTER TABLE emails ADD COLUMN {col_def[0]} {col_def[1]}"
-                    )
-                except Exception:
-                    pass
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS folder_state (
-                    folder TEXT PRIMARY KEY,
-                    uidvalidity INTEGER,
-                    uidnext INTEGER,
-                    highestmodseq INTEGER,
-                    last_sync TEXT
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS mutation_journal (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email_uid INTEGER NOT NULL,
-                    email_folder TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    params TEXT,
-                    status TEXT DEFAULT 'PENDING',
-                    pre_state TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    error TEXT,
-                    FOREIGN KEY (email_uid, email_folder) REFERENCES emails(uid, folder) ON DELETE CASCADE
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS system_health (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    component TEXT NOT NULL,
-                    metric TEXT NOT NULL,
-                    value TEXT,
-                    recorded_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sync_errors (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    folder TEXT,
-                    email_uid INTEGER,
-                    error_type TEXT NOT NULL,
-                    error_message TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    resolved_at TEXT,
-                    resolution TEXT
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS user_preferences (
-                    user_id TEXT PRIMARY KEY,
-                    prefs_json TEXT NOT NULL,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE VIRTUAL TABLE IF NOT EXISTS emails_fts USING fts5(
-                    subject, from_addr, to_addr, body_text,
-                    content='emails', content_rowid='rowid'
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE TRIGGER IF NOT EXISTS emails_ai AFTER INSERT ON emails BEGIN
-                    INSERT INTO emails_fts(rowid, subject, from_addr, to_addr, body_text)
-                    VALUES (new.rowid, new.subject, new.from_addr, new.to_addr, new.body_text);
-                END
-                """
-            )
-            conn.execute(
-                """
-                CREATE TRIGGER IF NOT EXISTS emails_ad AFTER DELETE ON emails BEGIN
-                    INSERT INTO emails_fts(emails_fts, rowid, subject, from_addr, to_addr, body_text)
-                    VALUES('delete', old.rowid, old.subject, old.from_addr, old.to_addr, old.body_text);
-                END
-                """
-            )
-            conn.execute(
-                """
-                CREATE TRIGGER IF NOT EXISTS emails_au AFTER UPDATE ON emails BEGIN
-                    INSERT INTO emails_fts(emails_fts, rowid, subject, from_addr, to_addr, body_text)
-                    VALUES('delete', old.rowid, old.subject, old.from_addr, old.to_addr, old.body_text);
-                    INSERT INTO emails_fts(rowid, subject, from_addr, to_addr, body_text)
-                    VALUES (new.rowid, new.subject, new.from_addr, new.to_addr, new.body_text);
-                END
-                """
-            )
-
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder)"
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(date)")
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_emails_unread ON emails(is_unread)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_emails_from ON emails(from_addr)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_emails_content_hash ON emails(content_hash)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_emails_gmail_thread_id ON emails(gmail_thread_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_emails_has_attachments ON emails(has_attachments)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_emails_internal_date ON emails(internal_date)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_emails_is_suspicious_sender ON emails(is_suspicious_sender)"
-            )
-
-            conn.commit()
-
-    def upsert_email(
-        self,
-        uid: int,
-        folder: str,
-        message_id: Optional[str],
-        subject: Optional[str],
-        from_addr: str,
-        to_addr: str,
-        cc_addr: str,
-        bcc_addr: str,
-        date: Optional[str],
-        internal_date: Optional[str],
-        body_text: str,
-        body_html: str,
-        flags: str,
-        is_unread: bool,
-        is_important: bool,
-        size: int,
-        modseq: int,
-        in_reply_to: str,
-        references_header: str,
-        gmail_thread_id: Optional[int],
-        gmail_msgid: Optional[int],
-        gmail_labels: Optional[list[str]],
-        has_attachments: bool,
-        attachment_filenames: Optional[list[str]],
-        auth_results_raw: Optional[str] = None,
-        spf: Optional[str] = None,
-        dkim: Optional[str] = None,
-        dmarc: Optional[str] = None,
-        is_suspicious_sender: bool = False,
-        suspicious_sender_signals: Optional[dict[str, Any]] = None,
-        security_score: int = 100,
-        warning_type: Optional[str] = None,
-    ) -> None:
-        import hashlib
-
-        content = f"{subject or ''}{body_text}"
-        content_hash = hashlib.sha256(content.encode()).hexdigest()[:32]
-
-        gmail_labels_str = ",".join(gmail_labels) if gmail_labels else None
-        attachment_filenames_str = (
-            json.dumps(attachment_filenames) if attachment_filenames else None
-        )
-        suspicious_sender_signals_str = (
-            json.dumps(suspicious_sender_signals) if suspicious_sender_signals else None
-        )
-
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO emails (
-                    uid, folder, message_id, subject, from_addr, to_addr, cc_addr,
-                    bcc_addr, date, internal_date, body_text, body_html, flags,
-                    is_unread, is_important, size, modseq, synced_at, in_reply_to,
-                    references_header, content_hash, gmail_thread_id, gmail_msgid,
-                    gmail_labels, has_attachments, attachment_filenames,
-                    auth_results_raw, spf, dkim, dmarc, is_suspicious_sender, suspicious_sender_signals,
-                    security_score, warning_type
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    uid,
-                    folder,
-                    message_id,
-                    subject,
-                    from_addr,
-                    to_addr,
-                    cc_addr,
-                    bcc_addr,
-                    date,
-                    internal_date,
-                    body_text,
-                    body_html,
-                    flags,
-                    1 if is_unread else 0,
-                    1 if is_important else 0,
-                    size,
-                    modseq,
-                    datetime.utcnow().isoformat(),
-                    in_reply_to,
-                    references_header,
-                    content_hash,
-                    gmail_thread_id,
-                    gmail_msgid,
-                    gmail_labels_str,
-                    1 if has_attachments else 0,
-                    attachment_filenames_str,
-                    auth_results_raw,
-                    spf,
-                    dkim,
-                    dmarc,
-                    1 if is_suspicious_sender else 0,
-                    suspicious_sender_signals_str,
-                    security_score,
-                    warning_type,
-                ),
-            )
-            conn.commit()
-
-    def update_email_flags(
-        self,
-        uid: int,
-        folder: str,
-        flags: str,
-        is_unread: bool,
-        modseq: int,
-        gmail_labels: Optional[list[str]] = None,
-    ) -> None:
-        gmail_labels_str = ",".join(gmail_labels) if gmail_labels else None
-
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                UPDATE emails SET flags = ?, is_unread = ?, modseq = ?,
-                    gmail_labels = COALESCE(?, gmail_labels), synced_at = ?
-                WHERE uid = ? AND folder = ?
-                """,
-                (
-                    flags,
-                    1 if is_unread else 0,
-                    modseq,
-                    gmail_labels_str,
-                    datetime.utcnow().isoformat(),
-                    uid,
-                    folder,
-                ),
-            )
-            conn.commit()
-
-    def get_email_by_uid(self, uid: int, folder: str) -> Optional[dict[str, Any]]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM emails WHERE uid = ? AND folder = ?", (uid, folder)
-            )
-            row = cursor.fetchone()
-            return dict(row) if row else None
-
-    def get_emails_by_uids(self, uids: list[int], folder: str) -> list[dict[str, Any]]:
-        if not uids:
-            return []
-        with self._get_email_connection() as conn:
-            placeholders = ",".join("?" * len(uids))
-            cursor = conn.execute(
-                f"SELECT * FROM emails WHERE folder = ? AND uid IN ({placeholders}) ORDER BY date DESC",
-                (folder, *uids),
-            )
-            return [dict(row) for row in cursor.fetchall()]
-
-    def _fts_search(
-        self,
-        folder: str,
-        query_text: str,
-        is_unread: Optional[bool],
-        from_addr: Optional[str],
-        to_addr: Optional[str],
-        limit: int,
-    ) -> list[dict[str, Any]]:
-        with self._get_email_connection() as conn:
-            fts_query = f'"{query_text}"'
-            base_query = """
-                SELECT e.* FROM emails e
-                JOIN emails_fts ON e.rowid = emails_fts.rowid
-                WHERE emails_fts MATCH ? AND e.folder = ?
-            """
-            params: list[Any] = [fts_query, folder]
-
-            if is_unread is not None:
-                base_query += " AND e.is_unread = ?"
-                params.append(1 if is_unread else 0)
-
-            if from_addr:
-                base_query += " AND e.from_addr LIKE ?"
-                params.append(f"%{from_addr}%")
-
-            if to_addr:
-                base_query += " AND e.to_addr LIKE ?"
-                params.append(f"%{to_addr}%")
-
-            base_query += " ORDER BY e.date DESC LIMIT ?"
-            params.append(limit)
-
-            cursor = conn.execute(base_query, params)
-            return [dict(row) for row in cursor.fetchall()]
-
-    def search_emails(
-        self,
-        folder: str = "INBOX",
-        is_unread: Optional[bool] = None,
-        from_addr: Optional[str] = None,
-        to_addr: Optional[str] = None,
-        subject_contains: Optional[str] = None,
-        body_contains: Optional[str] = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        if body_contains:
-            return self._fts_search(
-                folder, body_contains, is_unread, from_addr, to_addr, limit
-            )
-
-        query = "SELECT * FROM emails WHERE folder = ?"
-        params: list[Any] = [folder]
-
-        if is_unread is not None:
-            query += " AND is_unread = ?"
-            params.append(1 if is_unread else 0)
-
-        if from_addr:
-            query += " AND from_addr LIKE ?"
-            params.append(f"%{from_addr}%")
-
-        if to_addr:
-            query += " AND to_addr LIKE ?"
-            params.append(f"%{to_addr}%")
-
-        if subject_contains:
-            query += " AND subject LIKE ?"
-            params.append(f"%{subject_contains}%")
-
-        query += " ORDER BY date DESC LIMIT ?"
-        params.append(limit)
-
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(query, params)
-            return [dict(row) for row in cursor.fetchall()]
-
-    def delete_email(self, uid: int, folder: str) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                "DELETE FROM emails WHERE uid = ? AND folder = ?", (uid, folder)
-            )
-            conn.commit()
-
-    def mark_email_read(self, uid: int, folder: str, is_read: bool) -> None:
-        with self._get_email_connection() as conn:
-            if is_read:
-                conn.execute(
-                    """
-                    UPDATE emails SET is_unread = 0,
-                    flags = CASE WHEN flags NOT LIKE '%\\Seen%'
-                        THEN flags || ',\\Seen' ELSE flags END
-                    WHERE uid = ? AND folder = ?
-                    """,
-                    (uid, folder),
-                )
-            else:
-                conn.execute(
-                    """
-                    UPDATE emails SET is_unread = 1,
-                    flags = REPLACE(flags, '\\Seen', '')
-                    WHERE uid = ? AND folder = ?
-                    """,
-                    (uid, folder),
-                )
-            conn.commit()
-
-    def get_folder_state(self, folder: str) -> Optional[dict[str, Any]]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT uidvalidity, uidnext, highestmodseq, last_sync FROM folder_state WHERE folder = ?",
-                (folder,),
-            )
-            row = cursor.fetchone()
-            return dict(row) if row else None
-
-    def save_folder_state(
-        self, folder: str, uidvalidity: int, uidnext: int, highestmodseq: int = 0
-    ) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO folder_state (folder, uidvalidity, uidnext, highestmodseq, last_sync)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    folder,
-                    uidvalidity,
-                    uidnext,
-                    highestmodseq,
-                    datetime.utcnow().isoformat(),
-                ),
-            )
-            conn.commit()
-
-    def clear_folder(self, folder: str) -> int:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute("DELETE FROM emails WHERE folder = ?", (folder,))
-            conn.commit()
-            return cursor.rowcount
-
-    def create_mutation(
-        self,
-        email_uid: int,
-        email_folder: str,
-        action: str,
-        params: Optional[dict] = None,
-        pre_state: Optional[dict] = None,
-    ) -> int:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO mutation_journal (email_uid, email_folder, action, params, pre_state)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    email_uid,
-                    email_folder,
-                    action,
-                    json.dumps(params) if params else None,
-                    json.dumps(pre_state) if pre_state else None,
-                ),
-            )
-            conn.commit()
-            last_id = cursor.lastrowid
-            return int(last_id) if last_id is not None else 0
-
-    def update_mutation_status(
-        self, mutation_id: int, status: str, error: Optional[str] = None
-    ) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                UPDATE mutation_journal
-                SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-                """,
-                (status, error, mutation_id),
-            )
-            conn.commit()
-
-    def get_pending_mutations(self, email_uid: int, email_folder: str) -> list[dict]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                """
-                SELECT * FROM mutation_journal
-                WHERE email_uid = ? AND email_folder = ? AND status = 'PENDING'
-                ORDER BY created_at
-                """,
-                (email_uid, email_folder),
-            )
-            return [dict(row) for row in cursor.fetchall()]
-
-    def get_mutation(self, mutation_id: int) -> Optional[dict]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT * FROM mutation_journal WHERE id = ?", (mutation_id,)
-            )
-            row = cursor.fetchone()
-            return dict(row) if row else None
-
-    def log_sync_error(
-        self,
-        error_type: str,
-        error_message: str,
-        folder: Optional[str] = None,
-        email_uid: Optional[int] = None,
-    ) -> None:
-        with self._get_email_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO sync_errors (folder, email_uid, error_type, error_message)
-                VALUES (?, ?, ?, ?)
-                """,
-                (folder, email_uid, error_type, error_message),
-            )
-            conn.commit()
-
-    def get_synced_uids(self, folder: str) -> list[int]:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT uid FROM emails WHERE folder = ?",
-                (folder,),
-            )
-            return [int(row[0]) for row in cursor.fetchall()]
-
-    def count_emails(self, folder: str) -> int:
-        with self._get_email_connection() as conn:
-            cursor = conn.execute(
-                "SELECT COUNT(*) FROM emails WHERE folder = ?",
-                (folder,),
-            )
-            row = cursor.fetchone()
-            return int(row[0]) if row else 0
-
-    def upsert_embedding(
-        self,
-        uid: int,
-        folder: str,
-        embedding: list[float],
-        model: str,
-        content_hash: str,
-    ) -> None:
-        raise NotImplementedError
-
-
 class PostgresDatabase(DatabaseInterface):
+    def _expected_embedding_type(self) -> str:
+        return f"{self._vector_type}({self.embedding_dimensions})"
+
+    def _get_embedding_column_type_name(self, cur: Any) -> str:
+        cur.execute(
+            """
+            SELECT a.atttypid::regtype::text AS type_name
+            FROM pg_attribute a
+            WHERE a.attrelid = 'email_embeddings'::regclass
+              AND a.attname = 'embedding'
+              AND NOT a.attisdropped
+            """
+        )
+        row = cur.fetchone()
+        if not row:
+            raise RuntimeError("email_embeddings.embedding column not found")
+        return str(row[0])
+
+    def _ensure_embeddings_schema(self, cur: Any) -> None:
+        expected_type = self._expected_embedding_type()
+
+        cur.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS email_embeddings (
+                email_uid INTEGER NOT NULL,
+                email_folder TEXT NOT NULL,
+                embedding {expected_type},
+                model TEXT,
+                content_hash TEXT,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (email_uid, email_folder),
+                FOREIGN KEY (email_uid, email_folder) REFERENCES emails(uid, folder) ON DELETE CASCADE
+            )
+            """
+        )
+
+        actual_type_name = self._get_embedding_column_type_name(cur)
+        expected_base_type = expected_type.split("(", 1)[0]
+
+        if actual_type_name != expected_base_type:
+            cur.execute("DROP INDEX IF EXISTS idx_embeddings_vector")
+            cur.execute(
+                f"""
+                ALTER TABLE email_embeddings
+                ALTER COLUMN embedding TYPE {expected_type}
+                USING embedding::{expected_type}
+                """
+            )
+
+    def _ensure_embeddings_index(self, cur: Any) -> None:
+        type_name = self._get_embedding_column_type_name(cur)
+        ops = "halfvec_ip_ops" if type_name == "halfvec" else "vector_ip_ops"
+
+        cur.execute(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND tablename = 'email_embeddings'
+              AND indexname = 'idx_embeddings_vector'
+            """
+        )
+        row = cur.fetchone()
+        existing_def = str(row[0]) if row else None
+        expected_fragment = f"USING hnsw (embedding {ops})"
+
+        if existing_def and expected_fragment not in existing_def:
+            cur.execute("DROP INDEX IF EXISTS idx_embeddings_vector")
+
+        cur.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_embeddings_vector
+            ON email_embeddings USING hnsw (embedding {ops})
+            """
+        )
+
     def __init__(
         self,
         host: str = "localhost",
@@ -1413,20 +548,7 @@ class PostgresDatabase(DatabaseInterface):
                     )
                     """
                 )
-                cur.execute(
-                    f"""
-                    CREATE TABLE IF NOT EXISTS email_embeddings (
-                        email_uid INTEGER NOT NULL,
-                        email_folder TEXT NOT NULL,
-                        embedding {self._vector_type}({self.embedding_dimensions}),
-                        model TEXT,
-                        content_hash TEXT,
-                        created_at TIMESTAMPTZ DEFAULT NOW(),
-                        PRIMARY KEY (email_uid, email_folder),
-                        FOREIGN KEY (email_uid, email_folder) REFERENCES emails(uid, folder) ON DELETE CASCADE
-                    )
-                    """
-                )
+                self._ensure_embeddings_schema(cur)
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder)"
                 )
@@ -1457,12 +579,8 @@ class PostgresDatabase(DatabaseInterface):
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_emails_is_suspicious_sender ON emails(is_suspicious_sender)"
                 )
-                cur.execute(
-                    f"""
-                    CREATE INDEX IF NOT EXISTS idx_embeddings_vector
-                    ON email_embeddings USING hnsw (embedding {self._vector_ops})
-                    """
-                )
+                self._ensure_embeddings_index(cur)
+
                 cur.execute(
                     """
                     CREATE INDEX IF NOT EXISTS idx_emails_fts
@@ -2338,25 +1456,16 @@ class PostgresDatabase(DatabaseInterface):
 
 
 def create_database(config: Any) -> DatabaseInterface:
-    from workspace_secretary.config import DatabaseBackend
+    postgres_config = getattr(config, "postgres", None)
+    if not postgres_config:
+        raise ValueError("PostgreSQL config is required (database.postgres)")
 
-    backend = getattr(config, "backend", "sqlite")
-
-    if backend == DatabaseBackend.POSTGRES or backend == "postgres":
-        postgres_config = getattr(config, "postgres", None)
-        if not postgres_config:
-            raise ValueError(
-                "PostgreSQL backend selected but no postgres config provided"
-            )
-
-        return PostgresDatabase(
-            host=postgres_config.host,
-            port=postgres_config.port,
-            database=postgres_config.database,
-            user=postgres_config.user,
-            password=postgres_config.password,
-            ssl_mode=getattr(postgres_config, "ssl_mode", "prefer"),
-            embedding_dimensions=getattr(config, "embedding_dimensions", 1536),
-        )
-
-    return SqliteDatabase(db_path=getattr(config, "path", "config/secretary.db"))
+    return PostgresDatabase(
+        host=postgres_config.host,
+        port=postgres_config.port,
+        database=postgres_config.database,
+        user=postgres_config.user,
+        password=postgres_config.password,
+        ssl_mode=getattr(postgres_config, "ssl_mode", "prefer"),
+        embedding_dimensions=getattr(config, "embedding_dimensions", 1536),
+    )

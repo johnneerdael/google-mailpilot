@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.0] - 2026-01-12
+
+### Changed - PostgreSQL-Only Architecture
+
+**Breaking Changes:**
+- 🔴 **SQLite support removed**: Database backend now **requires PostgreSQL**
+- All SQLite-specific code paths and implementations removed from codebase
+- Configuration now only accepts `database.backend: postgres` (enum restricted)
+- `create_database()` factory function now returns PostgreSQL database only
+
+**Removed:**
+- `workspace_secretary/cache.py`: SQLite-based EmailCache implementation
+- `workspace_secretary/engine/email_cache.py`: Duplicate SQLite EmailCache
+- `SqliteDatabase` class and all sqlite3-backed methods from `database.py`
+- `SqliteConfig` dataclass from `config.py`
+- `DatabaseBackend.SQLITE` enum value
+- All sqlite3 imports and references (~2,700 lines of SQLite code removed)
+
+**Configuration Migration:**
+- Old `database.path` (SQLite) → Now `database.postgres.*` (PostgreSQL connection params)
+- `database.backend` must be `"postgres"` (validated at config load)
+- `config.sample.yaml` and documentation updated to reflect PostgreSQL-only requirement
+
+**Architecture Rationale:**
+- PostgreSQL provides native pgvector support for semantic email search (embeddings)
+- Unified database backend simplifies maintenance and testing
+- Eliminates dual-path code complexity and potential SQLite-specific bugs
+- Prepares for future DB unification between web and engine layers
+
+**Impact:**
+- ✅ Cleaner codebase: 2,754 lines removed, improved code clarity
+- ✅ Python compilation: All modules compile successfully
+- ✅ LSP diagnostics: Clean (no errors)
+- ✅ Embeddings: Now always available (pgvector support built-in)
+- ⚠️ **Migration required**: Existing SQLite users must migrate to PostgreSQL
+
+**Migration Guide:**
+1. Set up PostgreSQL instance (local or Docker)
+2. Update `config/config.yaml`:
+   ```yaml
+   database:
+     backend: postgres
+     postgres:
+       host: localhost
+       port: 5432
+       database: secretary
+       user: secretary
+       password: your_password
+   ```
+3. Run engine to initialize schema (automatic)
+4. Optionally migrate existing SQLite data using export/import scripts (not provided)
+
+### Technical Details
+- Files modified: 5
+- Lines removed: 2,754
+- Lines added: 101
+- Net change: -2,653 lines
+- All runtime code now PostgreSQL-only (no SQLite fallback paths)
+
 ## [4.6.0] - 2026-01-12
 
 ### Added - Calendar Caching & Offline-First Architecture
