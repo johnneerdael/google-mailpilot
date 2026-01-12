@@ -10,7 +10,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from workspace_secretary.config import load_config
-import psycopg_pool
 
 
 def check_contacts_tables():
@@ -26,6 +25,8 @@ def check_contacts_tables():
     print(
         f"Database config: {db_config.database} @ {db_config.host}:{db_config.port}\n"
     )
+
+    import psycopg_pool
 
     pool = psycopg_pool.ConnectionPool(
         conninfo=f"host={db_config.host} "
