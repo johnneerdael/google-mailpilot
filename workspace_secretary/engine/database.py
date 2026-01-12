@@ -2338,15 +2338,24 @@ class PostgresDatabase(DatabaseInterface):
 
 
 def create_database(config: Any) -> DatabaseInterface:
+    from workspace_secretary.config import DatabaseBackend
+
     backend = getattr(config, "backend", "sqlite")
-    if backend == "postgres":
+
+    if backend == DatabaseBackend.POSTGRES or backend == "postgres":
+        postgres_config = getattr(config, "postgres", None)
+        if not postgres_config:
+            raise ValueError(
+                "PostgreSQL backend selected but no postgres config provided"
+            )
+
         return PostgresDatabase(
-            host=config.host,
-            port=config.port,
-            database=config.database,
-            user=config.user,
-            password=config.password,
-            ssl_mode=getattr(config, "ssl_mode", "prefer"),
+            host=postgres_config.host,
+            port=postgres_config.port,
+            database=postgres_config.database,
+            user=postgres_config.user,
+            password=postgres_config.password,
+            ssl_mode=getattr(postgres_config, "ssl_mode", "prefer"),
             embedding_dimensions=getattr(config, "embedding_dimensions", 1536),
         )
 
