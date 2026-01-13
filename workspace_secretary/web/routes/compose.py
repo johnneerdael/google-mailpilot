@@ -21,6 +21,8 @@ async def compose_modal(
 ):
     signature = "\n\n--\nSent from Gmail Secretary"
 
+    is_htmx_request = request.headers.get("HX-Request") == "true"
+
     context = {
         "request": request,
         "mode": "new",
@@ -32,6 +34,7 @@ async def compose_modal(
         "reply_to_uid": None,
         "reply_to_folder": folder,
         "original_message_id": None,
+        "is_modal": is_htmx_request,
     }
 
     # Determine mode and pre-populate fields
@@ -99,8 +102,9 @@ async def compose_modal(
                     }
                 )
 
+    template_name = "compose.html" if is_htmx_request else "compose_page.html"
     return templates.TemplateResponse(
-        "compose.html", get_template_context(request, **context)
+        template_name, get_template_context(request, **context)
     )
 
 

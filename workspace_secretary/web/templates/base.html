@@ -5,8 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Secretary{% endblock %}</title>
     <link rel="stylesheet" href="{{ url_for('static', path='/theme.css') }}">
+    <link href="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.snow.css" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/quill@2.0.2/dist/quill.js"></script>
+    <script src="https://unpkg.com/@alpinejs/collapse@3.13.3/dist/cdn.min.js" defer></script>
     <script src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
     <meta name="csrf-token" content="{{ csrf_token or '' }}">
     <script>
