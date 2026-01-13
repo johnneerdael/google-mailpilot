@@ -45,20 +45,48 @@ from:vip@company.com is:unread
 
 ## search_emails
 
-Search emails using structured criteria.
+Search emails using structured criteria with database queries.
 
 **Parameters:**
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `keyword` | string | No | Text to search in subject/body |
-| `from` | string | No | Sender email filter |
-| `subject` | string | No | Subject line filter |
-| `since_date` | string | No | ISO date (YYYY-MM-DD) |
+| `folder` | string | No | Folder to search in (default: "INBOX") |
+| `from_addr` | string | No | Filter by sender address (partial match) |
+| `to_addr` | string | No | Filter by recipient address (partial match) |
+| `subject` | string | No | Filter by subject (partial match) |
+| `body` | string | No | Filter by body content (partial match) |
+| `unread_only` | boolean | No | Only return unread emails (default: false) |
 | `limit` | number | No | Max results (default: 50) |
 
 **Returns:** Array of email objects with `uid`, `subject`, `from`, `date`, `snippet`
 
 **Classification:** Read-only ✅
+
+**Example:**
+```json
+{
+  "folder": "INBOX",
+  "from_addr": "boss",
+  "unread_only": true,
+  "limit": 10
+}
+```
+
+**Response:**
+```json
+[
+  {
+    "uid": 12345,
+    "subject": "Q1 Budget Review",
+    "from": "boss@company.com",
+    "date": "2026-01-08T14:30:00Z",
+    "snippet": "Please review the attached budget...",
+    "is_unread": true,
+    "flags": ["\\Seen"]
+  }
+]
+```
 
 ## get_unread_messages
 
@@ -211,23 +239,35 @@ Send an email message.
 Create a draft reply in Gmail Drafts folder.
 
 **Parameters:**
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `uid` | number | Yes | Original email UID |
-| `body` | string | Yes | Draft reply body |
-| `folder` | string | No | Folder of original (default: INBOX) |
+| `folder` | string | Yes | Folder containing original email |
+| `reply_body` | string | Yes | Draft reply body content |
+| `reply_all` | boolean | No | Reply to all recipients (default: false) |
 
 **Returns:**
 ```json
 {
-  "status": "draft_created",
-  "draft_id": "draft_xyz",
-  "in_reply_to": 12345,
-  "message": "Draft saved to Gmail Drafts folder"
+  "status": "success",
+  "message": "Draft created",
+  "draft_uid": "draft_xyz",
+  "draft_folder": "[Gmail]/Drafts"
 }
 ```
 
 **Classification:** Staging ✅ (safe - creates draft, doesn't send)
+
+**Example:**
+```json
+{
+  "uid": 12345,
+  "folder": "INBOX",
+  "reply_body": "Thanks for your email. I'll review and get back to you.",
+  "reply_all": false
+}
+```
 
 ## mark_as_read / mark_as_unread
 
@@ -267,6 +307,73 @@ Add or remove Gmail labels.
 
 **Classification:** Mutation 🔴 (requires confirmation)
 
+## list_folders
+
+List all synced email folders and their status.
+
+**Parameters:** None
+
+**Returns:**
+```json
+[
+  {
+    "name": "INBOX",
+    "message_count": 150,
+    "unread_count": 5,
+    "sync_status": "synced"
+  }
+]
+```
+
+**Classification:** Read-only ✅
+
+---
+
+## trigger_sync
+
+Trigger an immediate email synchronization with the mail server.
+
+**Parameters:** None
+
+**Returns:**
+```json
+{
+  "status": "success",
+  "message": "Sync triggered"
+}
+```
+
+**Classification:** Read-only ✅
+
+---
+
+## process_email
+
+Perform a generic action on an email (move, mark read/unread, delete).
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `uid` | number | Yes | Email UID |
+| `folder` | string | Yes | Source folder |
+| `action` | string | Yes | Action: "move", "read", "unread", "delete" |
+| `target_folder` | string | No | Target folder for "move" action |
+
+**Example:**
+```json
+{
+  "uid": 12345,
+  "folder": "INBOX",
+  "action": "move",
+  "target_folder": "Projects"
+}
+```
+
+**Classification:** Mutation 🔴 (requires confirmation)
+
+---
+
 ## Semantic Search Tools
 
 Available when PostgreSQL + pgvector is configured:
@@ -295,6 +402,7 @@ Search emails by meaning, not keywords.
 Find emails similar to a reference email.
 
 **Parameters:**
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `uid` | number | Yes | Reference email UID |
@@ -302,6 +410,37 @@ Find emails similar to a reference email.
 | `limit` | number | No | Max results (default: 10) |
 
 **Use case:** Gather context before drafting a reply.
+
+**Classification:** Read-only ✅
+
+### semantic_search_filtered
+
+Combine hard filters with semantic similarity for precise search.
+
+**Why use this?** Regular semantic search can find semantically similar emails from wrong senders or date ranges. This tool applies hard filters FIRST, then ranks results by semantic similarity.
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `query` | string | Yes | Natural language query |
+| `folder` | string | No | Folder to search (default: INBOX) |
+| `from_addr` | string | No | Filter by sender (partial match) |
+| `to_addr` | string | No | Filter by recipient (partial match) |
+| `date_from` | string | No | Filter emails on/after (YYYY-MM-DD) |
+| `date_to` | string | No | Filter emails on/before (YYYY-MM-DD) |
+| `has_attachments` | boolean | No | Filter by attachment presence |
+| `limit` | number | No | Max results (default: 20) |
+
+**Example:**
+```json
+{
+  "query": "budget concerns",
+  "from_addr": "finance",
+  "date_from": "2026-01-01",
+  "has_attachments": true
+}
+```
 
 **Classification:** Read-only ✅
 

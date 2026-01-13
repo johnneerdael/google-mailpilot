@@ -11,10 +11,17 @@ All calendar operations respect your configured `timezone` and `working_hours` f
 Check calendar availability in a time range.
 
 **Parameters:**
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `time_min` | string | Yes | Start time (ISO 8601) |
-| `time_max` | string | Yes | End time (ISO 8601) |
+| `time_min` | string | Yes | Start time (ISO 8601 format) |
+| `time_max` | string | Yes | End time (ISO 8601 format) |
+
+::: tip ISO 8601 Format Required
+Use ISO 8601 format with timezone offset:
+- ✅ `2026-01-09T09:00:00-08:00`
+- ❌ `2026-01-09 9am` or `09:00`
+:::
 
 **Example:**
 ```json
@@ -55,10 +62,18 @@ Check calendar availability in a time range.
 List calendar events in a date range.
 
 **Parameters:**
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `start_date` | string | Yes | Start date (YYYY-MM-DD) |
-| `end_date` | string | Yes | End date (YYYY-MM-DD) |
+| `time_min` | string | Yes | Start time (ISO 8601 format, e.g., 2026-01-09T00:00:00-08:00) |
+| `time_max` | string | Yes | End time (ISO 8601 format) |
+| `calendar_id` | string | No | Calendar ID (default: "primary") |
+
+::: tip ISO 8601 Format Required
+All calendar operations require ISO 8601 format with timezone offset:
+- ✅ Correct: `2026-01-09T09:00:00-08:00` (9 AM Pacific Time)
+- ❌ Incorrect: `2026-01-09` or `09:00`
+:::
 
 **Returns:**
 ```json
@@ -79,6 +94,14 @@ List calendar events in a date range.
 ```
 
 **Classification:** Read-only ✅
+
+**Example:**
+```json
+{
+  "time_min": "2026-01-09T00:00:00-08:00",
+  "time_max": "2026-01-09T23:59:59-08:00"
+}
+```
 
 ## suggest_reschedule
 
@@ -135,23 +158,27 @@ Create a new calendar event.
 :::
 
 **Parameters:**
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `summary` | string | Yes | Event title |
-| `start` | string | Yes | Start time (ISO 8601) |
-| `end` | string | Yes | End time (ISO 8601) |
+| `start_time` | string | Yes | Start time (ISO 8601 format) |
+| `end_time` | string | Yes | End time (ISO 8601 format) |
 | `description` | string | No | Event description |
 | `location` | string | No | Event location |
-| `attendees` | array | No | Attendee email addresses |
+| `calendar_id` | string | No | Calendar ID (default: "primary") |
+| `meeting_type` | string | No | Set to "google_meet" to add video conferencing |
 
 **Example request:**
 ```json
 {
   "summary": "Project Review",
-  "start": "2026-01-10T14:00:00-08:00",
-  "end": "2026-01-10T15:00:00-08:00",
+  "start_time": "2026-01-10T14:00:00-08:00",
+  "end_time": "2026-01-10T15:00:00-08:00",
   "description": "Quarterly project status review",
-  "attendees": ["team@company.com", "manager@company.com"]
+  "location": "Conference Room A",
+  "attendees": ["team@company.com", "manager@company.com"],
+  "meeting_type": "google_meet"
 }
 ```
 
@@ -171,6 +198,35 @@ Accept or decline a meeting invitation.
 | `event_id` | string | Yes | Calendar event ID |
 | `response` | string | Yes | `accept`, `decline`, or `tentative` |
 | `message` | string | No | Optional response message |
+
+**Working Hours Check:**
+If the meeting is outside configured working hours, present options:
+```
+This meeting is scheduled for 8 PM (outside your working hours: 9 AM - 6 PM).
+
+Options:
+1. Accept as-is (special circumstances)
+2. Suggest alternative times within working hours
+3. Decline politely
+```
+
+**Classification:** Mutation 🔴 (requires user confirmation)
+
+## respond_to_meeting
+
+Respond to a meeting invitation (accept, decline, or tentative).
+
+::: danger Mutation Tool
+**Requires user confirmation.** Even for meetings outside working hours—the user may have exceptions (investor calls, international meetings, etc.).
+:::
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `event_id` | string | Yes | Calendar event ID |
+| `calendar_id` | string | No | Calendar ID (default: "primary") |
+| `response` | string | Yes | `accepted`, `declined`, or `tentative` |
 
 **Working Hours Check:**
 If the meeting is outside configured working hours, present options:

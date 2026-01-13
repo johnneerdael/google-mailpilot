@@ -141,21 +141,30 @@ See [Semantic Search Guide](/guide/semantic-search) for setup.
 | Tool | Purpose | Classification |
 |------|---------|---------------|
 | `get_unread_messages` | Fetch recent unread | Read-only |
-| `search_emails` | Keyword search | Read-only |
+| `search_emails` | Structured search | Read-only |
 | `gmail_search` | Gmail query syntax | Read-only |
+| `list_folders` | List all synced folders | Read-only |
 | `get_email_details` | Full email content | Read-only |
 | `get_thread` | Conversation thread | Read-only |
+| `summarize_thread` | Thread summary | Read-only |
 | `send_email` | Send email | **Mutation** |
 | `create_draft_reply` | Create draft | Staging |
+| `mark_as_read` | Mark as read | **Mutation** |
+| `mark_as_unread` | Mark as unread | **Mutation** |
+| `move_email` | Move to folder | **Mutation** |
+| `modify_gmail_labels` | Modify labels | **Mutation** |
+| `process_email` | Generic email action | **Mutation** |
+| `trigger_sync` | Force email sync | Read-only |
 
 ### Calendar Operations
 
 | Tool | Purpose | Classification |
 |------|---------|---------------|
-| `check_calendar` | Check availability | Read-only |
+| `get_calendar_availability` | Check availability | Read-only |
 | `list_calendar_events` | List events | Read-only |
 | `suggest_reschedule` | Find meeting times | Staging |
 | `create_calendar_event` | Create event | **Mutation** |
+| `respond_to_meeting` | Accept/decline invite | **Mutation** |
 
 ### Intelligence Operations
 
@@ -166,7 +175,22 @@ See [Semantic Search Guide](/guide/semantic-search) for setup.
 | `quick_clean_inbox` | Identify cleanup candidates | Read-only |
 | `execute_clean_batch` | Execute approved cleanup | **Mutation** |
 | `triage_priority_emails` | Identify priority emails | Read-only |
-| `triage_remaining_emails` | Identify remaining emails | Read-only |
+| `triage_remaining_emails` | Process remaining emails | Read-only |
+
+### Semantic Search (PostgreSQL + pgvector)
+
+| Tool | Purpose | Classification |
+|------|---------|---------------|
+| `semantic_search_emails` | Search by meaning | Read-only |
+| `semantic_search_filtered` | Metadata + semantic search | Read-only |
+| `find_related_emails` | Find similar emails | Read-only |
+
+### Utility Operations
+
+| Tool | Purpose | Classification |
+|------|---------|---------------|
+| `setup_smart_labels` | Setup folder hierarchy | Staging |
+| `create_task` | Create task in tasks.md | Staging |
 
 ## Rate Limits
 

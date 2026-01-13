@@ -198,14 +198,16 @@ Uses same continuation pattern as `quick_clean_inbox`.
   "processed_count": 150
 }
 ```
-
 **Classification:** Read-only ✅
 
 ## triage_remaining_emails
 
 Process emails that don't match auto-clean or priority criteria.
 
+Uses the same continuation pattern as other batch tools.
+
 **Parameters:**
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `continuation_state` | string | No | State from previous call |
@@ -316,6 +318,40 @@ Get structured summary of email thread for AI context efficiency.
 5. Present draft to user for approval
 6. User approves → send_email()
 ```
+
+---
+
+## setup_smart_labels
+
+Set up the Secretary folder hierarchy for organizing emails.
+
+Creates Gmail labels for email triage workflow:
+- `Secretary/Priority` - High-priority emails needing attention
+- `Secretary/Action-Required` - Emails requiring response
+- `Secretary/Processed` - Emails that have been handled
+- `Secretary/Calendar` - Meeting invitations and calendar-related
+- `Secretary/Newsletter` - Newsletters and automated mail
+- `Secretary/Waiting` - Emails awaiting responses
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `dry_run` | boolean | No | If true, only report what would be created (default: false) |
+
+**Returns:**
+```
+Created: Secretary/Priority
+Created: Secretary/Action-Required
+Created: Secretary/Processed
+Created: Secretary/Calendar
+Created: Secretary/Newsletter
+Created: Secretary/Waiting
+
+All labels created successfully.
+```
+
+**Classification:** Staging ✅ (idempotent, safe to run)
 
 ---
 
