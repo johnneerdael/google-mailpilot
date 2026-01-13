@@ -1,15 +1,12 @@
 from fastapi import APIRouter, Request, Query, Depends
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from datetime import datetime
 import html
 
-from workspace_secretary.web import database as db
+from workspace_secretary.web import database as db, templates, get_template_context
 from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def is_starred(email: dict) -> bool:
@@ -92,15 +89,15 @@ async def inbox(
 
     return templates.TemplateResponse(
         "inbox.html",
-        {
-            "request": request,
-            "emails": emails,
-            "page": page,
-            "per_page": per_page,
-            "has_more": has_more,
-            "folder": folder,
-            "unread_only": unread_only,
-        },
+        get_template_context(
+            request,
+            emails=emails,
+            page=page,
+            per_page=per_page,
+            has_more=has_more,
+            folder=folder,
+            unread_only=unread_only,
+        ),
     )
 
 
@@ -137,7 +134,7 @@ async def emails_partial(
 
     return templates.TemplateResponse(
         "partials/email_list.html",
-        {"request": request, "emails": emails, "page": page, "has_more": has_more},
+        get_template_context(request, emails=emails, page=page, has_more=has_more),
     )
 
 
@@ -174,14 +171,14 @@ async def inbox_more(
 
     return templates.TemplateResponse(
         "partials/inbox_more.html",
-        {
-            "request": request,
-            "emails": emails,
-            "page": page,
-            "has_more": has_more,
-            "folder": folder,
-            "unread_only": unread_only,
-        },
+        get_template_context(
+            request,
+            emails=emails,
+            page=page,
+            has_more=has_more,
+            folder=folder,
+            unread_only=unread_only,
+        ),
     )
 
 
@@ -209,5 +206,5 @@ async def inbox_widget(
 
     return templates.TemplateResponse(
         "partials/email_widget.html",
-        {"request": request, "emails": emails},
+        get_template_context(request, emails=emails),
     )

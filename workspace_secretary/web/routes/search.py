@@ -1,7 +1,5 @@
 from fastapi import APIRouter, Request, Query, Depends
 from fastapi.responses import HTMLResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from typing import Optional
 from datetime import datetime, timedelta
 import html
@@ -9,11 +7,10 @@ import os
 import httpx
 import json
 
-from workspace_secretary.web import database as db
+from workspace_secretary.web import database as db, templates, get_template_context
 from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 # In-memory saved searches (in production, store in DB or config)
 _saved_searches: list[dict] = []
@@ -209,18 +206,18 @@ async def search(
     if not parsed_query.strip() and not has_filters:
         return templates.TemplateResponse(
             "search.html",
-            {
-                "request": request,
-                "query": q,
-                "parsed_query": parsed_query,
-                "mode": mode,
-                "results": [],
-                "folder": folder,
-                "folders": folders,
-                "supports_semantic": supports_semantic,
-                "filters": filters,
-                "saved_searches": _saved_searches,
-            },
+            get_template_context(
+                request,
+                query=q,
+                parsed_query=parsed_query,
+                mode=mode,
+                results=[],
+                folder=folder,
+                folders=folders,
+                supports_semantic=supports_semantic,
+                filters=filters,
+                saved_searches=_saved_searches,
+            ),
         )
 
     results_raw = []
@@ -253,19 +250,19 @@ async def search(
 
     return templates.TemplateResponse(
         "search.html",
-        {
-            "request": request,
-            "query": q,
-            "parsed_query": parsed_query,
-            "mode": mode,
-            "results": results,
-            "folder": folder,
-            "folders": folders,
-            "supports_semantic": supports_semantic,
-            "filters": filters,
-            "saved_searches": _saved_searches,
-            "active_operators": parsed_filters,
-        },
+        get_template_context(
+            request,
+            query=q,
+            parsed_query=parsed_query,
+            mode=mode,
+            results=results,
+            folder=folder,
+            folders=folders,
+            supports_semantic=supports_semantic,
+            filters=filters,
+            saved_searches=_saved_searches,
+            active_operators=parsed_filters,
+        ),
     )
 
 
@@ -303,7 +300,7 @@ async def save_search(request: Request, session: Session = Depends(require_auth)
     # Return updated saved searches list
     return templates.TemplateResponse(
         "partials/saved_searches.html",
-        {"request": request, "saved_searches": _saved_searches},
+        get_template_context(request, saved_searches=_saved_searches),
     )
 
 
@@ -316,7 +313,7 @@ async def delete_saved_search(
     _saved_searches = [s for s in _saved_searches if s["id"] != search_id]
     return templates.TemplateResponse(
         "partials/saved_searches.html",
-        {"request": request, "saved_searches": _saved_searches},
+        get_template_context(request, saved_searches=_saved_searches),
     )
 
 
@@ -334,5 +331,5 @@ async def search_suggestions(
 
     return templates.TemplateResponse(
         "partials/search_suggestions.html",
-        {"request": request, "suggestions": suggestions},
+        get_template_context(request, suggestions=suggestions),
     )

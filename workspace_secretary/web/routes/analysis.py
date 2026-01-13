@@ -1,17 +1,15 @@
 from fastapi import APIRouter, Request, Query, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 import re
 import idna
 from email.utils import parseaddr
 
 from workspace_secretary.web import database as db
+from workspace_secretary.web import templates, get_template_context
 from workspace_secretary.config import load_config
 from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 _config = None
 
@@ -339,15 +337,15 @@ async def analysis_sidebar(
 
     return templates.TemplateResponse(
         "partials/analysis_sidebar.html",
-        {
-            "request": request,
-            "signals": signals,
-            "priority": priority,
-            "priority_reason": priority_reason,
-            "related_emails": related,
-            "suggested_actions": suggested_actions,
-            "has_embeddings": db.has_embeddings(),
-            "folder": folder,
-            "uid": uid,
-        },
+        get_template_context(
+            request,
+            signals=signals,
+            priority=priority,
+            priority_reason=priority_reason,
+            related_emails=related,
+            suggested_actions=suggested_actions,
+            has_embeddings=db.has_embeddings(),
+            folder=folder,
+            uid=uid,
+        ),
     )

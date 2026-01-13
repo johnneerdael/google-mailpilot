@@ -1,16 +1,17 @@
 from fastapi import APIRouter, Request, Query, Form, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from typing import Optional
 from datetime import datetime, timedelta
 import json
 
-from workspace_secretary.web import engine_client as engine
+from workspace_secretary.web import (
+    engine_client as engine,
+    templates,
+    get_template_context,
+)
 from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 @router.get("/calendar", response_class=HTMLResponse)
@@ -66,14 +67,14 @@ async def calendar_view(
         if not engine_error:
             engine_error = f"Calendar service unavailable: {str(e)}"
 
-    context = {
-        "request": request,
-        "view": view,
-        "events": events,
-        "busy_slots": busy_slots,
-        "now": now,
-        "engine_error": engine_error,
-    }
+    context = get_template_context(
+        request,
+        view=view,
+        events=events,
+        busy_slots=busy_slots,
+        now=now,
+        engine_error=engine_error,
+    )
 
     if view == "day":
         target_day = now + timedelta(days=day_offset)
@@ -189,9 +190,7 @@ async def find_time_view(
 ):
     return templates.TemplateResponse(
         "calendar_find_time.html",
-        {
-            "request": request,
-        },
+        get_template_context(request),
     )
 
 
@@ -326,11 +325,11 @@ async def availability_widget(
 
     return templates.TemplateResponse(
         "partials/availability_widget.html",
-        {
-            "request": request,
-            "busy_slots": busy_slots,
-            "days": days,
-        },
+        get_template_context(
+            request,
+            busy_slots=busy_slots,
+            days=days,
+        ),
     )
 
 
@@ -388,10 +387,10 @@ async def public_booking_page(
 ):
     return templates.TemplateResponse(
         "calendar_booking.html",
-        {
-            "request": request,
-            "link_id": link_id,
-        },
+        get_template_context(
+            request,
+            link_id=link_id,
+        ),
     )
 
 

@@ -1,16 +1,14 @@
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from datetime import datetime, timedelta
 
 from workspace_secretary.web import database as db
 from workspace_secretary.web import engine_client as engine
+from workspace_secretary.web import templates, get_template_context
 from workspace_secretary.web.routes.analysis import analyze_signals, compute_priority
 from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 @router.get("/dashboard")
@@ -74,13 +72,13 @@ async def dashboard(request: Request, session: Session = Depends(require_auth)):
 
     return templates.TemplateResponse(
         "dashboard.html",
-        {
-            "request": request,
-            "priority_emails": priority_emails,
-            "upcoming_events": upcoming_events,
-            "stats": stats,
-            "now": now,
-        },
+        get_template_context(
+            request,
+            priority_emails=priority_emails,
+            upcoming_events=upcoming_events,
+            stats=stats,
+            now=now,
+        ),
     )
 
 
@@ -109,10 +107,10 @@ async def get_stats(request: Request, session: Session = Depends(require_auth)):
 
     return templates.TemplateResponse(
         "partials/stats_badges.html",
-        {
-            "request": request,
-            "unread_count": len(unread_emails),
-            "priority_count": high_priority,
-            "meetings_today": meetings_today,
-        },
+        get_template_context(
+            request,
+            unread_count=len(unread_emails),
+            priority_count=high_priority,
+            meetings_today=meetings_today,
+        ),
     )

@@ -1,15 +1,13 @@
 from fastapi import APIRouter, Request, Query, Form, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from typing import Optional, List
 
 from workspace_secretary.web import database as db
 from workspace_secretary.web import engine_client as engine
+from workspace_secretary.web import templates, get_template_context
 from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 @router.get("/compose", response_class=HTMLResponse)
@@ -101,7 +99,9 @@ async def compose_modal(
                     }
                 )
 
-    return templates.TemplateResponse("compose.html", context)
+    return templates.TemplateResponse(
+        "compose.html", get_template_context(request, **context)
+    )
 
 
 @router.post("/api/email/send")

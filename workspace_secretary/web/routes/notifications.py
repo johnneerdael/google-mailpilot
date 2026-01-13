@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
 import json
 
 from workspace_secretary.web import database as db, engine_client as engine
+from workspace_secretary.web import templates, get_template_context
 from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
@@ -31,8 +30,6 @@ async def sync_status(session: Session = Depends(require_auth)):
             status_code=500, content={"status": "error", "message": str(e)}
         )
 
-
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 # Track last check time per session (in production, use Redis or DB)
 _last_check: dict[str, datetime] = {}

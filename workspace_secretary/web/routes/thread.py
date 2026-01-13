@@ -1,18 +1,15 @@
 from fastapi import APIRouter, Request, HTTPException, Depends, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from datetime import datetime
 import html
 import re
 import httpx
 
-from workspace_secretary.web import database as db
+from workspace_secretary.web import database as db, templates, get_template_context
 from workspace_secretary.web.auth import require_auth, Session
 from workspace_secretary.web.engine_client import get_engine_url
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def format_datetime(date_val) -> str:
@@ -197,18 +194,18 @@ async def thread_view(
 
     return templates.TemplateResponse(
         "thread.html",
-        {
-            "request": request,
-            "subject": email.get("subject", "(no subject)"),
-            "messages": messages,
-            "folder": folder,
-            "uid": uid,
-            "is_starred": is_starred,
-            "load_images": load_images,
-            "neighbors": neighbors,
-            "unread_only": unread_only,
-            "calendar_invite": calendar_invite,
-        },
+        get_template_context(
+            request,
+            subject=email.get("subject", "(no subject)"),
+            messages=messages,
+            folder=folder,
+            uid=uid,
+            is_starred=is_starred,
+            load_images=load_images,
+            neighbors=neighbors,
+            unread_only=unread_only,
+            calendar_invite=calendar_invite,
+        ),
     )
 
 

@@ -4,9 +4,8 @@ Contact extraction and management routes.
 
 from fastapi import APIRouter, Request, Depends, Query, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from workspace_secretary.web.auth import Session, require_auth
+from workspace_secretary.web import templates, get_template_context
 from workspace_secretary.web.database import (
     upsert_contact,
     add_contact_interaction,
@@ -28,7 +27,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def parse_email_address(addr_str: str):
@@ -181,15 +179,15 @@ async def contacts_page(
 
     return templates.TemplateResponse(
         "contacts.html",
-        {
-            "request": request,
-            "contacts": contacts,
-            "frequent": frequent,
-            "recent": recent,
-            "search": search or "",
-            "sort": sort,
-            "page": page,
-        },
+        get_template_context(
+            request,
+            contacts=contacts,
+            frequent=frequent,
+            recent=recent,
+            search=search or "",
+            sort=sort,
+            page=page,
+        ),
     )
 
 
@@ -208,12 +206,12 @@ async def contact_detail_page(
 
     return templates.TemplateResponse(
         "contact_detail.html",
-        {
-            "request": request,
-            "contact": contact,
-            "interactions": interactions,
-            "notes": notes,
-        },
+        get_template_context(
+            request,
+            contact=contact,
+            interactions=interactions,
+            notes=notes,
+        ),
     )
 
 

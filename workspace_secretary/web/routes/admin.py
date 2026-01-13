@@ -1,16 +1,13 @@
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
-from fastapi.templating import Jinja2Templates
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 from workspace_secretary.web import database as db
+from workspace_secretary.web import templates, get_template_context
 from workspace_secretary.web.auth import require_auth, Session
 from workspace_secretary.web.alerting import check_and_alert
 
 router = APIRouter()
-
-templates = Jinja2Templates(directory=str(Path(__file__).parent.parent / "templates"))
 
 
 def get_mutation_stats() -> dict:
@@ -280,15 +277,15 @@ async def admin_dashboard(
 
     return templates.TemplateResponse(
         "admin.html",
-        {
-            "request": request,
-            "overall_health": overall_health,
-            "alerts": alerts,
-            "mutation_stats": mutation_stats,
-            "sync_stats": sync_stats,
-            "db_stats": db_stats,
-            "integrity_stats": integrity_stats,
-        },
+        get_template_context(
+            request,
+            overall_health=overall_health,
+            alerts=alerts,
+            mutation_stats=mutation_stats,
+            sync_stats=sync_stats,
+            db_stats=db_stats,
+            integrity_stats=integrity_stats,
+        ),
     )
 
 
