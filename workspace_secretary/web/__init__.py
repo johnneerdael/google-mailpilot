@@ -106,11 +106,13 @@ def init_web_app(config: Optional[WebConfig] = None):
     _web_config = config
 
     from workspace_secretary.web.auth import init_auth, router as auth_router
+    from workspace_secretary.web.routes.tasks import router as tasks_router
 
     from workspace_secretary.web.auth import CSRFMiddleware
 
     init_auth(config)
     web_app.include_router(auth_router)
+    web_app.include_router(tasks_router)
 
     web_app.add_middleware(CSRFMiddleware)
 

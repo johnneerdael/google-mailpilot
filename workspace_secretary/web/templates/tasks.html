@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Tasks - Secretary{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6" x-data="{ 
+    showAddTask: false,
+    newTask: { description: '', priority: 'medium', due_date: '' }
+}">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h1 class="h1">Tasks</h1>
+        <div class="flex items-center gap-4">
+            <label class="flex items-center space-x-2 text-sm text-muted">
+                <input type="checkbox" 
+                       {% if show_completed %}checked{% endif %}
+                       hx-get="/tasks?show_completed={{ 'false' if show_completed else 'true' }}"
+                       hx-target="body"
+                       hx-swap="outerHTML"
+                       class="rounded bg-surface-subtle border-border text-primary focus:ring-primary">
+                <span>Show completed</span>
+            </label>
+            <button @click="showAddTask = true" class="btn-primary">
+                + Add Task
+            </button>
+        </div>
+    </div>
+
+    {% if tasks %}
+    <div class="card divide-y divide-border" id="tasks-list">
+        {% for task in tasks %}
+        <div class="group flex items-start gap-3 p-4 hover:bg-surface-hover transition-colors"
+             x-data="{ loading: false, deleting: false }">
+            <button @click="loading = true; fetch('/api/tasks/{{ task.id }}/toggle', {method: 'POST'}).then(r => r.json()).then(d => { if(d.success) { location.reload(); } loading = false; })"
+                    class="mt-1 flex-shrink-0 w-5 h-5 rounded border-2 transition-colors flex items-center justify-center"
+                    :class="loading ? 'border-primary animate-pulse' : '{% if task.completed %}border-primary bg-primary{% else %}border-border hover:border-primary{% endif %}'"
+                    :disabled="loading"
+                    title="Toggle completion">
+                {% if task.completed %}
+                <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                </svg>
+                {% endif %}
+            </button>
+            
+            <div class="flex-1 min-w-0">
+                <p class="text-body {% if task.completed %}line-through text-muted{% endif %}">
+                    {{ task.description }}
+                </p>
+                <div class="flex flex-wrap items-center gap-2 mt-2">
+                    <span class="px-2 py-0.5 text-xs rounded font-medium
+                        {% if task.priority == 'high' %}bg-red-900/50 text-red-400 border border-red-800
+                        {% elif task.priority == 'medium' %}bg-yellow-900/50 text-yellow-400 border border-yellow-800
+                        {% else %}bg-surface-subtle text-muted border border-border{% endif %}">
+                        {{ task.priority | capitalize }}
+                    </span>
+                    {% if task.due_date %}
+                    <span class="text-xs text-muted flex items-center gap-1">
+                        <span>📅</span>
+                        {{ task.due_date }}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+            
+            <button @click="deleting = true; fetch('/api/tasks/{{ task.id }}', {method: 'DELETE'}).then(r => r.json()).then(d => { if(d.success) { location.reload(); } deleting = false; })"
+                    class="opacity-0 group-hover:opacity-100 p-2 text-muted hover:text-error rounded-md hover:bg-surface-subtle transition-all"
+                    :class="{ 'opacity-100 animate-pulse': deleting }"
+                    :disabled="deleting"
+                    title="Delete task">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+            </button>
+        </div>
+        {% endfor %}
+    </div>
+    
+    <div class="text-center text-sm text-muted">
+        {{ tasks | length }} task{% if tasks | length != 1 %}s{% endif %}
+        {% if completed_count > 0 and not show_completed %}
+        · {{ completed_count }} completed (hidden)
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="card p-12 text-center">
+        <div class="text-4xl mb-3">✓</div>
+        <h3 class="text-lg font-medium text-body mb-1">
+            {% if show_completed %}No tasks yet{% else %}All done!{% endif %}
+        </h3>
+        <p class="text-muted text-sm mb-4">
+            {% if show_completed %}
+            Create your first task to get started.
+            {% else %}
+            You've completed all your tasks. Nice work!
+            {% endif %}
+        </p>
+        <button @click="showAddTask = true" class="btn-primary">
+            + Add Task
+        </button>
+    </div>
+    {% endif %}
+
+    <!-- Add Task Modal -->
+    <div x-show="showAddTask" x-cloak
+         class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+         @click.self="showAddTask = false"
+         @keydown.escape.window="showAddTask = false">
+        <div class="bg-surface rounded-xl shadow-2xl border border-border w-full max-w-md"
+             @click.stop>
+            <div class="flex items-center justify-between px-6 py-4 border-b border-border">
+                <h2 class="h2">New Task</h2>
+                <button @click="showAddTask = false" class="text-muted hover:text-body p-1 rounded-md hover:bg-surface-subtle">✕</button>
+            </div>
+            <form @submit.prevent="
+                fetch('/api/tasks', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: new URLSearchParams(newTask)
+                }).then(r => r.json()).then(d => {
+                    if (d.success) {
+                        showAddTask = false;
+                        newTask = { description: '', priority: 'medium', due_date: '' };
+                        location.reload();
+                    } else {
+                        window.showToast({ message: d.error || 'Failed to create task', type: 'error' });
+                    }
+                });
+            " class="p-6 space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-body mb-1">Description</label>
+                    <input type="text" 
+                           x-model="newTask.description"
+                           placeholder="What needs to be done?"
+                           class="input-field w-full"
+                           required
+                           x-ref="taskInput"
+                           x-init="$watch('showAddTask', value => { if(value) $nextTick(() => $refs.taskInput.focus()) })">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-sm font-medium text-body mb-1">Priority</label>
+                        <select x-model="newTask.priority" class="input-field w-full">
+                            <option value="low">Low</option>
+                            <option value="medium">Medium</option>
+                            <option value="high">High</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-body mb-1">Due Date</label>
+                        <input type="date" 
+                               x-model="newTask.due_date"
+                               class="input-field w-full">
+                    </div>
+                </div>
+                <div class="flex justify-end gap-2 pt-2">
+                    <button type="button" @click="showAddTask = false" class="btn-secondary">Cancel</button>
+                    <button type="submit" class="btn-primary">Create Task</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
