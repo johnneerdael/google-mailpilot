@@ -17,6 +17,7 @@ export default defineConfig({
       { text: 'Web Server', link: '/webserver/' },
       { text: 'Embeddings', link: '/embeddings/' },
       { text: 'MCP Tools', link: '/tools/' },
+      { text: 'Roadmap', link: '/roadmap/' },
       {
         text: 'v4.6.0',
         items: [
@@ -25,7 +26,6 @@ export default defineConfig({
         ]
       }
     ],
-
     sidebar: {
       '/guide/': [
           {
@@ -43,10 +43,56 @@ export default defineConfig({
               { text: 'Agent System', link: '/guide/agents' },
               { text: 'Use Cases', link: '/guide/use-cases' },
               { text: 'OpenCode Integration', link: '/guide/opencode' },
-              { text: 'Mutation Journal', link: '/guide/mutation-journal' }
+              { text: 'Mutation Journal', link: '/guide/mutation-journal' },
+	      { text: 'Server Architecture', link: '/guide/architecture' },
             ]
           }
       ]
+    },
+    sidebar: {
+    '/webserver/': [
+      {
+        text: 'Web Server',
+        items: [
+          { text: 'Overview', link: '/webserver/' },
+          { text: 'Web UI basics', link: '/webserver/web-ui' },
+          { text: 'Mobile support', link: '/webserver/mobile' },
+        ]
+      },
+      {
+        text: 'Features',
+        items: [
+          { text: 'Search', link: '/webserver/search' },
+          { text: 'AI chat', link: '/webserver/chat' },
+          { text: 'Settings & notifications', link: '/webserver/settings' },
+        ]
+      },
+      {
+        text: 'Reference',
+        items: [
+          { text: 'Configuration', link: '/webserver/configuration' },
+          { text: 'API endpoints', link: '/webserver/api' },
+          { text: 'Security', link: '/webserver/security' },
+          { text: 'Customization', link: '/webserver/customization' },
+          { text: 'Troubleshooting', link: '/webserver/troubleshooting' },
+          { text: 'Embeddings', link: '/webserver/embeddings' },
+        ]
+      }
+    ],
+    '/roadmap/': [
+      {
+        text: 'Roadmap',
+        items: [
+          { text: 'Overview', link: '/roadmap/' },
+          { text: 'Codebase structure', link: '/roadmap/codebase-structure' },
+          { text: 'Feature audit — Email & search', link: '/roadmap//feature-audit-email' },
+          { text: 'Feature audit — Calendar', link: '/roadmap/feature-audit-calendar' },
+          { text: 'Feature audit — UX & security', link: '/roadmap/feature-audit-ux' },
+          { text: 'Priority gap analysis', link: '/roadmap/gap-analysis' },
+          { text: 'Recommendations', link: '/roadmap/recommendations' },
+          { text: 'Appendix — by route', link: '/roadmap/appendix-routes' },
+        ]
+      }
     },
 
     socialLinks: [

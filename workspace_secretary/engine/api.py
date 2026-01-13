@@ -12,8 +12,6 @@ from email.message import EmailMessage
 from email.utils import parseaddr, make_msgid
 
 import idna
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 from queue import Queue, Empty
 from typing import Any, Optional, TYPE_CHECKING, cast
@@ -1367,30 +1365,28 @@ async def create_draft_reply(req: DraftReplyRequest):
     if not state.database or not state.config:
         return {"status": "error", "message": "Engine not ready"}
 
+    if not state.imap_client:
+        return {"status": "error", "message": "IMAP client not connected"}
+
     try:
-        # Get the original email
         original = state.database.get_email_by_uid(req.uid, req.folder)
         if not original:
             return {"status": "error", "message": "Original email not found"}
 
-        # Build reply recipients
         reply_to = original.get("reply_to") or original.get("from_addr", "")
         recipients = [reply_to] if reply_to else []
+        user_email = state.config.imap.username.lower()
 
         if req.reply_all:
-            # Add all original recipients except self
-            user_email = state.config.imap.username.lower()
-            to_addrs = original.get("to_addr", [])
+            to_addrs = original.get("to_addr", []) or []
             if isinstance(to_addrs, str):
                 to_addrs = [to_addrs]
-            cc_addrs = original.get("cc_addr", [])
+            cc_addrs = original.get("cc_addr", []) or []
             if isinstance(cc_addrs, str):
                 cc_addrs = [cc_addrs]
-            for addr in to_addrs:
-                if addr.lower() != user_email and addr not in recipients:
-                    recipients.append(addr)
-            for addr in cc_addrs:
-                if addr.lower() != user_email and addr not in recipients:
+            for addr in to_addrs + cc_addrs:
+                normalized = addr.lower()
+                if normalized != user_email and addr not in recipients:
                     recipients.append(addr)
 
         # Build subject
@@ -1398,56 +1394,41 @@ async def create_draft_reply(req: DraftReplyRequest):
         if not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
 
-        # Build the draft message
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = state.config.imap.username
-        msg["To"] = ", ".join(recipients)
-        msg["In-Reply-To"] = original.get("message_id", "")
-        msg["References"] = original.get("message_id", "")
+        message = EmailMessage()
+        message_id = make_msgid()
+        message["Message-ID"] = message_id
+        message["Subject"] = subject
+        message["From"] = state.config.imap.username
+        message["To"] = ", ".join(recipients)
 
-        msg.attach(MIMEText(req.body, "plain"))
+        original_msg_id = original.get("message_id", "")
+        if original_msg_id:
+            message["In-Reply-To"] = original_msg_id
+            message["References"] = original_msg_id
 
-        # Create draft via Gmail API
-        if state.config.imap.oauth2 and state.config.imap.oauth2.access_token:
-            import base64
+        message.set_content(req.body or "", subtype="plain")
 
-            from google.oauth2.credentials import Credentials
-            from googleapiclient.discovery import build
+        if req.reply_all and original.get("cc_addr"):
+            cc_addrs = original.get("cc_addr", [])
+            if isinstance(cc_addrs, str):
+                cc_addrs = [cc_addrs]
+            cc_addrs = [addr for addr in cc_addrs if addr.lower() != user_email]
+            if cc_addrs:
+                message["Cc"] = ", ".join(cc_addrs)
 
-            creds = Credentials(
-                token=state.config.imap.oauth2.access_token,
-                refresh_token=state.config.imap.oauth2.refresh_token,
-                token_uri="https://oauth2.googleapis.com/token",
-                client_id=state.config.imap.oauth2.client_id,
-                client_secret=state.config.imap.oauth2.client_secret,
-            )
+        if not state.imap_client:
+            return {"status": "error", "message": "IMAP client not connected"}
 
-            service = build("gmail", "v1", credentials=creds)
+        draft_uid = state.imap_client.save_draft_mime(message)
+        await debounced_sync()
 
-            # Encode the message
-            raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
-
-            # Create draft
-            draft = (
-                service.users()
-                .drafts()
-                .create(userId="me", body={"message": {"raw": raw_message}})
-                .execute()
-            )
-
-            return {
-                "status": "ok",
-                "draft_id": draft.get("id"),
-                "recipients": recipients,
-                "subject": subject,
-            }
-
-        else:
-            return {
-                "status": "error",
-                "message": "OAuth2 required for creating drafts",
-            }
+        return {
+            "status": "ok",
+            "draft_uid": draft_uid,
+            "recipients": recipients,
+            "subject": subject,
+            "message_id": message_id,
+        }
 
     except Exception as e:
         logger.error(f"Create draft error: {e}")
@@ -1456,59 +1437,47 @@ async def create_draft_reply(req: DraftReplyRequest):
 
 @app.post("/api/email/setup-labels")
 async def setup_labels(req: SetupLabelsRequest):
-    """Create Secretary label hierarchy in Gmail."""
     if not state.enrolled:
         return {
             "status": "no_account",
             "message": "No account configured. Run auth_setup to add an account.",
         }
 
-    if not state.config or not state.config.imap.oauth2:
-        return {"status": "error", "message": "OAuth2 configuration required"}
+    if not state.config:
+        return {"status": "error", "message": "Configuration not loaded"}
+
+    if not state.imap_client:
+        return {"status": "error", "message": "IMAP client not connected"}
+
+    created: list[str] = []
+    already_exists: list[str] = []
+    failed: list[str] = []
 
     try:
-        from google.oauth2.credentials import Credentials
-        from googleapiclient.discovery import build
-
-        creds = Credentials(
-            token=state.config.imap.oauth2.access_token,
-            refresh_token=state.config.imap.oauth2.refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=state.config.imap.oauth2.client_id,
-            client_secret=state.config.imap.oauth2.client_secret,
-        )
-
-        service = build("gmail", "v1", credentials=creds)
-
-        # Get existing labels
-        results = service.users().labels().list(userId="me").execute()
-        existing_labels = {label["name"]: label for label in results.get("labels", [])}
-
-        created = []
-        already_exists = []
+        folders = set(state.imap_client.list_folders(refresh=True))
 
         for label_name in SECRETARY_LABELS:
-            if label_name in existing_labels:
+            if label_name in folders:
                 already_exists.append(label_name)
                 continue
 
             if req.dry_run:
                 created.append(f"{label_name} (would create)")
-            else:
-                # Create the label
-                label_body = {
-                    "name": label_name,
-                    "labelListVisibility": "labelShow",
-                    "messageListVisibility": "show",
-                }
-                service.users().labels().create(userId="me", body=label_body).execute()
-                created.append(label_name)
+                continue
 
+            if state.imap_client.create_folder(label_name):
+                created.append(label_name)
+            else:
+                logger.warning(f"Failed to create label '{label_name}'")
+                failed.append(label_name)
+
+        await debounced_sync()
         return {
             "status": "ok",
             "dry_run": req.dry_run,
             "created": created,
             "already_exists": already_exists,
+            "failed": failed,
         }
 
     except Exception as e:
