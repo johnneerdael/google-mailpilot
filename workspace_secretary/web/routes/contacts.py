@@ -2,7 +2,8 @@
 Contact extraction and management routes.
 """
 
-from fastapi import APIRouter, Request, Depends, Query, HTTPException
+import asyncio
+from fastapi import APIRouter, Request, Depends, Query, HTTPException, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
 from workspace_secretary.web.auth import Session, require_auth
 from workspace_secretary.web import templates, get_template_context
@@ -64,7 +65,8 @@ async def sync_contacts_from_emails(
     limit: int = Query(1000),
 ):
     """Extract contacts from recent emails."""
-    try:
+
+    def _sync_contacts_blocking(limit: int) -> dict:
         from workspace_secretary.web.database import get_pool
         from psycopg.rows import dict_row
 
@@ -98,14 +100,12 @@ async def sync_contacts_from_emails(
                     if not email_addr:
                         continue
 
-                    # Extract name parts (handle None)
                     first_name, last_name = (
                         extract_name_parts(display_name)
                         if display_name
                         else (None, None)
                     )
 
-                    # Upsert contact
                     contact_id = upsert_contact(
                         email=email_addr,
                         display_name=display_name or email_addr,
@@ -113,11 +113,9 @@ async def sync_contacts_from_emails(
                         last_name=last_name,
                     )
 
-                    # Skip if contact creation failed
                     if contact_id is None:
                         continue
 
-                    # Determine direction
                     direction = "received"
                     from_addr = email.get("from_addr")
                     to_addr = email.get("to_addr")
@@ -130,7 +128,6 @@ async def sync_contacts_from_emails(
                     elif cc_addr and email_addr in cc_addr:
                         direction = "cc"
 
-                    # Add interaction
                     add_contact_interaction(
                         contact_id=contact_id,
                         email_uid=email["uid"],
@@ -143,13 +140,15 @@ async def sync_contacts_from_emails(
 
                     contact_count += 1
 
-        return JSONResponse(
-            {
-                "success": True,
-                "contacts_synced": contact_count,
-                "emails_processed": len(emails),
-            }
-        )
+        return {
+            "success": True,
+            "contacts_synced": contact_count,
+            "emails_processed": len(emails),
+        }
+
+    try:
+        result = await asyncio.to_thread(_sync_contacts_blocking, limit)
+        return JSONResponse(result)
     except Exception as e:
         logger.error(f"Error syncing contacts: {e}", exc_info=True)
         return JSONResponse(

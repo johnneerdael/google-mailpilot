@@ -201,6 +201,21 @@
                     </template>
                 </div>
                 {% endif %}
+                {% elif event.start.date and hour == 0 %}
+                <div class="absolute left-0 right-0 mx-1 mt-1 bg-green-500/10 border-l-2 border-green-500 rounded p-2 text-xs cursor-pointer hover:bg-green-500/20 transition-colors"
+                     @click="openEventDetail({{ event|tojson }})">
+                    <div class="font-medium text-body flex items-center gap-1">
+                        🌅 All Day: {{ event.summary }}
+                        {% if event._local_status == 'pending' %}
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-yellow-900/30 text-yellow-400 border border-yellow-700/50">⏱ Pending</span>
+                        {% elif event._local_status == 'conflict' %}
+                        <span class="text-[10px] px-1.5 py-0.5 rounded bg-red-900/30 text-red-400 border border-red-700/50">⚠ Conflict</span>
+                        {% endif %}
+                    </div>
+                    {% if event.location %}
+                    <div class="text-muted mt-1 truncate">📍 {{ event.location }}</div>
+                    {% endif %}
+                </div>
                 {% endif %}
                 {% endfor %}
             </div>
@@ -228,7 +243,7 @@
                     <div class="text-xs px-1 py-0.5 rounded bg-primary/10 text-primary truncate cursor-pointer hover:bg-primary/20 transition-colors"
                          @click="openEventDetail({{ event|tojson }})">
                         <div class="flex items-center gap-1">
-                            {{ event.start.dateTime[11:16] if event.start.dateTime else '' }} {{ event.summary }}
+                            {% if event.start.dateTime %}{{ event.start.dateTime[11:16] }}{% else %}🌅{% endif %} {{ event.summary }}
                             {% if event._local_status == 'pending' %}
                             <span class="text-[9px] px-1 py-0.5 rounded bg-yellow-900/30 text-yellow-400">⏱</span>
                             {% elif event._local_status == 'conflict' %}
@@ -253,7 +268,12 @@
         <div class="card p-0 overflow-hidden">
             <div class="bg-surface-subtle px-4 py-2 border-b border-border">
                 <span class="text-sm font-medium text-body">
-                    {{ events_list[0].start.dateTime | strftime('%A, %B %d, %Y') }}
+                    {% set first_event = events_list[0] %}
+                    {% if first_event.start.dateTime %}
+                    {{ first_event.start.dateTime | strftime('%A, %B %d, %Y') }}
+                    {% elif first_event.start.date %}
+                    {{ first_event.start.date | strftime('%A, %B %d, %Y') }}
+                    {% endif %}
                 </span>
             </div>
             <div class="divide-y divide-border">
@@ -283,6 +303,8 @@
                             {% if event.end.dateTime %}
                             - {{ event.end.dateTime[11:16] }}
                             {% endif %}
+                            {% elif event.start.date %}
+                            🌅 All Day
                             {% endif %}
                         </div>
                     </div>
@@ -324,6 +346,8 @@
                         <span class="text-muted ml-1">
                             {{ event.start.dateTime[11:16] }}
                         </span>
+                        {% elif event.start.date %}
+                        <span class="text-muted ml-1">🌅</span>
                         {% endif %}
                     </div>
                 </div>
@@ -369,6 +393,16 @@
                                 <span x-text="selectedEvent?.start?.dateTime ? selectedEvent.start.dateTime.substring(11, 16) : ''"></span>
                                 <span x-show="selectedEvent?.end?.dateTime"> - </span>
                                 <span x-text="selectedEvent?.end?.dateTime ? selectedEvent.end.dateTime.substring(11, 16) : ''"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div x-show="selectedEvent?.start?.date && !selectedEvent?.start?.dateTime" class="flex items-start space-x-3">
+                        <span class="text-2xl">🌅</span>
+                        <div>
+                            <div class="text-sm text-muted">All Day Event</div>
+                            <div class="text-body">
+                                <span x-text="selectedEvent?.start?.date ? new Date(selectedEvent.start.date + 'T00:00:00').toLocaleString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) : ''"></span>
                             </div>
                         </div>
                     </div>

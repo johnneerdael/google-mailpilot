@@ -137,10 +137,14 @@
                                  style="position: absolute; right: 1rem; margin-top: 0.5rem; width: 20rem; background-color: var(--color-surface); border: 1px solid var(--color-border); border-radius: 0.5rem; box-shadow: var(--shadow-lg); z-index: 50;">
                                 <div style="padding: 0.75rem; border-bottom: 1px solid var(--color-border); display: flex; align-items: center; justify-content: space-between;">
                                     <h3 style="font-weight: 500; color: var(--color-body);">Notifications</h3>
-                                    <button @click="requestPermission()" x-show="!notificationsEnabled" 
+                                    <button @click="requestPermission()" x-show="!notificationsEnabled && notificationsSupported" 
                                             style="font-size: 0.75rem; color: var(--color-primary);">
                                         Enable desktop notifications
                                     </button>
+                                    <span x-show="!notificationsSupported" 
+                                          style="font-size: 0.75rem; color: var(--color-muted);">
+                                        Notifications not supported
+                                    </span>
                                 </div>
                                 <div style="max-height: 24rem; overflow-y: auto;">
                                     <template x-if="notifications.length === 0">
@@ -388,10 +392,14 @@
                 notifications: [],
                 unreadCount: 0,
                 notificationsEnabled: false,
+                notificationsSupported: false,
                 checkInterval: null,
                 
                 init() {
-                    this.notificationsEnabled = Notification.permission === 'granted';
+                    this.notificationsSupported = 'Notification' in window;
+                    if (this.notificationsSupported) {
+                        this.notificationsEnabled = Notification.permission === 'granted';
+                    }
                     this.checkForNew();
                     this.checkInterval = setInterval(() => this.checkForNew(), 30000);
                 },
@@ -401,10 +409,21 @@
                 },
                 
                 async requestPermission() {
-                    const permission = await Notification.requestPermission();
-                    this.notificationsEnabled = permission === 'granted';
-                    if (this.notificationsEnabled) {
-                        window.showToast({ message: 'Desktop notifications enabled', type: 'success' });
+                    if (!this.notificationsSupported) {
+                        window.showToast({ message: 'Desktop notifications are not supported in this browser', type: 'error' });
+                        return;
+                    }
+                    try {
+                        const permission = await Notification.requestPermission();
+                        this.notificationsEnabled = permission === 'granted';
+                        if (this.notificationsEnabled) {
+                            window.showToast({ message: 'Desktop notifications enabled', type: 'success' });
+                        } else if (permission === 'denied') {
+                            window.showToast({ message: 'Notifications were blocked. Please enable them in browser settings.', type: 'error' });
+                        }
+                    } catch (e) {
+                        console.error('Failed to request notification permission:', e);
+                        window.showToast({ message: 'Failed to enable notifications', type: 'error' });
                     }
                 },
                 

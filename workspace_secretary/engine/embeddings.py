@@ -349,8 +349,8 @@ class EmbeddingsSyncWorker:
                     continue
                 try:
                     self.database.upsert_embedding(
-                        email_uid=email["uid"],
-                        email_folder=email["folder"],
+                        uid=email["uid"],
+                        folder=email["folder"],
                         embedding=result.embedding,
                         model=result.model,
                         content_hash=email["content_hash"],

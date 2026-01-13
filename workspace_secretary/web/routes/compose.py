@@ -1,11 +1,14 @@
 from fastapi import APIRouter, Request, Query, Form, Depends, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from typing import Optional, List
+import logging
 
 from workspace_secretary.web import database as db
 from workspace_secretary.web import engine_client as engine
 from workspace_secretary.web import templates, get_template_context
 from workspace_secretary.web.auth import require_auth, Session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -41,7 +44,12 @@ async def compose_modal(
     uid = reply_to or reply_all or forward
     if uid:
         # Fetch original email for reply/forward context
-        email = db.get_email(uid, folder)
+        try:
+            email = db.get_email(uid, folder)
+        except Exception as e:
+            logger.warning(f"Failed to fetch email uid={uid} folder={folder}: {e}")
+            email = None
+
         if email:
             from_addr = email.get("from_addr", "")
             to_addr = email.get("to_addr", "")
@@ -103,9 +111,7 @@ async def compose_modal(
                 )
 
     template_name = "compose.html" if is_htmx_request else "compose_page.html"
-    return templates.TemplateResponse(
-        template_name, get_template_context(request, **context)
-    )
+    return templates.TemplateResponse(template_name, get_template_context(**context))
 
 
 @router.post("/api/email/send")

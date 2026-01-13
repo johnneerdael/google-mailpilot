@@ -353,6 +353,15 @@
     color: var(--color-body);
 }
 
+.dark .email-content {
+    filter: invert(1) hue-rotate(180deg);
+    background-color: #0a0a0a;
+}
+
+.dark .email-content img {
+    filter: invert(1) hue-rotate(180deg);
+}
+
 .email-content img {
     max-width: 100%;
     height: auto;

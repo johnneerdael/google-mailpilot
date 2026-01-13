@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Query, Form, Depends
+from fastapi import APIRouter, Request, Query, Form, Depends, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from typing import Optional
 from datetime import datetime, timedelta
@@ -12,6 +12,11 @@ from workspace_secretary.web import (
 from workspace_secretary.web.auth import require_auth, Session
 
 router = APIRouter()
+
+
+def _get_event_date(event: dict) -> str:
+    start = event.get("start", {})
+    return start.get("dateTime", start.get("date", ""))[:10]
 
 
 @router.get("/calendar", response_class=HTMLResponse)
@@ -81,13 +86,8 @@ async def calendar_view(
 
     if view == "day":
         target_day = now + timedelta(days=day_offset)
-        day_events = [
-            e
-            for e in events
-            if e.get("start", {})
-            .get("dateTime", "")
-            .startswith(target_day.strftime("%Y-%m-%d"))
-        ]
+        target_date_str = target_day.strftime("%Y-%m-%d")
+        day_events = [e for e in events if _get_event_date(e) == target_date_str]
         context.update(
             {
                 "target_day": target_day,
@@ -110,13 +110,8 @@ async def calendar_view(
             week_days = []
             for day in range(7):
                 day_date = current + timedelta(days=week * 7 + day)
-                day_events = [
-                    e
-                    for e in events
-                    if e.get("start", {})
-                    .get("dateTime", "")
-                    .startswith(day_date.strftime("%Y-%m-%d"))
-                ]
+                day_date_str = day_date.strftime("%Y-%m-%d")
+                day_events = [e for e in events if _get_event_date(e) == day_date_str]
                 week_days.append(
                     {
                         "date": day_date,
@@ -136,12 +131,10 @@ async def calendar_view(
             }
         )
     elif view == "agenda":
-        sorted_events = sorted(
-            events, key=lambda e: e.get("start", {}).get("dateTime", "")
-        )
+        sorted_events = sorted(events, key=_get_event_date)
         grouped_events = {}
         for event in sorted_events:
-            event_date = event.get("start", {}).get("dateTime", "")[:10]
+            event_date = _get_event_date(event)
             if event_date not in grouped_events:
                 grouped_events[event_date] = []
             grouped_events[event_date].append(event)
@@ -157,13 +150,8 @@ async def calendar_view(
         days = []
         for i in range(7):
             day = week_start + timedelta(days=i)
-            day_events = [
-                e
-                for e in events
-                if e.get("start", {})
-                .get("dateTime", "")
-                .startswith(day.strftime("%Y-%m-%d"))
-            ]
+            day_str = day.strftime("%Y-%m-%d")
+            day_events = [e for e in events if _get_event_date(e) == day_str]
             days.append(
                 {
                     "date": day,
@@ -384,7 +372,17 @@ async def respond_to_event(
 
     try:
         result = await engine.respond_to_invite(event_id, response)
+        if result.get("status") == "error":
+            return JSONResponse(
+                {"success": False, "error": result.get("message", "Unknown error")},
+                status_code=500,
+            )
         return JSONResponse({"success": True, "message": f"Response: {response}"})
+    except HTTPException as e:
+        return JSONResponse(
+            {"success": False, "error": e.detail or "Service unavailable"},
+            status_code=e.status_code,
+        )
     except Exception as e:
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 

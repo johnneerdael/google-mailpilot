@@ -1,10 +1,13 @@
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from typing import List, Optional
 import json
+import logging
 
 from workspace_secretary.web import engine_client
 from workspace_secretary.web.auth import require_auth, Session
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -160,24 +163,33 @@ async def bulk_move(request: Request, session: Session = Depends(require_auth)):
 async def toggle_star(folder: str, uid: int, session: Session = Depends(require_auth)):
     from workspace_secretary.web import database as db
 
-    email = db.get_email(uid, folder)
-    if not email:
+    try:
+        email = db.get_email(uid, folder)
+        if not email:
+            return JSONResponse(
+                {"success": False, "error": "Email not found"}, status_code=404
+            )
+
+        labels = email.get("gmail_labels", [])
+        if isinstance(labels, str):
+            is_starred = "\\Starred" in labels
+        else:
+            is_starred = "\\Starred" in (labels or [])
+
+        if is_starred:
+            await engine_client.modify_labels(uid, folder, ["\\Starred"], "remove")
+            return JSONResponse({"success": True, "starred": False})
+        else:
+            await engine_client.modify_labels(uid, folder, ["\\Starred"], "add")
+            return JSONResponse({"success": True, "starred": True})
+    except HTTPException as e:
+        logger.warning(f"Failed to toggle star uid={uid}: {e.detail}")
         return JSONResponse(
-            {"status": "error", "message": "Email not found"}, status_code=404
+            {"success": False, "error": str(e.detail)}, status_code=e.status_code
         )
-
-    labels = email.get("gmail_labels", [])
-    if isinstance(labels, str):
-        is_starred = "\\Starred" in labels
-    else:
-        is_starred = "\\Starred" in (labels or [])
-
-    if is_starred:
-        await engine_client.modify_labels(uid, folder, ["\\Starred"], "remove")
-        return JSONResponse({"status": "success", "starred": False})
-    else:
-        await engine_client.modify_labels(uid, folder, ["\\Starred"], "add")
-        return JSONResponse({"status": "success", "starred": True})
+    except Exception as e:
+        logger.error(f"Unexpected error toggling star uid={uid}: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
 @router.post("/api/bulk/label")
