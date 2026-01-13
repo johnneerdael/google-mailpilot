@@ -85,7 +85,7 @@ export default defineConfig({
           items: [
             { text: 'Overview', link: '/embeddings/' },
             { text: 'How it works', link: '/embeddings/overview' },
-            { text: 'Architecture', link: '/embeddings/architecture' }
+            { text: 'Architecture', link: '/embeddings/architecture' },
             { text: 'Dimensions & storage', link: '/embeddings/dimensions' },
             { text: 'Quick start', link: '/embeddings/quick-start' },
             { text: 'Providers', link: '/embeddings/providers' },
