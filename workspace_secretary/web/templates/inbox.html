@@ -91,7 +91,19 @@
                     </label>
                     <button hx-post="/api/email/toggle-star/{{ email.folder }}/{{ email.uid }}"
                             hx-swap="none"
-                            hx-on::after-request="this.querySelector('span').textContent = event.detail.xhr.response.includes('true') ? '★' : '☆'; this.querySelector('span').classList.toggle('text-yellow-400', event.detail.xhr.response.includes('true'))"
+                            hx-on::after-request="
+                                const data = JSON.parse(event.detail.xhr.response);
+                                const isStarred = data.starred;
+                                const span = this.querySelector('span');
+                                span.textContent = isStarred ? '★' : '☆';
+                                if (isStarred) {
+                                    span.classList.add('text-yellow-400');
+                                    span.classList.remove('text-muted', 'hover:text-body');
+                                } else {
+                                    span.classList.remove('text-yellow-400');
+                                    span.classList.add('text-muted', 'hover:text-body');
+                                }
+                            "
                             class="flex items-center py-4 pr-1 touch-manipulation"
                             title="Toggle star">
                         <span class="text-lg {% if email.is_starred %}text-yellow-400{% else %}text-muted hover:text-body{% endif %}">

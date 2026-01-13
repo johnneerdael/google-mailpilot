@@ -90,11 +90,16 @@ async def send_email(
     bcc: Optional[str] = None,
     reply_to_message_id: Optional[str] = None,
 ) -> dict:
-    payload = {"to": to, "subject": subject, "body": body}
-    if cc:
-        payload["cc"] = cc
-    if bcc:
-        payload["bcc"] = bcc
+    # Backend expects lists, convert comma-separated strings to lists
+    to_list = [addr.strip() for addr in to.split(",")] if to else []
+    cc_list = [addr.strip() for addr in cc.split(",")] if cc else None
+    bcc_list = [addr.strip() for addr in bcc.split(",")] if bcc else None
+
+    payload = {"to": to_list, "subject": subject, "body": body}
+    if cc_list:
+        payload["cc"] = cc_list
+    if bcc_list:
+        payload["bcc"] = bcc_list
     if reply_to_message_id:
         payload["reply_to_message_id"] = reply_to_message_id
     return await _request("POST", "/api/email/send", payload)

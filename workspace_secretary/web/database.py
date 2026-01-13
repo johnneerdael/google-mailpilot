@@ -191,8 +191,8 @@ def get_contact_interactions(contact_id: int, limit: int = 50):
     return contact_q.get_contact_interactions(get_db(), contact_id, limit)
 
 
-def get_frequent_contacts(limit: int = 20):
-    return contact_q.get_frequent_contacts(get_db(), limit)
+def get_frequent_contacts(limit: int = 20, exclude_email: str | None = None):
+    return contact_q.get_frequent_contacts(get_db(), limit, exclude_email)
 
 
 def get_recent_contacts(limit: int = 20):

@@ -52,9 +52,11 @@
 
 </head>
 <body class="h-full" style="background-color: var(--color-canvas); color: var(--color-body);" x-data="{ 
-    darkMode: {% if theme == 'system' %}window.matchMedia('(prefers-color-scheme: dark)').matches{% elif theme == 'dark' %}true{% else %}false{% endif %},
+    darkMode: (localStorage.getItem('theme') === 'dark') || (localStorage.getItem('theme') === null && {% if theme == 'dark' or theme == 'system' %}true{% else %}false{% endif %}),
     async toggleTheme() {
         this.darkMode = !this.darkMode;
+        const newTheme = this.darkMode ? 'dark' : 'light';
+        localStorage.setItem('theme', newTheme);
         if(this.darkMode) {
             document.documentElement.classList.add('dark');
         } else {
@@ -69,7 +71,7 @@
                     'X-CSRF-Token': csrfToken
                 },
                 body: JSON.stringify({
-                    theme: this.darkMode ? 'dark' : 'light',
+                    theme: newTheme,
                     density: '{{ density }}'
                 })
             });
@@ -83,7 +85,7 @@
             <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between h-16">
                     <div class="flex">
-                        <div class="flex items-center md:hidden mr-2">
+                        <div class="flex items-center lg:hidden mr-2">
                             <button @click="mobileMenuOpen = !mobileMenuOpen" type="button" 
                                     class="btn-icon">
                                 <span class="sr-only">Open main menu</span>
@@ -100,7 +102,7 @@
                                 📧 Secretary
                             </a>
                         </div>
-                        <div class="hidden md:ml-6 md:flex md:space-x-8">
+                        <div class="hidden lg:ml-6 lg:flex lg:space-x-8">
                             <a href="/inbox" class="nav-link active border-b-2" style="border-color: var(--color-primary);">
                                 Inbox
                             </a>
@@ -207,7 +209,7 @@
                 </div>
             </div>
 
-            <div x-show="mobileMenuOpen" x-cloak style="border-top: 1px solid var(--color-border);" id="mobile-menu" class="md:hidden">
+            <div x-show="mobileMenuOpen" x-cloak style="border-top: 1px solid var(--color-border);" id="mobile-menu" class="lg:hidden">
                 <div class="pt-2 pb-3 space-y-1">
                     <a href="/inbox" style="display: block; padding: 0.5rem 1rem; padding-left: 0.75rem; border-left: 4px solid var(--color-primary); font-size: 1rem; font-weight: 500; color: var(--color-primary); background-color: var(--color-primary-subtle);">
                         Inbox
