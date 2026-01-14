@@ -2,19 +2,8 @@
 
 # Overview
 
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Email Text    │────▶│ Embeddings API   │────▶│ Vector (3072d)  │
-│ "Meeting moved" │     │ (Gemini default) │     │ [0.12, -0.34,…] │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-                                                          │
-                              L2 Normalized ──────────────┤
-                                                          ▼
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Search Query   │────▶│ Embeddings API   │────▶│  Inner Product  │
-│ "schedule change"│    │  + Hard Filters  │     │     Search      │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-```
+<img width="769" height="338" alt="Screenshot 2026-01-14 at 02 28 58" src="https://github.com/user-attachments/assets/135557f1-485b-42fc-acef-fb3e0f0a977b" />
+
 
 ## Requirements
 
