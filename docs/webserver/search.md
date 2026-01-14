@@ -42,7 +42,7 @@ Results:
 • "We need to reduce expenses" (similarity: 78%)
 ```
 
-Requires embeddings configuration. See: [Embeddings](embeddings.md)
+Requires embeddings configuration. See our dedicated documentation for more info:: [Embeddings](/embeddings/overview)
 
 ## Saved searches
 

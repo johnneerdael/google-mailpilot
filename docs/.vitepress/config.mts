@@ -73,7 +73,6 @@ export default defineConfig({
             { text: 'Security', link: '/webserver/security' },
             { text: 'Customization', link: '/webserver/customization' },
             { text: 'Troubleshooting', link: '/webserver/troubleshooting' },
-            { text: 'Embeddings', link: '/webserver/embeddings' }
           ]
         }
       ],
@@ -82,7 +81,6 @@ export default defineConfig({
         {
           text: 'Embeddings',
           items: [
-            { text: 'Overview', link: '/embeddings/' },
             { text: 'How it works', link: '/embeddings/overview' },
             { text: 'Architecture', link: '/embeddings/architecture' },
             { text: 'Dimensions & storage', link: '/embeddings/dimensions' },
