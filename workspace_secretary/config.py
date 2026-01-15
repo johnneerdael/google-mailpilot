@@ -864,3 +864,72 @@ def load_config(config_path: Optional[str] = None) -> ServerConfig:
         return ServerConfig.from_dict(config_data)
     except KeyError as e:
         raise ValueError(f"Missing required configuration: {e}")
+
+
+def merge_oauth2_tokens(config: ServerConfig, token_path: Optional[str] = None) -> bool:
+    """
+    Merge OAuth2 tokens from token.json into the config.
+
+    This is the single source of truth for OAuth2 token loading.
+    Components should call this after load_config() to ensure OAuth2 is properly configured.
+
+    Returns True if tokens were loaded, False otherwise.
+    """
+    import json
+
+    paths_to_check = [
+        Path(token_path) if token_path else None,
+        Path(os.environ.get("TOKEN_PATH", "config/token.json")),
+        Path("/app/config/token.json"),
+    ]
+
+    for path in paths_to_check:
+        if path is None or not path.exists():
+            continue
+
+        try:
+            with open(path) as f:
+                content = f.read()
+                try:
+                    token_data = json.loads(content)
+                except json.JSONDecodeError:
+                    token_data = yaml.safe_load(content) or {}
+
+            oauth2_data = (
+                token_data.get("imap", {}).get("oauth2")
+                or token_data.get("oauth2")
+                or token_data
+            )
+
+            if oauth2_data and "refresh_token" in oauth2_data:
+                config.imap.oauth2 = OAuth2Config(
+                    client_id=oauth2_data.get(
+                        "client_id",
+                        config.imap.oauth2.client_id if config.imap.oauth2 else "",
+                    ),
+                    client_secret=oauth2_data.get(
+                        "client_secret",
+                        config.imap.oauth2.client_secret if config.imap.oauth2 else "",
+                    ),
+                    refresh_token=oauth2_data.get("refresh_token"),
+                    access_token=oauth2_data.get("access_token"),
+                    token_expiry=oauth2_data.get("token_expiry"),
+                )
+                logger.info(f"Loaded OAuth2 tokens from {path}")
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to load token file {path}: {e}")
+
+    return False
+
+
+def load_config_with_oauth2(config_path: Optional[str] = None) -> ServerConfig:
+    """
+    Load configuration and merge OAuth2 tokens from token.json.
+
+    This is the recommended way to load config for components that need OAuth2.
+    It combines load_config() + merge_oauth2_tokens() in one call.
+    """
+    config = load_config(config_path)
+    merge_oauth2_tokens(config)
+    return config

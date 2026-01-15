@@ -155,61 +155,14 @@ async def try_enroll() -> bool:
 
     Returns True if enrollment successful, False otherwise.
     """
+    from workspace_secretary.config import merge_oauth2_tokens
     from workspace_secretary.engine.oauth2 import validate_oauth_config
 
     config_path = os.environ.get("CONFIG_PATH")
-    token_path = Path(os.environ.get("TOKEN_PATH", "config/token.json"))
 
     try:
-        # Load main config (uses search paths if config_path is None)
         state.config = load_config(config_path)
-
-        # If token.json exists separately, merge OAuth2 tokens from it
-        if token_path.exists():
-            import json
-            import yaml
-
-            try:
-                with open(token_path) as f:
-                    # Try JSON first (auth_setup outputs JSON)
-                    content = f.read()
-                    try:
-                        token_data = json.loads(content)
-                    except json.JSONDecodeError:
-                        # Fall back to YAML
-                        token_data = yaml.safe_load(content) or {}
-
-                # Extract OAuth2 data - could be nested under 'imap.oauth2' or at root
-                oauth2_data = (
-                    token_data.get("imap", {}).get("oauth2")
-                    or token_data.get("oauth2")
-                    or token_data
-                )
-
-                if oauth2_data and "refresh_token" in oauth2_data:
-                    # Merge into config using the config.py OAuth2Config
-                    from workspace_secretary.config import OAuth2Config as ConfigOAuth2
-
-                    state.config.imap.oauth2 = ConfigOAuth2(
-                        client_id=oauth2_data.get(
-                            "client_id",
-                            state.config.imap.oauth2.client_id
-                            if state.config.imap.oauth2
-                            else "",
-                        ),
-                        client_secret=oauth2_data.get(
-                            "client_secret",
-                            state.config.imap.oauth2.client_secret
-                            if state.config.imap.oauth2
-                            else "",
-                        ),
-                        refresh_token=oauth2_data.get("refresh_token"),
-                        access_token=oauth2_data.get("access_token"),
-                        token_expiry=oauth2_data.get("token_expiry"),
-                    )
-                    logger.info(f"Loaded OAuth2 tokens from {token_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load token file {token_path}: {e}")
+        merge_oauth2_tokens(state.config)
 
         if not state.config.imap.oauth2:
             state.enrollment_error = "No OAuth2 configuration found"
