@@ -10,7 +10,7 @@ See [Migration](./migration.md).
 ## Automatic quantization for high dimensions
 
 pgvector’s HNSW index has practical limits around ~2000 dims for 32-bit vectors (8KB block size).
-For dimensions > 2000, Gmail Secretary can store embeddings as `halfvec` (16-bit quantization).
+For dimensions > 2000, Google MailPilot can store embeddings as `halfvec` (16-bit quantization).
 
 | Dimensions | Vector type | Index ops | Notes |
 |------------|-------------|-----------|-------|

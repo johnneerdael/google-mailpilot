@@ -1,14 +1,19 @@
-# Gmail Secretary
+# Google MailPilot
 
-[![Version](https://img.shields.io/badge/version-4.8.0-blue.svg)](https://github.com/johnneerdael/gmail-secretary-map/releases)
-[![Status](https://img.shields.io/badge/status-Public%20Alpha-orange)](https://github.com/johnneerdael/gmail-secretary-map)
+[![Version](https://img.shields.io/badge/version-5.0.0-blue.svg)](https://github.com/johnneerdael/google-mailpilot/releases)
+[![Status](https://img.shields.io/badge/status-Public%20Release-blue)](https://github.com/johnneerdael/google-mailpilot)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-**The AI-Native Email Client (MCP Server)**
+**The AI-native command center for Gmail and Google Workspace**
 
-Built for LLMs that need to read, search, triage, and respond to email autonomously. Not just a wrapper, but a full-featured IMAP client with `CONDSTORE` sync, `IDLE` push, and local Vector/SQL caching.
+Google MailPilot is the renamed successor to Gmail Secretary, built so LLMs can read, triage, respond to, and calendar-manage Gmail with a production-grade MCP control plane.
 
-> **⚠️ Alpha Notice:** This project is currently in active validation. The **Sync Engine** is production-stable (tested on 25k+ emails), but the **Write Operations** (sending, calendar edits) are currently enforced in "Draft-Only" mode for safety.
+> **⚠️ Release Notice:** v5.0.0 is the first public release under the Google MailPilot brand; it fixes MCP tool registration, tightens triage/compose coverage, adds new booking-link helpers, and keeps every mutation human-in-the-loop.
+>
+> **Release highlights:**
+> - Tools now register as soon as `workspace_secretary.tools` imports, preventing FastMCP registration bugs.
+> - Triage/compose tooling gained synchronous tests plus `tests/test_triage_priority_emails.py` and `tests/test_web_compose.py` to cover CLI-aware workflows.
+> - Engine/web routes, booking links, and `raw:` continuation-state handling now align with Google MailPilot expectations.
 
 ---
 
@@ -25,11 +30,11 @@ We believe in transparency. Here is the current readiness of our stack:
 
 ---
 
-**A Gmail IMAP/SMTP Client for AI Agents with Calendar Integration**
+**A Google MailPilot IMAP/SMTP control plane for AI agents with calendar integration**
 
-Built for LLMs that need to read, search, triage, and respond to email autonomously. Not just an MCP wrapper — a full-featured IMAP client engineered for AI orchestration workflows.
+Built for LLMs that need to read, search, triage, and respond to email autonomously. Not just an MCP wrapper — a full-featured IMAP control plane engineered for AI orchestration workflows.
 
-[📚 **Documentation**](https://johnneerdael.github.io/gmail-secretary-map/) · [🏗️ **Architecture**](#-architecture) · [⚡ **Quick Start**](#-quick-start)
+[📚 **Documentation**](https://johnneerdael.github.io/google-mailpilot/) · [🏗️ **Architecture**](#-architecture) · [⚡ **Quick Start**](#-quick-start)
 
 ---
 
@@ -37,7 +42,7 @@ Built for LLMs that need to read, search, triage, and respond to email autonomou
 
 Most email integrations for AI are thin API wrappers. They poll. They re-fetch. They timeout. They don't understand email threading, modification sequences, or push notifications.
 
-**Gmail Secretary** is different. It's a production-grade IMAP client that:
+**Google MailPilot** is different. It's a production-grade IMAP control plane that:
 
 - **Syncs intelligently** — CONDSTORE tracks what changed, IDLE pushes new mail instantly
 - **Caches locally** — SQLite or PostgreSQL, your AI reads from local DB in milliseconds
@@ -73,7 +78,7 @@ We implement these IMAP extensions for efficient, real-time email sync:
 
 Real benchmarks against a 50,000 email mailbox:
 
-| Operation | Traditional IMAP | Gmail Secretary |
+| Operation | Traditional IMAP | Google MailPilot |
 |-----------|------------------|-----------------|
 | Check for new mail | 2-5s (fetch all UIDs) | **< 50ms** (HIGHESTMODSEQ compare) |
 | Sync flag changes | Re-fetch messages | **Flags only** (CHANGEDSINCE) |
@@ -221,8 +226,8 @@ Bulk operations require approval with confidence tiers:
 ### 1. Clone and Configure
 
 ```bash
-git clone https://github.com/johnneerdael/gmail-secretary-map.git
-cd gmail-secretary-map
+git clone https://github.com/johnneerdael/google-mailpilot.git
+cd google-mailpilot
 cp config.sample.yaml config/config.yaml
 ```
 
@@ -384,10 +389,10 @@ CREATE TABLE folder_state (
 
 | Guide | Description |
 |-------|-------------|
-| [Architecture](https://johnneerdael.github.io/gmail-secretary-map/architecture.html) | Deep dive into dual-process design |
-| [Configuration](https://johnneerdael.github.io/gmail-secretary-map/guide/configuration.html) | All config options explained |
-| [Agent Rules](https://johnneerdael.github.io/gmail-secretary-map/guide/agents.html) | HITL safety patterns |
-| [API Reference](https://johnneerdael.github.io/gmail-secretary-map/api/) | Complete tool documentation |
+| [Architecture](https://johnneerdael.github.io/google-mailpilot/architecture.html) | Deep dive into dual-process design |
+| [Configuration](https://johnneerdael.github.io/google-mailpilot/guide/configuration.html) | All config options explained |
+| [Agent Rules](https://johnneerdael.github.io/google-mailpilot/guide/agents.html) | HITL safety patterns |
+| [API Reference](https://johnneerdael.github.io/google-mailpilot/api/) | Complete tool documentation |
 
 ---
 
@@ -415,7 +420,7 @@ MIT License — see [LICENSE](LICENSE) for details.
 
 <p align="center">
   <strong>Built for AI agents that take email seriously.</strong><br>
-  <a href="https://github.com/johnneerdael/gmail-secretary-map">GitHub</a> ·
-  <a href="https://johnneerdael.github.io/gmail-secretary-map/">Documentation</a> ·
+  <a href="https://github.com/johnneerdael/google-mailpilot">GitHub</a> ·
+  <a href="https://johnneerdael.github.io/google-mailpilot/">Documentation</a> ·
   <a href="https://modelcontextprotocol.io/">Model Context Protocol</a>
 </p>

@@ -1,6 +1,6 @@
-# Gmail Secretary: Use Cases & Workflows
+# Google MailPilot: Use Cases & Workflows
 
-This document outlines the high-level workflows that the Gmail Secretary MCP enables for AI agents. By combining Gmail and Calendar tools, the server acts as a high-performance executive assistant.
+This document outlines the high-level workflows that the Google MailPilot MCP enables for AI assistants. By combining Gmail and Calendar tools with semantic search and booking links, the server acts as a high-performance executive assistant.
 
 ## 1. The Monday Morning Triage
 **Goal**: Get a structured overview of the week and prioritize the inbox.

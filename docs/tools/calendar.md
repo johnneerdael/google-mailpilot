@@ -1,9 +1,9 @@
 # Calendar Tools
 
-Calendar management and scheduling tools.
+MailPilot calendar tools focus on scheduling, availability, and booking helpers powered by the Engine API.
 
-::: tip Timezone-Aware
-All calendar operations respect your configured `timezone` and `working_hours` from config.yaml.
+::: tip Working hours & timezone aware
+Every calendar tool respects `timezone` and `working_hours` from `config.yaml`. Booking links also honor the configured window (start/end hours, duration, availability days) before returning slots.
 :::
 
 ## check_calendar

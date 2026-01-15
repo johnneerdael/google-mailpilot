@@ -2,19 +2,19 @@
 layout: home
 
 hero:
-  name: "Gmail Secretary"
-  text: "IMAP/SMTP Client for AI Agents"
-  tagline: A production-grade Gmail client engineered for LLM orchestration with RFC-compliant CONDSTORE, IDLE, and native Gmail extensions
+  name: "Google MailPilot"
+  text: "Gmail command center for AI agents"
+  tagline: LLM-safe Gmail orchestration with RFC-compliant CONDSTORE, IDLE push, Postgres + pgvector caching, and booking-link scheduling
   image:
     src: /hero.jpeg
-    alt: Gmail Secretary
+    alt: Google MailPilot
   actions:
     - theme: brand
       text: Get Started
       link: /getting-started
     - theme: alt
       text: View on GitHub
-      link: https://github.com/johnneerdael/gmail-secretary-map
+      link: https://github.com/johnneerdael/google-mailpilot
 
 features:
   - icon: 📡
@@ -30,16 +30,16 @@ features:
     details: X-GM-THRID threading, X-GM-MSGID stable IDs, X-GM-LABELS as JSONB, X-GM-RAW search syntax. No heuristic threading needed.
     
   - icon: 🗄️
-    title: Local-First Cache
-    details: SQLite with FTS5 for instant search, or PostgreSQL with pgvector for semantic search. Your AI reads from local DB in milliseconds.
+    title: Postgres + pgvector cache
+    details: Postgres + pgvector (pgvector) ensures semantic search, booking metadata, and local caching with millisecond reads for AI tools.
     
   - icon: 🔒
     title: Human-in-the-Loop
     details: AI never sends without approval. Draft-first philosophy with confidence-based batch operations and explicit confirmation.
     
   - icon: 📅
-    title: Calendar Integration
-    details: Real-time Google Calendar API access with timezone-aware scheduling, availability lookup, and meeting suggestions within working hours.
+    title: Calendar & booking links
+    details: Google Calendar access with timezone-aware scheduling, availability lookup, working-hour enforcement, and public `/book/{link_id}` booking links.
 ---
 
 ## Quick Start
@@ -50,17 +50,18 @@ Install via Docker (recommended):
 # docker-compose.yml
 services:
   workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
+    image: ghcr.io/johnneerdael/google-mailpilot:latest
     container_name: workspace-secretary
     restart: always
     ports:
-      - "8000:8000"
+      - "8000:8000"  # MCP tools
+      - "8080:8080"  # Web UI + booking links
     volumes:
       - ./config:/app/config
     environment:
       - LOG_LEVEL=INFO
+      - ENGINE_API_URL=http://127.0.0.1:8001
 ```
-
 **Important**: Generate a unique bearer token for security:
 
 ```bash
@@ -83,14 +84,14 @@ Then start with: `docker compose up -d`
 
 See [Getting Started](/getting-started) for complete installation instructions.
 
-## Why Gmail Secretary MCP?
+## Why Google MailPilot?
 
-Traditional email clients are built for humans. **Gmail Secretary MCP** is built for AI assistants.
+Traditional email clients are built for humans. **Google MailPilot** is built for AI assistants.
 
-- **Instant reads**: SQLite cache means sub-millisecond email queries
-- **Persistent connections**: Engine maintains IMAP connection (no per-request reconnect)
-- **Token-efficient**: Bulk email fetching with smart truncation (700 chars) for fast triage
-- **Context-rich**: Full thread history, attachment content, and calendar context in one tool call
+- **Instant reads**: Postgres + pgvector cache returns emails in milliseconds for AI reasoning
+- **Persistent connections**: Engine maintains IMAP/CONDSTORE so tools always see the same state
+- **Semantic + booking context**: `booking_links` metadata and SPF/DKIM signals enrich every tool call
+- **Context-rich**: Full thread history, attachment metadata, calendar context, and security signals in one call
 - **Intelligence signals**: VIP detection, urgency markers, question detection—not hardcoded decisions
 - **Agentic workflows**: Compose specialized agents (Triage, Scheduler, Intelligence Clerk) using atomic tools
 
@@ -123,6 +124,14 @@ The AI:
 2. Extracts PDF text with `get_attachment_content()`
 3. Parses and presents the total
 :::
+
+## What's New in v5.0.0 (Google MailPilot)
+
+- ✅ **MailPilot rebrand**: docs, badges, and repo links now point to `github.com/johnneerdael/google-mailpilot`
+- 🧠 **Tool registration & continuations**: `workspace_secretary.tools` registers at import time and honors `raw:<json>` continuation states so FastMCP no longer rejects string payloads
+- 📚 **Postgres + pgvector first**: Semantic search, booking links, and shared cache now rely on Postgres; SQLite is a developer fallback
+- 🧾 **Booking links**: `/book/{link_id}`, `/api/calendar/booking-slots`, `/api/calendar/book` plus `booking_links` helpers let invitees book slots safely
+- 🧯 **Testing & reliability**: `tests/test_triage_priority_emails.py` and `tests/test_web_compose.py` now run synchronously with `asyncio.run`, matching production MCP usage
 
 ## What's New in v4.8.0
 
@@ -410,9 +419,9 @@ See the [Threading Guide](/guide/threading) for details.
 
 ## Community & Support
 
-- [GitHub Repository](https://github.com/johnneerdael/gmail-secretary-map)
-- [Report Issues](https://github.com/johnneerdael/gmail-secretary-map/issues)
-- [View Releases](https://github.com/johnneerdael/gmail-secretary-map/releases)
+- [GitHub Repository](https://github.com/johnneerdael/google-mailpilot)
+- [Report Issues](https://github.com/johnneerdael/google-mailpilot/issues)
+- [View Releases](https://github.com/johnneerdael/google-mailpilot/releases)
 
 ---
 

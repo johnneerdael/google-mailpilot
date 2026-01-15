@@ -1,6 +1,6 @@
 # Web UI
 
-The Gmail Secretary includes a full-featured web interface for managing your inbox without an MCP client. Access it at `http://localhost:8080` when running the web server.
+Google MailPilot includes a full-featured web interface for managing your inbox without an MCP client. Access it at `http://localhost:8080` when running the web server.
 
 ## Getting Started
 
@@ -184,7 +184,7 @@ The standard Docker image includes the web UI:
 ```yaml
 services:
   workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
+    image: ghcr.io/johnneerdael/google-mailpilot:latest
     ports:
       - "8000:8000"  # MCP server
       - "8080:8080"  # Web UI
@@ -320,7 +320,8 @@ server {
     ssl_certificate /etc/letsencrypt/live/mail.yourdomain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/mail.yourdomain.com/privkey.pem;
     
-    auth_basic "Gmail Secretary";
+            auth_basic "Google MailPilot"
+;
     auth_basic_user_file /etc/nginx/.htpasswd;
     
     location / {

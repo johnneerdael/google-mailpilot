@@ -1,6 +1,6 @@
 # Configuration
 
-Complete configuration reference for Gmail Secretary MCP.
+Complete configuration reference for Google MailPilot.
 
 ## Configuration File
 
@@ -165,32 +165,16 @@ vip_senders: []
 
 ## Database Configuration
 
-Secretary MCP supports two database backends for email caching.
+Google MailPilot v5 targets **PostgreSQL with pgvector** as the primary backend. Semantic search tools (`semantic_search_emails`, `find_related_emails`, `semantic_search_filtered`), booking links, and the shared MCP + web portals all read from Postgres, so it’s required for production deployments. SQLite can still be used for quick single-user development, but the new default image and docs assume Postgres.
 
-### SQLite (Default)
+### PostgreSQL with pgvector (required for production)
 
-No configuration needed—SQLite is automatic:
-
-```yaml
-database:
-  backend: sqlite  # Default, can be omitted
-```
-
-**Cache location**: `config/email_cache.db` (same directory as config.yaml)
-
-**When to use SQLite:**
-- Single-user deployments
-- Local development
-- Simple setups without semantic search
-
-### PostgreSQL with pgvector
-
-For semantic search capabilities (search by meaning, find related emails):
+Enable semantic search, booking metadata, and shared caching via Postgres + pgvector:
 
 ```yaml
 database:
   backend: postgres
-  
+
   postgres:
     host: postgres          # Docker service name, or localhost
     port: 5432
@@ -198,7 +182,7 @@ database:
     user: secretary
     password: ${POSTGRES_PASSWORD}
     ssl_mode: prefer
-  
+
   embeddings:
     enabled: true
     provider: gemini
@@ -209,12 +193,26 @@ database:
     task_type: RETRIEVAL_DOCUMENT
 ```
 
-**When to use PostgreSQL:**
-- Need semantic search ("find emails about budget concerns")
-- Want `find_related_emails` for context gathering
-- Multi-instance deployments with shared database
+**Postgres enables:**
+- Semantic search (`semantic_search_emails`, `semantic_search_filtered`, `find_related_emails`)
+- Booking link metadata (`booking_links` table) used by `/book/{link_id}` and `/api/calendar/booking-slots`
+- Shared state between the MCP server, Engine API, and web portal
 
-See [Semantic Search](./semantic-search) and [Embeddings Guide](/embeddings/) for complete setup.
+See [Semantic Search](./semantic-search) and [Embeddings Guide](/embeddings/) for full setup.
+
+### SQLite (local/dev only)
+
+If you just want to experiment locally without Postgres, SQLite is still available:
+
+```yaml
+database:
+  backend: sqlite
+```
+
+**Notes:**
+- Cache stored at `config/email_cache.db`
+- Semantic search and booking links are unavailable
+- Suitable for single-user or offline experimentation
 
 ## Optional Fields
 
@@ -247,6 +245,10 @@ calendar:
 ```
 
 **Default**: Calendar tools disabled unless explicitly enabled.
+
+### Booking link metadata (Postgres only)
+
+Booking links are stored in the `booking_links` table and managed via `workspace_secretary/db/queries/booking_links.py`. Each entry configures `link_id`, duration, availability window, timezone, and an optional metadata JSON blob. Toggle `is_active` to disable a link without deleting it. The `/book/{link_id}` page, `/api/calendar/booking-slots`, and `/api/calendar/book` endpoints all validate against this table.
 
 ### Web UI Configuration
 
@@ -330,7 +332,7 @@ All fields can be overridden via environment variables:
 # docker-compose.yml
 services:
   workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
+    image: ghcr.io/johnneerdael/google-mailpilot:latest
     environment:
       - WORKSPACE_TIMEZONE=America/Los_Angeles
       - WORKING_HOURS_START=09:00

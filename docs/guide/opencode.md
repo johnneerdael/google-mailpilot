@@ -1,6 +1,6 @@
 # OpenCode Agent Setup Guide
 
-This document provides a complete, copy/paste-ready guide for setting up the **Gmail Secretary MCP** agent ecosystem in OpenCode.
+This document provides a complete, copy/paste-ready guide for setting up the **Google MailPilot MCP** agent ecosystem in OpenCode.
 
 ## Table of Contents
 1. [Project Structure](#project-structure)
@@ -19,7 +19,7 @@ This document provides a complete, copy/paste-ready guide for setting up the **G
 The OpenCode agent setup consists of:
 
 ```
-gmail-secretary-map/
+google-mailpilot/
 ├── AGENTS.md                          # Hard rules (HITL, confidence gating, etc.)
 ├── .opencode/
 │   ├── agent/

@@ -1,9 +1,9 @@
 # Guide
 
-Welcome to **Google MailPilot** — an AI-native Gmail client exposed as MCP tools and a AI Native Browser-Based mail client, built around safe automation primitives.
+Welcome to **Google MailPilot** — an AI-native Gmail command center exposed as MCP tools plus a browser-based portal, built around safe automation primitives.
 
 ::: tip What This Is
-**SGoogle MailPilot is not an IMAP library.** It's a workflow engine for AI assistants that provides:
+**Google MailPilot is not an IMAP library.** It's a workflow engine for AI assistants that provides:
 - **Signals** for intelligent reasoning (VIP detection, deadline mentions, questions)
 - **Staged mutations** with human approval (draft-review-send pattern)
 - **Time-boxed batch operations** that never timeout
@@ -105,6 +105,14 @@ Learn to build intelligent secretary workflows:
 - [Semantic Search](./semantic-search) - AI-powered email search with pgvector
 - [Web UI](./web-ui) - Browser-based inbox management
 
+## Code & Documentation Quality
+
+Google MailPilot v5.0.0 ships with intentional QA improvements:
+- **Tool registration & continuation stability** (FastMCP now registers every tool on import, and batch calls honor `raw:<json>` states) so MCP clients never miss APIs.
+- **Synchronous triage/compose tests** (`tests/test_triage_priority_emails.py`, `tests/test_web_compose.py`) run under plain `pytest` via `asyncio.run(...)`, ensuring coverage without extra async plugins.
+- **Postgres + pgvector-first data path** keeps semantic search, booking links, and the UI in sync while providing consistent performance.
+- **Documentation refresh** extends from this guide through `docs/webserver` and tool references, keeping the narrative accurate and focused on the shipped code (booking links, calendar APIs, safety controls).
+
 ## Quick Reference
 
 ### Configuration (Required Fields)
@@ -129,6 +137,14 @@ See [Configuration](./configuration) for complete reference.
 | Find Document | "Find the invoice PDF from Accounting" |
 | Draft Reply | "Draft a reply saying I'll review by EOD" |
 | Bulk Cleanup | "Clean up my newsletters and notifications" |
+
+### Booking links (new in v5)
+
+Google MailPilot adds booking links backed by `workspace_secretary/db/queries/booking_links.py`:
+1. Define a `link_id` with duration, availability window, and description.
+2. Share `https://your-domain/book/{link_id}` with invitees.
+3. Guests fetch slots from `/api/calendar/booking-slots?link_id={link_id}` and post to `/api/calendar/book` with attendee info.
+4. The Engine API creates the confirmed event using `add_meet=True`, and the portal respects working hours/timezones before confirming the slot.
 
 ## Next Steps
 

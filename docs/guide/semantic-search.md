@@ -55,7 +55,7 @@ services:
       retries: 5
 
   workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
+    image: ghcr.io/johnneerdael/google-mailpilot:latest
     depends_on:
       postgres:
         condition: service_healthy

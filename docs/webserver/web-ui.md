@@ -1,74 +1,40 @@
 <!-- Refactored docs generated 2026-01-13 -->
 
-# Web UI basics
+# Google MailPilot Web Portal Overview
 
-The main interface provides: inbox browsing, folders/labels, thread reading, and bulk actions.
+The FastAPI + HTMX portal complements the MCP tool layer with calendar-focused views, availability helpers, and the new booking link experience.
 
-## Routes at a glance
+## Home / Calendar dashboard (`/calendar`)
 
-- `/` → redirects to `/inbox`
-- `/inbox` → inbox view (supports `?folder=`)
-- `/thread/<id>` → thread / conversation view
+The `/calendar` view is the primary human dashboard. It renders:
+- **Day/week/month/agenda tabs** that pull events from the engine via `workspace_secretary.web.routes.calendar`.
+- **Calendar selection state** showing which synced calendars are active, last sync timestamps, and synchronization health for each calendar.
+- **Busy slots** derived from `/api/calendar/find-time` and the engine’s freebusy query, displayed as overlays on the grid.
+- **Availability widget partial** (`/calendar/availability`) that can be embedded in other pages or shared with booking flows.
 
-Full endpoint list: [API endpoints](api.md)
+## Rescheduling & availability helpers
 
-## Inbox view (`/inbox`)
+- `/calendar/find-time` renders an HTMX form that hits `/api/calendar/find-time` to surface spare slots between 11:00–22:00.
+- `/api/calendar/propose-times` accepts JSON bundles of times+messages for proposing alternatives without mutating calendars.
+- `/calendar/availability` exposes a embeddable widget for showing busy windows across the next `n` days.
+- `/api/calendar/event/{calendar_id}/{event_id}` returns the event details for quick modal displays.
 
-The main inbox displays:
+## Creating & responding to events
 
-| Feature | Description |
-|---------|-------------|
-| Unread indicators | Bold styling, visual badges |
-| Sender & subject | Quick scan with avatars |
-| Timestamps | Relative (“2 hours ago”) and absolute |
-| Snippets | First line preview |
-| Pagination | Configurable page size |
+- `/api/calendar/event` accepts forms (summary, start/end, attendees, add_meet flag) and proxies to `engine.create_calendar_event`.
+- `/calendar/api/create-event` is a simplified form for custom date/time inputs.
+- `/api/calendar/respond/{event_id}` updates RSVP status (`accepted`, `declined`, `tentative`) respecting working hours and engine state.
 
-### Folder navigation
+## Booking links & public scheduling
 
-Switch between Gmail folders:
+MailPilot now hosts booking links downstream of `workspace_secretary/db/queries/booking_links.py`:
+- `/book/{link_id}` renders the public HTML booking page (configured by host_name, description, duration).
+- `/api/calendar/booking-slots` returns availability (with duration, busy windows, timezone awareness) for the requested link.
+- `/api/calendar/book` accepts attendee info + a slot, creates the event via Engine API with `add_meet=True`, and acknowledges success.
 
-- **INBOX** — Primary inbox
-- **[Gmail]/Sent Mail** — Sent emails
-- **[Gmail]/Drafts** — Draft emails
-- **[Gmail]/All Mail** — All archived mail
-- **Custom labels** — Your Gmail labels
+## Linking to the MCP toolset
 
-## Thread view (`/thread/<id>`)
+- The portal reuses the same Postgres database as the MCP server, so calendar events surfaced here match what tools like `get_daily_briefing` and `create_calendar_event` see.
+- Booking links also rely on the new `booking_links` table, so toggling a link's `is_active` flag instantly updates the public page.
 
-Click an email to view the full conversation:
-
-- **Chronological display** — Oldest to newest
-- **Sender avatars** — Visual distinction
-- **HTML rendering** — Safe, sanitized HTML
-- **Attachments** — Download links
-- **Reply/Forward** — Action buttons
-
-## Bulk actions
-
-Select multiple emails with checkboxes:
-
-```
-┌──────────────────────────────────────────────────┐
-│ ☑ Select All    [Mark Read] [Archive] [Delete]   │
-├──────────────────────────────────────────────────┤
-│ ☑ Newsletter from Company A                      │
-│ ☑ Weekly Digest #234                             │
-│ ☐ Important: Q4 Budget Review                    │
-│ ☑ Your order has shipped                         │
-└──────────────────────────────────────────────────┘
-```
-
-Available actions:
-
-- **Mark as Read** — Clear unread status
-- **Mark as Unread** — Flag for attention
-- **Archive** — Move to All Mail
-- **Delete** — Move to Trash
-- **Apply Label** — Add Gmail label
-
-::: warning Confirmation Required
-All bulk actions require confirmation before executing.
-:::
-
-Next: [Search](search.md) · [AI chat](chat.md) · [Settings](settings.md)
+Next: [API endpoints](api.md) · [Configuration](configuration.md) · [MCP tools reference](../tools/index.md)

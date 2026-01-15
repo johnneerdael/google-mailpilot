@@ -20,7 +20,7 @@ server {
     ssl_certificate /etc/letsencrypt/live/mail.yourdomain.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/mail.yourdomain.com/privkey.pem;
 
-    auth_basic "Gmail Secretary";
+    auth_basic "Google MailPilot";
     auth_basic_user_file /etc/nginx/.htpasswd;
 
     location / {

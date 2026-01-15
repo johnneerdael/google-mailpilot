@@ -1,6 +1,6 @@
 # Docker Deployment
 
-Deploy Gmail Secretary MCP with Docker for persistent email caching and reliable operation.
+Deploy Google MailPilot with Docker for persistent email caching, booking links, and reliable safety controls.
 
 ## Prerequisites
 
@@ -13,8 +13,8 @@ Deploy Gmail Secretary MCP with Docker for persistent email caching and reliable
 **1. Clone and configure:**
 
 ```bash
-git clone https://github.com/johnneerdael/gmail-secretary-map.git
-cd gmail-secretary-map
+git clone https://github.com/johnneerdael/google-mailpilot.git
+cd google-mailpilot
 
 # Create config directory
 mkdir -p config
@@ -65,8 +65,8 @@ docker exec -it workspace-secretary uv run python -m workspace_secretary.auth_se
 docker exec -it workspace-secretary uv run python -m workspace_secretary.app_password
 ```
 
-::: tip Simplified Auth (v4.2.2+)
-Tokens automatically save to `/app/config/token.json`. No `--token-output` flag needed.
+::: tip Simplified auth
+Tokens automatically save to `/app/config/token.json`; you don't need to pass `--token-output`.
 :::
 
 **5. Monitor sync progress:**
@@ -83,19 +83,9 @@ INFO - Embedding 50 emails from INBOX
 
 ## Database Backends
 
-### SQLite (Default)
+### PostgreSQL with pgvector (Production)
 
-Zero configuration, perfect for single-user deployments:
-
-```yaml
-database:
-  backend: sqlite
-  path: /app/config/email_cache.db
-```
-
-### PostgreSQL (Recommended for Production)
-
-Required for semantic search with pgvector:
+Google MailPilot requires Postgres + pgvector for semantic search, booking links, and shared state between the MCP server, Engine API, and web portal. Configure:
 
 ```yaml
 database:
@@ -105,11 +95,27 @@ database:
   name: secretary
   user: secretary
   password: ${POSTGRES_PASSWORD}
-  
+
   embeddings:
     enabled: true
-    model: text-embedding-3-small
-    dimensions: 1536
+    model: text-embedding-004
+    dimensions: 3072
+    task_type: RETRIEVAL_DOCUMENT
+```
+
+**Postgres unlocks:**
+- `semantic_search_emails` / `semantic_search_filtered`
+- `find_related_emails`
+- Booking link metadata (`booking_links` table)
+
+### SQLite (Development)
+
+SQLite is still available for fast single-user experiments, but lacks semantic search and booking-link support:
+
+```yaml
+database:
+  backend: sqlite
+  path: /app/config/email_cache.db
 ```
 
 **Docker Compose with PostgreSQL:**
@@ -118,10 +124,10 @@ database:
 # docker-compose.yml
 services:
   workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
+    image: ghcr.io/johnneerdael/google-mailpilot:latest
     ports:
       - "8000:8000"  # MCP server
-      - "8080:8080"  # Web UI
+      - "8080:8080"  # Web UI + booking links
     volumes:
       - ./config:/app/config
     environment:
@@ -343,11 +349,11 @@ ports:
 
 ### "Database not initialized" error
 
-Upgrade to v4.2.2+ which fixes this issue.
+Ensure the Postgres service is healthy before the MailPilot container starts. The database schema is created on first startup, so restarting once Postgres is ready usually resolves it.
 
 ### "Missing client_id or client_secret"
 
-Re-run auth setup with v4.2.1+ which saves credentials in token.json.
+Re-run the OAuth auth setup command above; the helpers now save `client_id`/`client_secret` into `token.json` automatically.
 
 ### PostgreSQL connection refused
 

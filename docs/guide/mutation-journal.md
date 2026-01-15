@@ -4,7 +4,7 @@ The Mutation Journal is a critical infrastructure component that enables **optim
 
 ## The Problem: DB/IMAP Consistency
 
-Gmail Secretary maintains a local database cache of your emails for fast search and display. When you perform an action in the Web UI (archive, delete, mark read), two things must happen:
+Google MailPilot maintains a local database cache of your emails for fast search and display. When you perform an action in the Web UI (archive, delete, mark read), two things must happen:
 
 1. **Update the local database** (instant UI feedback)
 2. **Execute the IMAP command** (actually move the email on Gmail)

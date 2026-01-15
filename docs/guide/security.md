@@ -1,6 +1,6 @@
 # Security & SSL Setup
 
-This guide covers securing your Gmail Secretary MCP server for remote access.
+This guide covers securing your Google MailPilot MCP server for remote access.
 
 ## Bearer Token Authentication
 

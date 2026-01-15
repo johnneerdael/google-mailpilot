@@ -1,9 +1,9 @@
 # Email Tools
 
-Email and search tools for reading, searching, and managing emails.
+Google MailPilot’s email tools read from the shared PostgreSQL/pgvector database that mirrors your Gmail IMAP state. The MCP server and HTML portal both query the same cache, so search results, threading, and security signals stay in sync.
 
-::: tip Cache-First Performance
-Read operations query the local SQLite cache first, providing **sub-millisecond response times**. The cache syncs with Gmail IMAP every 5 minutes automatically.
+::: tip Fast reads, instant signals
+Read operations query the Postgres cache (backed by pgvector for semantic search) and still return in milliseconds. The engine syncs IMAP every few minutes while `workspace_secretary/email_auth.py` adds SPF/DKIM/DMARC signals to each email for smarter triage.
 :::
 
 ## gmail_search

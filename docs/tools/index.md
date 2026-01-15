@@ -1,12 +1,12 @@
-# MCP Tools Reference
+# Google MailPilot MCP Tools Reference
 
-Complete reference for all Gmail Secretary MCP tools.
+The MCP server exposes Google MailPilot’s curated toolset for Gmail and Calendar. Every tool is built as a **secretary workflow**, not a raw IMAP/SMTP wrapper, so agents reason with signals, confirm staged mutations, and retry batch operations safely.
 
 ::: tip AI-Native Design
-These aren't protocol wrappers—they're **secretary workflows** designed for AI assistants:
-- **Signals** for intelligent reasoning, not raw data
-- **Staged mutations** that require user confirmation
-- **Time-boxed batches** with continuation states for large mailboxes
+These tools enforce the MailPilot safety triangle:
+- **Signals-first outputs** tailored for reasoning (VIP, urgency, booking context)
+- **Staged mutations** (drafts, reschedules, booking links) so humans confirm writes
+- **Time-boxed batches** that return `continuation_state` strings (use `raw:<json>` when re-running to avoid FastMCP parsing glitches)
 :::
 
 ## Tool Categories

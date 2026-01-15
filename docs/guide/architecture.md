@@ -1,10 +1,11 @@
-# Architecture v4.8.0
+# Architecture
 
-This document describes the Gmail Secretary architecture including the 3-process deployment model, sync engine implementation, IMAP connection pooling, and the IDLE threading model.
+This document describes the Google MailPilot architecture: the three-process deployment model, Postgres-backed sync engine, IMAP connection pooling, and the IDLE threading model.<br>
+v5.0.0 focuses on robustness (tool registration fixes, raw continuation-state handling) plus semantic search and booking-link scheduling built on Postgres.
 
-## Deployment Architecture (v4.8.0+)
+## Deployment Architecture
 
-Gmail Secretary runs as three coordinated processes managed by supervisord:
+Google MailPilot runs as three coordinated processes managed by supervisord:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -25,8 +26,8 @@ Gmail Secretary runs as three coordinated processes managed by supervisord:
 │         │                                                                │
 │         ▼                                                                │
 │  ┌──────────────────────────────────────────┐                           │
-│  │  SQLite / PostgreSQL Database            │                           │
-│  │  • Email cache (FTS5)                    │                           │
+│  │  PostgreSQL (pgvector) Database           │                           │
+│  │  • Email cache + booking_links table      │                           │
 │  │  • Gmail labels (JSONB)                  │                           │
 │  │  • Embeddings (pgvector)                 │                           │
 │  └──────────────────────────────────────────┘                           │

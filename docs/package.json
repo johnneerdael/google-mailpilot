@@ -1,7 +1,7 @@
 {
   "name": "google-workspace-secretary-docs",
   "version": "2.2.0",
-  "description": "Documentation for Gmail Secretary MCP",
+  "description": "Documentation for Google MailPilot MCP",
   "type": "module",
   "scripts": {
     "build": "vitepress build",

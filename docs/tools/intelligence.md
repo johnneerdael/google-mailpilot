@@ -1,9 +1,9 @@
 # Intelligence Tools
 
-Smart analysis, prioritization, and batch processing tools.
+Smart analysis, prioritization, and time-boxed batches tailored for Google MailPilot agents.
 
-::: tip AI-Native Design
-These tools return **signals** for AI reasoning—they don't make decisions. The AI interprets signals in context to determine priority and actions.
+::: tip Signals + continuation safety
+Intelligence tools surface signals (`is_addressed_to_me`, `mentions_deadline`, `is_from_vip`) and rely on `continuation_state` strings. When repeating a batch call, re-use the `raw:<json>` prefix so FastMCP doesn’t pre-parse the JSON before validation.
 :::
 
 ## get_daily_briefing

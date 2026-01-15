@@ -1,38 +1,46 @@
-# Getting Started
+# Getting Started with Google MailPilot
 
-Get up and running with Gmail Secretary MCP in minutes.
+Google MailPilot is the new name for the Gmail Secretary MCP stack. v5.0.0 is the first release under this brand: it delivers reliable MCP tool registration, Postgres-native storage with pgvector embeddings, synchronous triage/compose tests, and reusable booking links that let invitees schedule meetings without direct Google Calendar access.
 
 ::: tip What This Is
-**Secretary MCP is an AI-native Gmail client** — not an IMAP library. It provides:
-- **Signals** for intelligent reasoning (VIP, deadlines, questions)
-- **Staged mutations** requiring user confirmation
-- **Time-boxed batches** that never timeout
-- **Optional semantic search** via pgvector
+Google MailPilot is an AI-native command center for Gmail and Google Workspace. It provides:
+- **Signals-first tools** (VIP, deadline, question detection) so LLMs can reason before acting
+- **Staged mutations** (drafts, suggested reschedules, booking links) that always wait for your confirmation
+- **Time-boxed batch workflows** (`quick_clean_inbox`, `triage_priority_emails`) that surface continuation states instead of timing out
+- **PostgreSQL + pgvector** for fast, semantic search, and **booking-link scheduling** via `/book/{link_id}`, `/api/calendar/booking-slots`, and `/api/calendar/book`
 :::
+
+## Architecture overview
+
+The release ships as a single Docker Compose deployment that internally runs three coordinated processes:
+1. **Engine API** (`workspace_secretary.engine.api`, port 8001, internal) — holds the IMAP connection, manages all mutations/auth, and syncs the database.
+2. **MCP Server** (`workspace_secretary.tools`, port 8000) — exposes FastMCP tools that read from Postgres, trigger Engine mutations, and enforce the draft-review-send pattern plus `raw:` continuation handling.
+3. **Web UI & booking pages** (`workspace_secretary.web`, port 8080) — displays inbox/calendar views and hosts the public booking experience for `/book/{link_id}`.
+
+All components read/write to **PostgreSQL (SQLite is no longer supported)**. Embeddings require pgvector (configured through `database.embeddings`). Booking-link metadata is stored in `booking_links` and surfaced by `workspace_secretary/db/queries/booking_links.py`.
 
 ## Prerequisites
 
-- **Docker and Docker Compose** installed ([Install Docker Desktop](https://www.docker.com/products/docker-desktop/))
-- **Google Cloud Project** with OAuth2 credentials (for IMAP/SMTP authentication and Calendar API)
-- **Claude Desktop** or another MCP-compatible AI client
+- Docker & Docker Compose ([install Docker Desktop](https://www.docker.com/products/docker-desktop))
+- PostgreSQL 16+ with the pgvector extension (required for embeddings, booking links, and the shared database layer)
+- Google OAuth2 credentials covering: `https://mail.google.com/` (IMAP/SMTP) and `https://www.googleapis.com/auth/calendar`
+- A UUID-based bearer token for MCP clients (Claude Desktop, OpenCode, etc.)
 
-## Quick Start
+## Quick start
 
-### Step 1: Create Configuration
+### Step 1: Create configuration
 
-Create `config.yaml`:
+Create `config/config.yaml` (mount this folder into the container). Example:
 
 ```yaml
-# config.yaml - mount as read-only in Docker
-
 bearer_auth:
   enabled: true
-  token: "REPLACE-WITH-YOUR-UUID"  # See Step 2
+  token: "YOUR-UUID-TOKEN"
 
 identity:
   email: your-email@gmail.com
   full_name: "Your Full Name"
-  aliases: []  # Empty list if no aliases
+  aliases: []
 
 imap:
   host: imap.gmail.com
@@ -46,255 +54,163 @@ smtp:
   username: your-email@gmail.com
   use_tls: true
 
-timezone: Europe/Amsterdam  # IANA format
+database:
+  backend: postgres
+  postgres:
+    host: postgres
+    port: 5432
+    database: secretary
+    user: secretary
+    password: secretarypass
+  embeddings:
+    enabled: true
+    provider: gemini
+    gemini_api_key: ${GEMINI_API_KEY}
+    gemini_model: text-embedding-004
+    dimensions: 3072
+    batch_size: 100
+    task_type: RETRIEVAL_DOCUMENT
 
+timezone: Europe/Amsterdam
 working_hours:
   start: "09:00"
   end: "17:00"
-  workdays: [1, 2, 3, 4, 5]  # Mon-Fri
-
-vip_senders: []  # Add priority senders, or empty list
-
+  workdays: [1,2,3,4,5]
+vip_senders: []
 calendar:
   enabled: true
-
-# Database: sqlite (default) or postgres (for semantic search)
-database:
-  backend: sqlite
 ```
 
-::: warning Critical Fields
-- `aliases: []` - Required even if empty
-- `vip_senders: []` - Required even if empty  
-- OAuth tokens go in `token.json`, NOT in config.yaml
-:::
+⚠️ `aliases: []`, `vip_senders: []`, and proper timezone strings are required even when empty. OAuth tokens belong in `token.json`, not in this file.
 
-### Step 2: Generate Bearer Token
+### Step 2: Generate your bearer token
 
-::: code-group
-```bash [macOS]
-uuidgen
+```bash
+uuidgen  # macOS/Linux
 ```
 
-```bash [Linux]
-# Install uuid-runtime if uuidgen not found
-uuidgen
-# Or use OpenSSL (always available)
-openssl rand -hex 32
-```
+Or on Linux: `openssl rand -hex 32`. On Windows PowerShell: `[guid]::NewGuid().ToString()`.
 
-```powershell [Windows]
-[guid]::NewGuid().ToString()
-```
-:::
+Add the resulting UUID to `bearer_auth.token`. Claude, OpenCode, and other MCP clients will use that value.
 
-Add the generated token to your `config.yaml` under `bearer_auth.token`.
-
-### Step 3: Create Docker Compose
-
-The container runs three processes via supervisord:
-- **Engine API** (port 8001, internal) - IMAP sync, mutations, OAuth management
-- **MCP Server** (port 8000, exposed) - Tool exposure for AI clients
-- **Web UI** (port 8080, exposed) - Human web interface
+### Step 3: Start the stack
 
 ```yaml
-# docker-compose.yml
 services:
   workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
-    container_name: workspace-secretary
-    restart: always
+    image: ghcr.io/johnneerdael/google-mailpilot:latest
     ports:
       - "8000:8000"  # MCP server
-      - "8080:8080"  # Web UI
+      - "8080:8080"  # Web UI + booking pages
     volumes:
       - ./config:/app/config
     environment:
       - LOG_LEVEL=INFO
       - ENGINE_API_URL=http://127.0.0.1:8001
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: secretary
+      POSTGRES_USER: secretary
+      POSTGRES_PASSWORD: secretarypass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+volumes:
+  postgres_data:
 ```
 
-::: tip Three-Process Architecture
-The container internally runs three coordinated processes:
-1. **Engine API**: Maintains IMAP connection, handles all mutations
-2. **MCP Server**: Exposes tools to AI, proxies writes to Engine
-3. **Web UI**: Human interface, proxies writes to Engine
-
-The Engine API runs on port 8001 (internal only, not exposed).
-:::
-
-### Step 4: Run OAuth Setup
-
-Start the container first, then run auth setup inside it:
-
-```bash
-docker compose up -d
-
-# Option 1: OAuth2 (recommended)
-docker exec -it workspace-secretary uv run python -m workspace_secretary.auth_setup \
-  --client-id='YOUR_CLIENT_ID.apps.googleusercontent.com' \
-  --client-secret='YOUR_CLIENT_SECRET'
-
-# Option 2: App Password (simpler, no Google Cloud project needed)
-docker exec -it workspace-secretary uv run python -m workspace_secretary.app_password
-```
-
-::: tip Simplified Setup (v4.2.2+)
-- Token automatically saves to `/app/config/token.json`
-- Config automatically at `/app/config/config.yaml`
-- No `--config` or `--token-output` flags needed
-:::
-
-**Manual OAuth Flow:**
-1. Open the printed authorization URL in your browser
-2. Login and approve access
-3. Copy the **full redirect URL** from your browser (even if page doesn't load)
-4. Paste when prompted
-5. Tokens saved automatically
-
-::: tip Minimal credentials.json
-If using `--credentials-file` instead of `--client-id/--client-secret`:
-```json
-{
-  "installed": {
-    "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
-    "client_secret": "YOUR_CLIENT_SECRET"
-  }
-}
-```
-:::
-
-
-### Step 5: Start and Verify
+Start everything:
 
 ```bash
 docker compose up -d
 docker compose logs -f
+echo "GET http://localhost:8000/health" | xargs curl -sS
+```
 
-# Test health endpoint
+### Step 4: Run OAuth setup
+
+```bash
+docker exec -it workspace-secretary uv run python -m workspace_secretary.auth_setup \
+  --client-id='YOUR_CLIENT_ID.apps.googleusercontent.com' \
+  --client-secret='YOUR_CLIENT_SECRET'
+```
+
+Follow the printed URL, authorize the app, copy the full redirect URL, and paste it back into the shell. Tokens land in `/app/config/token.json`.
+
+:::
+
+### Step 5: Verify everything
+
+```bash
+docker compose ps
+docker compose logs -f workspace-secretary
 curl http://localhost:8000/health
 ```
 
-## Google Cloud Setup
+## Booking links + scheduling
 
-### Create OAuth2 Credentials
+MailPilot v5 adds an entire public booking flow:
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create or select a project
-3. Enable **Google Calendar API**:
-   - APIs & Services → Library → Search and enable it
-   - Note: Gmail uses IMAP/SMTP (no Gmail API needed)
+1. Define a booking link (via the Postgres table or your own admin UI) with `link_id`, meeting title, duration, availability window, timezone, and metadata.
+2. Share `https://your-domain/book/{link_id}` or embed the public page.
+3. The booking page calls `/api/calendar/booking-slots?link_id={link_id}` to show availability (availability hours, duration, and busy windows are respected).
+4. Guests post to `/api/calendar/book` with `link_id`, slot start/end, attendee info, and notes. MailPilot creates the event with `add_meet=True`, records the attendee, and saves the event metadata.
 
-4. Configure OAuth Consent Screen:
-   - APIs & Services → OAuth consent screen
-   - User type: **External** (or Internal for Workspace)
-   - Add your email as test user
-   - Add scopes:
-     - `https://mail.google.com/`
-     - `https://www.googleapis.com/auth/calendar`
+The helper module `workspace_secretary/db/queries/booking_links.py` handles inserts, status toggles, and metadata serialization. Toggle `is_active` to disable a link without deleting it.
 
-5. Create Credentials:
-   - APIs & Services → Credentials → Create Credentials → OAuth client ID
-   - Application type: **Desktop app**
-   - Download JSON as `credentials.json`
+## Connect your AI client
 
-The downloaded `credentials.json` looks like this:
+MCP endpoint: `http://localhost:8000/mcp`  
+Web UI: `http://localhost:8080`
+
+Claude Desktop (macOS `~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
-  "installed": {
-    "client_id": "123456789-abcdefg.apps.googleusercontent.com",
-    "project_id": "your-project-name",
-    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-    "token_uri": "https://oauth2.googleapis.com/token",
-    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-    "client_secret": "GOCSPX-your-client-secret",
-    "redirect_uris": ["http://localhost"]
+  "mcpServers": {
+    "google-mailpilot": {
+      "url": "http://localhost:8000/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN"
+      }
+    }
   }
 }
 ```
 
-::: tip Only Two Fields Matter
-The auth setup only uses `client_id` and `client_secret` from this file. You can alternatively pass them directly via `--client-id` and `--client-secret` flags.
-:::
+Claude Code CLI:
 
-::: tip Manual Flow Advantage
-The manual OAuth flow works with any redirect URI, including `http://localhost`. Perfect for headless servers and containers. After auth setup completes, `credentials.json` is no longer needed - only `token.json` is used at runtime.
-:::
+```bash
+claude mcp add --transport http google-mailpilot http://localhost:8000/mcp \
+  --header "Authorization: Bearer YOUR_TOKEN"
+```
 
-## Production Deployment
+## Production deployment patterns
 
 ### With Traefik
 
 ```yaml
-services:
-  workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
-    volumes:
-      - ./config:/app/config
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.mcp.rule=Host(`mcp.yourdomain.com`)"
-      - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
+labels:
+  - "traefik.enable=true"
+  - "traefik.http.routers.mcp.rule=Host(`mcp.yourdomain.com`)"
+  - "traefik.http.routers.mcp.tls.certresolver=letsencrypt"
 ```
 
 ### With Caddy
 
-```yaml
-services:
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
+Use `caddy:2-alpine` to front the MCP server:
 
-  workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
-    volumes:
-      - ./config:/app/config
-
-volumes:
-  caddy_data:
-```
-
-**Caddyfile:**
 ```
 mcp.yourdomain.com {
     reverse_proxy workspace-secretary:8000
 }
 ```
 
-::: warning Caddy Let's Encrypt Caveats
-Automatic HTTPS requires:
-- Ports 80/443 reachable from internet
-- DNS A/AAAA record pointing to your server
-- No CDN/proxy interference
+Ensure ports 80/443 are reachable and DNS points to your host.
 
-**Common failures:**
-- ISP blocks port 80
-- Behind NAT without port forwarding
-- IPv6 AAAA exists but routing broken
+## Semantic search & PostgreSQL
 
-**For wildcards or complex setups:** Use [DNS challenge](https://caddyserver.com/docs/automatic-https#dns-challenge)
-:::
-
-### With PostgreSQL (Semantic Search)
-
-For AI-powered search by meaning:
-
-```bash
-cat > .env << 'EOF'
-POSTGRES_PASSWORD=your-secure-password
-GEMINI_API_KEY=your-gemini-api-key
-EOF
-
-docker compose -f docker-compose.postgres.yml up -d
-```
-
-Update `config.yaml`:
+PGVector is required for embedding-based search and the new `semantic_search_*` tools. Configure:
 
 ```yaml
 database:
@@ -315,77 +231,22 @@ database:
     task_type: RETRIEVAL_DOCUMENT
 ```
 
-See [Semantic Search Guide](/guide/semantic-search) and [Embeddings Guide](/embeddings/) for details.
-
-## Connecting AI Clients
-
-MCP Server endpoint: `http://localhost:8000/mcp`  
-Web UI: `http://localhost:8080`
-
-### Claude Desktop
-
-**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "workspace-secretary": {
-      "url": "http://localhost:8000/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_TOKEN"
-      }
-    }
-  }
-}
-```
-
-### Claude Code (CLI)
-
-```bash
-claude mcp add --transport http workspace-secretary http://localhost:8000/mcp \
-  --header "Authorization: Bearer YOUR_TOKEN"
-```
+`docker compose -f docker-compose.postgres.yml up -d` spins up the Postgres service with pgvector.
 
 ## Troubleshooting
 
-### OAuth "App Not Verified"
+- **OAuth "App not verified"**: Click **Advanced** → **Go to [App Name] (unsafe)**.
+- **Token refresh fails**: rerun the auth setup command above to regenerate `token.json`.
+- **Engine not running**: inspect `workspace-secretary-engine` logs and ensure port 8001 is available.
+- **Postgres down**: verify the `postgres` service is healthy (`docker compose ps`) and pgvector is installed (image: `pgvector/pgvector:pg16`).
 
-Click **Advanced** → **Go to [App Name] (unsafe)**. Normal for development apps.
+## Next steps
 
-### Token Refresh Fails
-
-Re-run auth setup:
-```bash
-uv run python -m workspace_secretary.auth_setup \
-  --credentials-file credentials.json \
-  --config config.yaml \
-  --token-output token.json
-```
-
-### Container Won't Start
-
-```bash
-docker compose logs workspace-secretary
-
-# Common issues:
-# - config.yaml not found: check volume mount paths
-# - Invalid timezone: use IANA format (Europe/Amsterdam, not CET)
-# - Missing aliases: [] or vip_senders: []
-```
-
-### Permission Denied
-
-1. Ensure `token.json` exists: `touch token.json`
-2. Verify APIs enabled in Google Cloud Console
-3. Check OAuth scopes include Gmail and Calendar
-
-## Next Steps
-
-- [Configuration Guide](/guide/configuration) - All settings explained
-- [MCP Tools Reference](/tools/) - Available tools
-- [Semantic Search](/guide/semantic-search) - AI-powered email search
-- [Agent Patterns](/guide/agents) - Building intelligent workflows
+- Review the [Configuration Guide](/guide/configuration) for advanced tuning.
+- Explore the [MCP Tools Reference](/tools/) for the `raw:` continuation convention, triage flows, and booking APIs.
+- Study the [Semantic Search Guide](/guide/semantic-search) and [Embeddings pages](/embeddings/) for meaning-based queries.
+- Read the [Agent Patterns](/guide/agents) to see how Morning Briefings, triage loops, and safety workflows are implemented.
 
 ---
 
-**Need help?** [Open an issue on GitHub](https://github.com/johnneerdael/gmail-secretary-map/issues)
+**Need help?** [Open an issue on GitHub](https://github.com/johnneerdael/google-mailpilot/issues)

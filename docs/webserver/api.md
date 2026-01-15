@@ -1,39 +1,38 @@
 <!-- Refactored docs generated 2026-01-13 -->
 
-# API endpoints
+# Web Portal API reference
 
-## HTML endpoints
+All JSON endpoints live under FastAPI (via `workspace_secretary.web.routes.calendar` and related routers) and require the same session cookie/CSRF protections described in the security guide.
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Redirect to `/inbox` |
-| `/inbox` | GET | Inbox view |
-| `/inbox?folder=FOLDER` | GET | Specific folder |
-| `/thread/<id>` | GET | Thread view |
-| `/search` | GET/POST | Search interface |
-| `/chat` | GET/POST | AI chat |
-| `/settings` | GET/POST | User settings |
+## Key HTML endpoints
 
-## JSON API
+| Route | Description |
+|-------|-------------|
+| `/calendar` | Main calendar dashboard (day/week/month/agenda) with sync state and busy overlays |
+| `/calendar/find-time` | HTMX form to pick spare blocks (proxies to `/api/calendar/find-time`) |
+| `/calendar/availability` | Embedded widget showing your busy slots for the next `n` days |
+| `/book/{link_id}` | Public booking page for shared scheduling links |
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/emails` | GET | List emails (JSON) |
-| `/api/email/<uid>` | GET | Email details (JSON) |
-| `/api/search` | POST | Search emails (JSON) |
-| `/api/folders` | GET | List folders (JSON) |
+## JSON & POST endpoints
 
-## HTMX partials
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/calendar/find-time` | POST | Returns available slots between 11:00–22:00 within a date range (duration, timezone, attendees) |
+| `/api/calendar/propose-times` | POST | Accepts JSON-proposed times & messages for use in UI workflows (no mutation) |
+| `/api/calendar/event/{calendar_id}/{event_id}` | GET | Fetch calendar event details for modals / quick views |
+| `/api/calendar/event` | POST | Creates an event via the engine (summary, attendees, add_meet flag) |
+| `/calendar/api/create-event` | POST | Simplified create form using separate date/time fields |
+| `/api/calendar/respond/{event_id}` | POST | Responds to an invite (`accepted`, `declined`, `tentative`) respecting working hours |
+| `/api/calendar/booking-slots` | GET | Returns availability for a booking link (uses `booking_links` metadata) |
+| `/api/calendar/book` | POST | Books a slot for a booking link — creates the event with `add_meet=True` and records attendees |
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/partials/email-list` | GET | Email list fragment |
-| `/partials/email-row/<uid>` | GET | Single email row |
-| `/partials/thread/<id>` | GET | Thread fragment |
+## Embeddable partials & helpers
 
-## CSRF and request expectations
+| Endpoint | Description |
+|----------|-------------|
+| `/calendar/availability` | Returns the partial template `partials/availability_widget.html` for busy windows (days parameter supported) |
 
-- All forms include CSRF tokens.
-- API endpoints require either:
-  - a session cookie, or
-  - `X-Requested-With: XMLHttpRequest` header.
+## Session requirements
+
+- Every endpoint expects either: a valid session cookie or an `X-Requested-With: XMLHttpRequest` header along with CSRF tokens for POSTs.
+- Booking endpoints (`/book/{link_id}`, `/api/calendar/booking-slots`, `/api/calendar/book`) are public but validate `link_id` + `is_active` before acting.

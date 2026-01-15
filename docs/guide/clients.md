@@ -1,6 +1,6 @@
 # Client Setup Guide
 
-This guide explains how to configure popular MCP clients to communicate with the Dockerized Gmail Secretary server.
+This guide explains how to configure popular MCP clients to communicate with the Dockerized Google MailPilot server.
 
 ## Connection Methods
 

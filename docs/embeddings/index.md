@@ -1,8 +1,8 @@
 <!-- Refactored embeddings docs generated 2026-01-13 -->
 
-# Embeddings & Semantic Search
+# MailPilot Semantic Search & Embeddings
 
-Gmail Secretary supports AI-powered semantic search using vector embeddings. Instead of keyword matching, you can find emails by **meaning** — e.g. search “budget concerns” and find emails about “cost overruns” or “spending issues”.
+Google MailPilot relies on PostgreSQL + pgvector for meaning-based search. The embedding layer feeds tools like `semantic_search_emails`, `semantic_search_filtered`, and `find_related_emails`, so MCP clients can query by **concepts** ("budget concerns") instead of literal keywords. Postgres is mandatory in v5.0.0; SQLite is no longer supported for embeddings.
 
 ## Read next
 

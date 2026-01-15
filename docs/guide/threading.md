@@ -1,6 +1,6 @@
 # Email Threading
 
-Gmail Secretary uses Gmail's native threading via the `X-GM-THRID` IMAP extension for accurate, instant conversation grouping.
+Google MailPilot uses Gmail's native threading via the `X-GM-THRID` IMAP extension for accurate, instant conversation grouping.
 
 ## Overview
 

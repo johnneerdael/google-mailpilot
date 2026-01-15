@@ -29,10 +29,10 @@ WEB_DEBUG=false
 ```yaml
 services:
   workspace-secretary:
-    image: ghcr.io/johnneerdael/gmail-secretary-map:latest
+    image: ghcr.io/johnneerdael/google-mailpilot:latest
     ports:
       - "8000:8000"  # MCP server
-      - "8080:8080"  # Web UI
+      - "8080:8080"  # Web UI + booking links
     volumes:
       - ./config:/app/config
     environment:

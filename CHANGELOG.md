@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-01-15
+
+### Added
+- New synchronous coverage for critical flows with `tests/test_triage_priority_emails.py` and `tests/test_web_compose.py`, which exercise triage and compose tools via `asyncio.run()` so they pass without `pytest-asyncio`.
+- `workspace_secretary/db/queries/booking_links.py` plus `workspace_secretary/email_auth.py` supply reusable helpers for booking-link data and Gmail authentication signals shared by engine/web.
+
+### Changed
+- Rebranded the project as Google MailPilot (docs, badges, repo links, and release assets) while keeping every mutation human-in-the-loop and preserving the MCP safety model.
+
+### Fixed
+- MCP tool registration now happens immediately when `workspace_secretary.tools` imports, and FastMCP `continuation_state` arguments may be prefixed with `raw:` to avoid premature JSON coercion.
+- Triage/compose tests now call `tools.mcp.call_tool(...)` through `asyncio.run(...)`, keeping coverage strong without `pytest-asyncio`.
+
 ## [4.8.0] - 2026-01-12
 
 ### Changed
