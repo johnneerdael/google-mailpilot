@@ -155,6 +155,26 @@ class ImapClient:
             self.connect()
             return fn()
 
+    def noop(self) -> bool:
+        """Send NOOP command to keep connection alive.
+
+        Returns:
+            True if successful, False if connection is dead
+
+        Note:
+            This is a lightweight command that does nothing but
+            keeps the connection alive and triggers any pending
+            server notifications.
+        """
+        try:
+            client = self._get_client()
+            client.noop()
+            logger.debug("NOOP heartbeat sent successfully")
+            return True
+        except Exception as e:
+            logger.warning(f"NOOP heartbeat failed: {e}")
+            return False
+
     def get_capabilities(self) -> List[str]:
         """Get IMAP server capabilities.
 

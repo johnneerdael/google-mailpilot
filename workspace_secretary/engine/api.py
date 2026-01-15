@@ -69,6 +69,7 @@ class EngineState:
         self.idle_enabled: bool = False
         self.embeddings_task: Optional[asyncio.Task] = None
         self.enrollment_task: Optional[asyncio.Task] = None
+        self.heartbeat_task: Optional[asyncio.Task] = None
         self.running = False
         self.enrolled = False
         self.enrollment_error: Optional[str] = None
@@ -298,6 +299,7 @@ async def enrollment_watch_loop():
                 if await try_enroll():
                     logger.info("Enrollment successful! Starting sync loop.")
                     state.sync_task = asyncio.create_task(sync_loop())
+                    state.heartbeat_task = asyncio.create_task(imap_heartbeat_loop())
                     return
 
         except Exception as e:
@@ -319,6 +321,7 @@ async def lifespan(app: FastAPI):
     if await try_enroll():
         logger.info("OAuth ready - starting sync loop immediately")
         state.sync_task = asyncio.create_task(sync_loop())
+        state.heartbeat_task = asyncio.create_task(imap_heartbeat_loop())
     else:
         # No OAuth yet - start watching for enrollment
         logger.info("OAuth not configured - waiting for enrollment...")
@@ -343,6 +346,13 @@ async def lifespan(app: FastAPI):
         state.enrollment_task.cancel()
         try:
             await state.enrollment_task
+        except asyncio.CancelledError:
+            pass
+
+    if state.heartbeat_task:
+        state.heartbeat_task.cancel()
+        try:
+            await state.heartbeat_task
         except asyncio.CancelledError:
             pass
 
@@ -399,6 +409,38 @@ async def embeddings_loop():
                     f"Embeddings paused for {cooldown_minutes} minutes after {max_consecutive_failures} failures"
                 )
             await asyncio.sleep(idle_sleep)
+
+
+async def imap_heartbeat_loop():
+    """Send NOOP every 9 minutes to keep state.imap_client alive.
+
+    Gmail closes idle IMAP connections after 10-15 minutes.
+    This proactive heartbeat prevents stale connection errors
+    on mark read/unread, move, and label operations.
+    """
+    heartbeat_interval = 9 * 60  # 9 minutes (Gmail timeout is 10-15 min)
+
+    logger.info(f"IMAP heartbeat started (interval: {heartbeat_interval}s)")
+
+    while state.running:
+        await asyncio.sleep(heartbeat_interval)
+
+        if not state.imap_client:
+            continue
+
+        try:
+            # Run NOOP in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            success = await loop.run_in_executor(None, state.imap_client.noop)
+
+            if not success:
+                # NOOP failed - connection is likely dead, trigger reconnect
+                logger.warning("Heartbeat failed, reconnecting imap_client...")
+                await loop.run_in_executor(None, state.imap_client.disconnect)
+                await loop.run_in_executor(None, state.imap_client.connect)
+                logger.info("imap_client reconnected after heartbeat failure")
+        except Exception as e:
+            logger.error(f"Heartbeat error: {e}")
 
 
 async def sync_loop():
@@ -1148,6 +1190,7 @@ async def trigger_enroll():
     if success:
         logger.info("Enrollment triggered successfully, starting sync loop")
         state.sync_task = asyncio.create_task(sync_loop())
+        state.heartbeat_task = asyncio.create_task(imap_heartbeat_loop())
         return {"status": "ok", "message": "Enrollment successful", "enrolled": True}
 
     state.enrollment_task = asyncio.create_task(enrollment_watch_loop())
