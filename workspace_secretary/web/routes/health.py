@@ -28,7 +28,7 @@ async def _fetch_engine_health(client) -> tuple[str, dict | None, str | None]:
                         payload,
                         error or "Engine reported unknown status",
                     )
-                if status == "healthy" and not error:
+                if status in {"healthy", "running", "ok"} and not error:
                     return "healthy", payload, None
             last_error = payload.get("error") if isinstance(payload, dict) else None
         else:

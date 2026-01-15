@@ -66,6 +66,7 @@ class EngineState:
         self.phishing_analyzer = PhishingAnalyzer()
         self.sync_task: Optional[asyncio.Task] = None
         self.idle_task: Optional[asyncio.Task] = None
+        self.idle_enabled: bool = False
         self.embeddings_task: Optional[asyncio.Task] = None
         self.enrollment_task: Optional[asyncio.Task] = None
         self.running = False
@@ -459,10 +460,6 @@ async def sync_loop():
     )  # 30 min default
     logger.info("Sync loop started")
 
-    if state.idle_client and state.idle_client.has_idle_capability():
-        logger.info("Starting IDLE monitor for push notifications")
-        state.idle_task = asyncio.create_task(idle_monitor())
-
     initial_sync_done = False
 
     while state.running:
@@ -478,6 +475,15 @@ async def sync_loop():
                             "Starting embeddings background task for steady-state"
                         )
                         state.embeddings_task = asyncio.create_task(embeddings_loop())
+
+                    if (
+                        not state.idle_enabled
+                        and state.idle_client
+                        and state.idle_client.has_idle_capability()
+                    ):
+                        logger.info("Starting IDLE monitor for push notifications")
+                        state.idle_task = asyncio.create_task(idle_monitor())
+                        state.idle_enabled = True
 
                     logger.info(
                         f"Initial sync complete. Catch-up every {catchup_interval}s"
@@ -1163,6 +1169,14 @@ async def get_status():
     }
 
 
+@app.get("/health")
+async def health():
+    return {
+        "service": "secretary-engine",
+        "health": "healthy" if state.running else "stopped",
+    }
+
+
 @app.post("/api/enroll")
 async def trigger_enroll():
     """Trigger enrollment attempt. Called by auth_setup after saving credentials."""
@@ -1210,8 +1224,8 @@ async def trigger_sync():
         )
 
     try:
-        await sync_emails_parallel()
-        return {"status": "ok", "message": "Sync triggered"}
+        asyncio.create_task(sync_emails_parallel())
+        return {"status": "ok", "message": "Sync queued"}
     except Exception:
         logger.exception("Sync trigger failed")
         raise HTTPException(

@@ -24,6 +24,7 @@ build/
 .eggs/
 
 # Project specific
+postgres_data/
 tests/
 docs/
 examples/
