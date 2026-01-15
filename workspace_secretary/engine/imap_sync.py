@@ -130,6 +130,31 @@ class ImapClient:
             raise ConnectionError("IMAP client not initialized")
         return self.client
 
+    def _is_retryable_error(self, error: Exception) -> bool:
+        message = str(error).lower()
+        return any(
+            token in message
+            for token in (
+                "eof",
+                "socket error",
+                "connection reset",
+                "connection aborted",
+                "ssl",
+                "protocol",
+            )
+        )
+
+    def _run_with_reconnect(self, operation: str, fn):
+        try:
+            return fn()
+        except (imapclient.IMAPClient.Error, ConnectionError) as error:
+            if not self._is_retryable_error(error):
+                raise
+            logger.warning(f"IMAP {operation} failed, reconnecting and retrying")
+            self.disconnect()
+            self.connect()
+            return fn()
+
     def get_capabilities(self) -> List[str]:
         """Get IMAP server capabilities.
 
@@ -270,9 +295,12 @@ class ImapClient:
         if not self._is_folder_allowed(folder):
             raise ValueError(f"Folder '{folder}' is not allowed")
 
-        client = self._get_client()
+        def _select():
+            client = self._get_client()
+            return client.select_folder(folder, readonly=readonly)
+
         try:
-            result = client.select_folder(folder, readonly=readonly)
+            result = self._run_with_reconnect("select_folder", _select)
             self.current_folder = folder
             logger.debug(f"Selected folder '{folder}'")
 
@@ -286,7 +314,7 @@ class ImapClient:
                 "permanentflags": result.get(b"PERMANENTFLAGS", []),
             }
             return folder_info
-        except imapclient.IMAPClient.Error as e:
+        except (imapclient.IMAPClient.Error, ConnectionError) as e:
             logger.error(f"Error selecting folder {folder}: {e}")
             raise ConnectionError(f"Failed to select folder {folder}: {e}")
 
@@ -729,10 +757,10 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        client = self._get_client()
-        self.select_folder(folder)
 
-        try:
+        def _mark():
+            client = self._get_client()
+            self.select_folder(folder)
             if value:
                 client.add_flags([uid], flag)
                 logger.debug(f"Added flag {flag} to message {uid}")
@@ -740,6 +768,9 @@ class ImapClient:
                 client.remove_flags([uid], flag)
                 logger.debug(f"Removed flag {flag} from message {uid}")
             return True
+
+        try:
+            return self._run_with_reconnect("mark_email", _mark)
         except Exception as e:
             logger.error(f"Failed to mark email: {e}")
             return False
@@ -759,8 +790,6 @@ class ImapClient:
             ConnectionError: If not connected and connection fails
             ValueError: If folder is not allowed
         """
-        client = self._get_client()
-
         # Check if folders are allowed
         if self.allowed_folders is not None:
             if source_folder not in self.allowed_folders:
@@ -768,16 +797,19 @@ class ImapClient:
             if target_folder not in self.allowed_folders:
                 raise ValueError(f"Target folder '{target_folder}' is not allowed")
 
-        # Select source folder
-        self.select_folder(source_folder)
-
-        try:
+        def _move():
+            client = self._get_client()
+            # Select source folder
+            self.select_folder(source_folder)
             # Move email (copy + delete)
             client.copy([uid], target_folder)
             client.add_flags([uid], r"\Deleted")
             client.expunge()
             logger.debug(f"Moved message {uid} from {source_folder} to {target_folder}")
             return True
+
+        try:
+            return self._run_with_reconnect("move_email", _move)
         except Exception as e:
             logger.error(f"Failed to move email: {e}")
             return False
@@ -795,14 +827,17 @@ class ImapClient:
         Raises:
             ConnectionError: If not connected and connection fails
         """
-        client = self._get_client()
-        self.select_folder(folder)
 
-        try:
+        def _delete():
+            client = self._get_client()
+            self.select_folder(folder)
             client.add_flags([uid], r"\Deleted")
             client.expunge()
             logger.debug(f"Deleted message {uid} from {folder}")
             return True
+
+        try:
+            return self._run_with_reconnect("delete_email", _delete)
         except Exception as e:
             logger.error(f"Failed to delete email: {e}")
             return False
@@ -818,19 +853,20 @@ class ImapClient:
         Returns:
             True if successful
         """
-        client = self._get_client()
-
         capabilities = self.get_capabilities()
         if "X-GM-EXT-1" not in capabilities:
             logger.warning("Gmail extensions not supported by server")
             return False
 
-        self.select_folder(folder)
-
-        try:
+        def _set_labels():
+            client = self._get_client()
+            self.select_folder(folder)
             # X-GM-LABELS requires the server to support X-GM-EXT-1
             client.set_gmail_labels([uid], labels)
             return True
+
+        try:
+            return self._run_with_reconnect("set_gmail_labels", _set_labels)
         except Exception as e:
             logger.error(f"Failed to set Gmail labels: {e}")
             return False
@@ -846,18 +882,19 @@ class ImapClient:
         Returns:
             True if successful
         """
-        client = self._get_client()
-
         capabilities = self.get_capabilities()
         if "X-GM-EXT-1" not in capabilities:
             logger.warning("Gmail extensions not supported by server")
             return False
 
-        self.select_folder(folder)
-
-        try:
+        def _add_labels():
+            client = self._get_client()
+            self.select_folder(folder)
             client.add_gmail_labels([uid], labels)
             return True
+
+        try:
+            return self._run_with_reconnect("add_gmail_labels", _add_labels)
         except Exception as e:
             logger.error(f"Failed to add Gmail labels: {e}")
             return False
@@ -873,18 +910,19 @@ class ImapClient:
         Returns:
             True if successful
         """
-        client = self._get_client()
-
         capabilities = self.get_capabilities()
         if "X-GM-EXT-1" not in capabilities:
             logger.warning("Gmail extensions not supported by server")
             return False
 
-        self.select_folder(folder)
-
-        try:
+        def _remove_labels():
+            client = self._get_client()
+            self.select_folder(folder)
             client.remove_gmail_labels([uid], labels)
             return True
+
+        try:
+            return self._run_with_reconnect("remove_gmail_labels", _remove_labels)
         except Exception as e:
             logger.error(f"Failed to remove Gmail labels: {e}")
             return False
