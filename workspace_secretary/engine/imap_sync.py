@@ -218,16 +218,18 @@ class ImapClient:
         if not self.has_condstore_capability():
             return None
 
-        client = self._get_client()
-        self.select_folder(folder, readonly=True)
-
-        try:
+        def _fetch_modseq() -> Optional[int]:
+            client = self._get_client()
+            self.select_folder(folder, readonly=True)
             result = client.fetch([uid], ["MODSEQ"])
             if uid in result:
                 modseq_raw = result[uid].get(b"MODSEQ")
                 if modseq_raw and isinstance(modseq_raw, tuple) and len(modseq_raw) > 0:
                     return int(modseq_raw[0])
             return None
+
+        try:
+            return self._run_with_reconnect("get_message_modseq", _fetch_modseq)
         except Exception as e:
             logger.warning(f"Failed to fetch MODSEQ for uid {uid}: {e}")
             return None
