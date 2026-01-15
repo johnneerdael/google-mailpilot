@@ -7,7 +7,7 @@
                 type="checkbox" 
                 name="calendar_ids" 
                 value="{{ calendar.id }}"
-                {% if calendar.id in selected_ids or calendar.selected or calendar.primary %}checked{% endif %}
+                {% if calendar.id in selected_ids or calendar.primary %}checked{% endif %}
                 class="w-4 h-4 rounded border-zinc-600 bg-zinc-800 text-blue-500 focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"
             />
             <div class="flex-1">

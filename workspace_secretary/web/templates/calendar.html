@@ -2,68 +2,7 @@
 {% block title %}Calendar - Secretary{% endblock %}
 
 {% block content %}
-<div class="space-y-4" x-data='{ 
-    showEventDetail: false, 
-    selectedEvent: null,
-    selectedEventLoading: false,
-    selectedEventError: null,
-    showCreateEvent: false,
-    newEvent: { summary: "", description: "", start_date: "", start_time: "", end_date: "", end_time: "", location: "" },
-    showSettings: false,
-    visibleCalendars: {{ selected_calendar_ids_json | safe }},
-    allCalendars: {{ calendar_options_json | safe }},
-    secondaryTimezone: null,
-    showWorkingHours: true,
-    async openEventDetail(event) {
-        this.selectedEventError = null;
-        if (!event) {
-            this.selectedEvent = null;
-            return;
-        }
-        this.selectedEvent = JSON.parse(JSON.stringify(event));
-        this.showEventDetail = true;
-        if (!event.calendarId || !event.id) {
-            this.selectedEventError = "Missing calendar identifiers for this event.";
-            return;
-        }
-        this.selectedEventLoading = true;
-        try {
-            const response = await fetch(`/api/calendar/event/${encodeURIComponent(event.calendarId)}/${encodeURIComponent(event.id)}`);
-            if (!response.ok) {
-                throw new Error("Unable to load event details");
-            }
-            const data = await response.json();
-            if (!data?.success || !data?.event) {
-                throw new Error(data?.error || "Event not available");
-            }
-            this.selectedEvent = data.event;
-        } catch (error) {
-            this.selectedEventError = error?.message || "Unexpected error while loading event details.";
-        } finally {
-            this.selectedEventLoading = false;
-        }
-    },
-    openCreateEvent() {
-        this.showCreateEvent = true;
-        const now = new Date();
-        this.newEvent.start_date = now.toISOString().split("T")[0];
-        this.newEvent.end_date = now.toISOString().split("T")[0];
-        this.newEvent.start_time = now.toTimeString().slice(0, 5);
-        const endTime = new Date(now.getTime() + 60 * 60 * 1000);
-        this.newEvent.end_time = endTime.toTimeString().slice(0, 5);
-    },
-    toggleCalendar(calendarId) {
-        const index = this.visibleCalendars.indexOf(calendarId);
-        if (index > -1) {
-            this.visibleCalendars.splice(index, 1);
-        } else {
-            this.visibleCalendars.push(calendarId);
-        }
-    },
-    isWorkingHour(hour) {
-        return hour >= 11 && hour < 22;
-    }
-}' @open-create-event.window="openCreateEvent()">
+<div class="space-y-4" x-data="calendarPage()" data-selected-calendar-ids='{{ selected_calendar_ids_json | e }}' data-calendar-options='{{ calendar_options_json | e }}' @open-create-event.window="openCreateEvent()">
     {% if engine_error %}
     <div class="bg-red-900/90 border border-red-700 text-red-100 px-4 py-3 rounded">
         <div class="flex items-center gap-2">
@@ -233,7 +172,7 @@
                 {% set event_hour = event.start.dateTime[11:13]|int %}
                 {% if event_hour == hour %}
                 <div class="absolute left-0 right-0 mx-1 mt-1 bg-primary/10 border-l-2 border-primary rounded p-2 text-xs cursor-pointer hover:bg-primary/20 transition-colors"
-                     @click="openEventDetail({{ event|tojson }})">
+                     data-event='{{ event|tojson|e }}' @click="openEventDetail($el.dataset.event)">
                          <div class="font-medium text-body flex items-center gap-1">
                              {{ event.start.dateTime[11:16] }} {{ event.summary }}
                              {% if event.calendarId %}
@@ -256,7 +195,7 @@
                 {% endif %}
                 {% elif event.start.date and hour == 0 %}
                 <div class="absolute left-0 right-0 mx-1 mt-1 bg-green-500/10 border-l-2 border-green-500 rounded p-2 text-xs cursor-pointer hover:bg-green-500/20 transition-colors"
-                     @click="openEventDetail({{ event|tojson }})">
+                     data-event='{{ event|tojson|e }}' @click="openEventDetail($el.dataset.event)">
                     <div class="font-medium text-body flex items-center gap-1">
                         🌅 All Day: {{ event.summary }}
                         {% if event._local_status == 'pending' %}
@@ -294,7 +233,7 @@
                 <div class="space-y-1">
                     {% for event in day.events[:3] %}
                     <div class="text-xs px-1 py-0.5 rounded bg-primary/10 text-primary truncate cursor-pointer hover:bg-primary/20 transition-colors"
-                         @click="openEventDetail({{ event|tojson }})">
+                         data-event='{{ event|tojson|e }}' @click="openEventDetail($el.dataset.event)">
                          <div class="flex items-center gap-1">
                              {% if event.start.dateTime %}{{ event.start.dateTime[11:16] }}{% else %}🌅{% endif %} {{ event.summary }}
                              {% if event.calendarId %}
@@ -336,7 +275,7 @@
             <div class="divide-y divide-border">
                 {% for event in events_list %}
                 <div class="px-4 py-3 hover:bg-surface-subtle cursor-pointer transition-colors"
-                     @click="openEventDetail({{ event|tojson }})">
+                     data-event='{{ event|tojson|e }}' @click="openEventDetail($el.dataset.event)">
                     <div class="flex items-start justify-between">
                         <div class="flex-1">
                              <div class="font-medium text-body flex items-center gap-2">
@@ -393,7 +332,7 @@
             <div class="space-y-1">
                 {% for event in day.events %}
                 <div class="text-xs p-2 rounded bg-surface-subtle hover:bg-surface-hover cursor-pointer transition-colors"
-                     @click="openEventDetail({{ event|tojson }})">
+                     data-event='{{ event|tojson|e }}' @click="openEventDetail($el.dataset.event)">
                      <div class="flex items-start justify-between">
                          <div class="flex-1 min-w-0">
                              <div class="font-medium text-body truncate">{{ event.summary }}</div>
@@ -643,6 +582,21 @@
                                placeholder="Meeting room or video call link">
                     </div>
 
+                    <div class="space-y-1">
+                        <label class="block text-sm font-medium text-body">Add video conferencing</label>
+                        <div class="flex items-center justify-between gap-3">
+                            <div class="text-xs text-muted" x-text="conferenceSolutionsLoaded ? conferenceSolutionLabel : 'Checking availability…'"></div>
+                            <label class="inline-flex items-center gap-2 text-sm text-body">
+                                <input type="checkbox"
+                                       name="add_meet"
+                                       value="true"
+                                       x-model="newEvent.add_meet"
+                                       class="rounded border-border bg-surface-subtle text-primary focus:ring-primary">
+                                <span>Attach meeting</span>
+                            </label>
+                        </div>
+                    </div>
+ 
                     <div>
                         <label class="block text-sm font-medium text-body mb-1">Description</label>
                         <textarea name="description" 
@@ -779,6 +733,130 @@
 </div>
 
 <script>
+const parseCalendarJson = (value, fallback) => {
+    if (!value) {
+        return fallback;
+    }
+    try {
+        return JSON.parse(value);
+    } catch {
+        return fallback;
+    }
+};
+
+function calendarPage() {
+    return {
+        showEventDetail: false,
+        selectedEvent: null,
+        selectedEventLoading: false,
+        selectedEventError: null,
+        showCreateEvent: false,
+        newEvent: {
+            summary: "",
+            description: "",
+            start_date: "",
+            start_time: "",
+            end_date: "",
+            end_time: "",
+            location: "",
+            add_meet: false,
+        },
+        showSettings: false,
+        visibleCalendars: [],
+        allCalendars: [],
+        secondaryTimezone: null,
+        showWorkingHours: true,
+        conferenceSolutions: [],
+        conferenceSolutionsLoaded: false,
+        conferenceSolutionLabel: "Video conferencing",
+        init() {
+            this.visibleCalendars = parseCalendarJson(
+                this.$el.dataset.selectedCalendarIds,
+                [],
+            );
+            this.allCalendars = parseCalendarJson(this.$el.dataset.calendarOptions, []);
+            if (!Array.isArray(this.visibleCalendars)) {
+                this.visibleCalendars = [];
+            }
+            if (!Array.isArray(this.allCalendars)) {
+                this.allCalendars = [];
+            }
+            fetch("/api/calendar/conference-solutions")
+                .then((response) => (response.ok ? response.json() : null))
+                .then((data) => {
+                    this.conferenceSolutions = data?.conference_solutions || [];
+                    if (this.conferenceSolutions.length > 0) {
+                        this.conferenceSolutionLabel = this.conferenceSolutions[0].name;
+                    }
+                })
+                .catch(() => null)
+                .finally(() => {
+                    this.conferenceSolutionsLoaded = true;
+                });
+        },
+        async openEventDetail(eventPayload) {
+            this.selectedEventError = null;
+            if (!eventPayload) {
+                this.selectedEvent = null;
+                return;
+            }
+            let event = eventPayload;
+            if (typeof eventPayload === "string") {
+                event = parseCalendarJson(eventPayload, null);
+            }
+            if (!event) {
+                this.selectedEvent = null;
+                return;
+            }
+            this.selectedEvent = JSON.parse(JSON.stringify(event));
+            this.showEventDetail = true;
+            if (!event.calendarId || !event.id) {
+                this.selectedEventError = "Missing calendar identifiers for this event.";
+                return;
+            }
+            this.selectedEventLoading = true;
+            try {
+                const response = await fetch(
+                    `/api/calendar/event/${encodeURIComponent(event.calendarId)}/${encodeURIComponent(event.id)}`,
+                );
+                if (!response.ok) {
+                    throw new Error("Unable to load event details");
+                }
+                const data = await response.json();
+                if (!data?.success || !data?.event) {
+                    throw new Error(data?.error || "Event not available");
+                }
+                this.selectedEvent = data.event;
+            } catch (error) {
+                this.selectedEventError =
+                    error?.message || "Unexpected error while loading event details.";
+            } finally {
+                this.selectedEventLoading = false;
+            }
+        },
+        openCreateEvent() {
+            this.showCreateEvent = true;
+            const now = new Date();
+            this.newEvent.start_date = now.toISOString().split("T")[0];
+            this.newEvent.end_date = now.toISOString().split("T")[0];
+            this.newEvent.start_time = now.toTimeString().slice(0, 5);
+            const endTime = new Date(now.getTime() + 60 * 60 * 1000);
+            this.newEvent.end_time = endTime.toTimeString().slice(0, 5);
+        },
+        toggleCalendar(calendarId) {
+            const index = this.visibleCalendars.indexOf(calendarId);
+            if (index > -1) {
+                this.visibleCalendars.splice(index, 1);
+            } else {
+                this.visibleCalendars.push(calendarId);
+            }
+        },
+        isWorkingHour(hour) {
+            return hour >= 11 && hour < 22;
+        },
+    };
+}
+
 document.addEventListener('alpine:init', () => {
     Alpine.store('proposeTimesEvent', null);
 });

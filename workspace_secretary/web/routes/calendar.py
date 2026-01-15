@@ -161,13 +161,8 @@ async def get_conference_solutions(
     session: Session = Depends(require_auth),
 ):
     """Get available conference solutions for creating video meetings."""
-    engine_client = engine.get_engine_client()
     try:
-        response = await engine_client.get(
-            f"/api/calendar/conference-solutions?calendar_id={calendar_id}"
-        )
-        if isinstance(response, JSONResponse):
-            return json.loads(response.body)
+        response = await engine.get_conference_solutions(calendar_id)
         return response
     except Exception as e:
         logger.exception("Failed to fetch conference solutions")
@@ -615,6 +610,7 @@ async def create_event_simple(
     end_time: str = Form(...),
     description: Optional[str] = Form(None),
     location: Optional[str] = Form(None),
+    add_meet: bool = Form(False),
     session: Session = Depends(require_auth),
 ):
     try:
@@ -628,7 +624,7 @@ async def create_event_simple(
             description=description or None,
             location=location or None,
             attendees=None,
-            add_meet=False,
+            add_meet=add_meet,
         )
         return JSONResponse(
             {"success": True, "message": "Event created", "event": result}

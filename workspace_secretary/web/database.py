@@ -258,9 +258,13 @@ def get_calendar_selection_state(user_id: str = "default") -> dict:
     if not available_ids:
         available_ids = ["primary"]
 
-    selected_ids = [cid for cid in preferred_ids if cid in available_ids]
+    if preferred_ids:
+        selected_ids = [cid for cid in preferred_ids if cid in available_ids]
+    else:
+        selected_ids = ["primary"] if "primary" in available_ids else available_ids[:1]
+
     if not selected_ids:
-        selected_ids = available_ids
+        selected_ids = ["primary"] if "primary" in available_ids else available_ids
 
     return {
         "selected_ids": selected_ids,
@@ -270,7 +274,6 @@ def get_calendar_selection_state(user_id: str = "default") -> dict:
 
 
 def get_selected_calendar_ids(user_id: str = "default") -> list[str]:
-    """Get list of calendar IDs selected by user. Defaults to all available if none selected."""
     return get_calendar_selection_state(user_id)["selected_ids"]
 
 
