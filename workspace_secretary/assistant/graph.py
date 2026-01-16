@@ -4,9 +4,11 @@ This module defines the main conversation graph with:
 - LLM reasoning node with bound tools
 - Separate ToolNodes for read-only and mutation tools
 - Human-in-the-loop via interrupt_before for mutations
+- Batch operation support with continuation state
 - PostgreSQL checkpointer for conversation persistence
 """
 
+import json
 import logging
 from typing import Any, Literal, Optional
 
@@ -30,6 +32,7 @@ from workspace_secretary.assistant.tool_registry import (
     get_readonly_tools,
     get_mutation_tools,
     is_mutation_tool,
+    is_batch_tool,
 )
 from workspace_secretary.assistant.checkpointer import create_checkpointer
 from workspace_secretary.config import ServerConfig, WebApiFormat
@@ -159,113 +162,207 @@ def llm_node(state: AssistantState, config: RunnableConfig) -> dict[str, Any]:
 def route_after_llm(
     state: AssistantState,
 ) -> str:
-    """Route based on the last AI message's tool calls.
-
-    Args:
-        state: Current conversation state
-
-    Returns:
-        Next node name or END
-    """
+    """Route based on the last AI message's tool calls."""
     last_message = state["messages"][-1]
 
-    # If not an AI message or no tool calls, end
     if not isinstance(last_message, AIMessage):
         return END
 
     if not last_message.tool_calls:
         return END
 
-    # Check if any tool call is a mutation
     for tool_call in last_message.tool_calls:
         if is_mutation_tool(tool_call["name"]):
             return "mutation_tools"
+        if is_batch_tool(tool_call["name"]):
+            return "batch_runner"
 
     return "readonly_tools"
 
 
-def route_after_tools(state: AssistantState) -> str:
-    """Route after tool execution - always return to LLM for reasoning.
+def batch_runner_node(state: AssistantState, config: RunnableConfig) -> dict[str, Any]:
+    """Execute batch tools with continuation support.
 
-    Args:
-        state: Current conversation state
-
-    Returns:
-        'llm' to continue reasoning or END
+    Runs ONE iteration of a batch tool, aggregates results, and tracks continuation state.
+    The graph will loop back to this node if has_more=true.
     """
-    # After tools, go back to LLM to process results
+    last_message = state["messages"][-1]
+
+    if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
+        return {"batch_status": "complete"}
+
+    batch_tool_call = None
+    for tc in last_message.tool_calls:
+        if is_batch_tool(tc["name"]):
+            batch_tool_call = tc
+            break
+
+    if not batch_tool_call:
+        return {"batch_status": "complete"}
+
+    tool_name = batch_tool_call["name"]
+    tool_args = batch_tool_call["args"].copy()
+
+    if state.get("batch_continuation_state"):
+        tool_args["continuation_state"] = state["batch_continuation_state"]
+
+    tool_fn = None
+    from workspace_secretary.assistant.tools_read import (
+        quick_clean_inbox,
+        triage_priority_emails,
+        triage_remaining_emails,
+    )
+
+    tool_map = {
+        "quick_clean_inbox": quick_clean_inbox,
+        "triage_priority_emails": triage_priority_emails,
+        "triage_remaining_emails": triage_remaining_emails,
+    }
+    tool_fn = tool_map.get(tool_name)
+
+    if not tool_fn:
+        error_msg = ToolMessage(
+            content=f"Unknown batch tool: {tool_name}",
+            tool_call_id=batch_tool_call["id"],
+        )
+        return {"messages": [error_msg], "batch_status": "complete"}
+
+    try:
+        result_str = tool_fn.invoke(tool_args)
+        result = (
+            json.loads(result_str)
+            if result_str.startswith("{")
+            else {"raw": result_str}
+        )
+    except Exception as e:
+        error_msg = ToolMessage(
+            content=f"Batch tool error: {e}",
+            tool_call_id=batch_tool_call["id"],
+        )
+        return {"messages": [error_msg], "batch_status": "complete"}
+
+    current_items = list(state.get("batch_items", []))
+    new_items = result.get("candidates", result.get("emails", []))
+    current_items.extend(new_items)
+
+    processed = state.get("batch_processed_count", 0) + result.get(
+        "processed_count", len(new_items)
+    )
+    has_more = result.get("has_more", False)
+    continuation_state = result.get("continuation_state")
+
+    if state.get("batch_cancel_requested"):
+        has_more = False
+
+    if has_more and continuation_state:
+        return {
+            "batch_status": "running",
+            "batch_tool": tool_name,
+            "batch_args": batch_tool_call["args"],
+            "batch_continuation_state": continuation_state,
+            "batch_items": current_items,
+            "batch_processed_count": processed,
+            "batch_total_estimate": result.get("total_available", processed),
+        }
+
+    summary = f"Batch operation complete. Found {len(current_items)} items after processing {processed} emails."
+    tool_result = ToolMessage(
+        content=json.dumps(
+            {
+                "status": "complete",
+                "total_items": len(current_items),
+                "processed_count": processed,
+                "items": current_items,
+            }
+        ),
+        tool_call_id=batch_tool_call["id"],
+    )
+
+    return {
+        "messages": [tool_result],
+        "batch_status": "complete",
+        "batch_tool": None,
+        "batch_args": None,
+        "batch_continuation_state": None,
+        "batch_items": [],
+        "batch_processed_count": 0,
+    }
+
+
+def route_after_batch(state: AssistantState) -> str:
+    """Route after batch runner - continue looping or return to LLM."""
+    if state.get("batch_status") == "running":
+        return "batch_runner"
+    return "llm"
+
+
+def route_after_tools(state: AssistantState) -> str:
+    """Route after tool execution - always return to LLM for reasoning."""
     return "llm"
 
 
 def create_assistant_graph(
     context: AssistantContext,
 ) -> StateGraph:
-    """Create the assistant StateGraph.
-
-    Args:
-        context: Assistant context with db, engine, config
-
-    Returns:
-        Compiled StateGraph ready for execution
-    """
+    """Create the assistant StateGraph."""
     global _graph
 
-    # Set global context for tools
     set_context(context)
 
-    # Create LLM with tools bound
     llm = create_llm(context.config)
     all_tools = get_all_tools()
     llm_with_tools = llm.bind_tools(all_tools)
 
-    # Create tool nodes
     readonly_tools = get_readonly_tools()
     mutation_tools = get_mutation_tools()
 
     readonly_node = ToolNode(readonly_tools)
     mutation_node = ToolNode(mutation_tools)
 
-    # Build the graph
     builder = StateGraph(AssistantState)
 
-    # Add nodes
     builder.add_node("llm", llm_node)
     builder.add_node("readonly_tools", readonly_node)
     builder.add_node("mutation_tools", mutation_node)
+    builder.add_node("batch_runner", batch_runner_node)
 
-    # Add edges
     builder.add_edge(START, "llm")
 
-    # Conditional routing after LLM
     builder.add_conditional_edges(
         "llm",
         route_after_llm,
         {
             "readonly_tools": "readonly_tools",
             "mutation_tools": "mutation_tools",
+            "batch_runner": "batch_runner",
             END: END,
         },
     )
 
-    # After tools, return to LLM
     builder.add_edge("readonly_tools", "llm")
     builder.add_edge("mutation_tools", "llm")
 
-    # Create checkpointer if postgres configured
+    builder.add_conditional_edges(
+        "batch_runner",
+        route_after_batch,
+        {
+            "batch_runner": "batch_runner",
+            "llm": "llm",
+        },
+    )
+
     checkpointer = None
     if context.config.database.backend == "postgres":
         checkpointer = create_checkpointer(context.config.database.postgres)
 
-    # Compile with HITL interrupt before mutation tools
     _graph = builder.compile(
         checkpointer=checkpointer,
         interrupt_before=["mutation_tools"],
     )
 
-    # Store LLM in config for the llm_node
     _graph.llm = llm_with_tools
 
-    logger.info("Assistant graph created successfully")
+    logger.info("Assistant graph created with batch support")
     return _graph
 
 

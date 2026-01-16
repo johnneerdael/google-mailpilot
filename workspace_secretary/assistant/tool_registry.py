@@ -13,13 +13,13 @@ class ToolInfo(NamedTuple):
     """Metadata about a tool."""
 
     name: str
-    category: Literal["readonly", "mutation", "staging"]
+    category: Literal["readonly", "mutation", "staging", "batch"]
     description: str
 
 
-# Tool classification registry
+BATCH_TOOLS = {"quick_clean_inbox", "triage_priority_emails", "triage_remaining_emails"}
+
 TOOL_REGISTRY: dict[str, ToolInfo] = {
-    # Read-only tools (safe, no HITL needed)
     "list_folders": ToolInfo("list_folders", "readonly", "List email folders"),
     "search_emails": ToolInfo("search_emails", "readonly", "Search emails with FTS"),
     "get_email_details": ToolInfo(
@@ -40,11 +40,18 @@ TOOL_REGISTRY: dict[str, ToolInfo] = {
     "get_calendar_availability": ToolInfo(
         "get_calendar_availability", "readonly", "Check free/busy"
     ),
-    # Safe staging tools (create drafts, no external mutation)
     "create_draft_reply": ToolInfo(
         "create_draft_reply", "staging", "Create draft reply"
     ),
-    # Mutation tools (require HITL approval)
+    "quick_clean_inbox": ToolInfo(
+        "quick_clean_inbox", "batch", "Identify cleanup candidates"
+    ),
+    "triage_priority_emails": ToolInfo(
+        "triage_priority_emails", "batch", "Identify priority emails"
+    ),
+    "triage_remaining_emails": ToolInfo(
+        "triage_remaining_emails", "batch", "Process remaining emails"
+    ),
     "mark_as_read": ToolInfo("mark_as_read", "mutation", "Mark email as read"),
     "mark_as_unread": ToolInfo("mark_as_unread", "mutation", "Mark email as unread"),
     "move_email": ToolInfo("move_email", "mutation", "Move email to folder"),
@@ -61,6 +68,9 @@ TOOL_REGISTRY: dict[str, ToolInfo] = {
     "execute_clean_batch": ToolInfo(
         "execute_clean_batch", "mutation", "Execute batch cleanup"
     ),
+    "process_email": ToolInfo(
+        "process_email", "mutation", "Process email with combined actions"
+    ),
 }
 
 
@@ -74,6 +84,11 @@ def is_readonly_tool(tool_name: str) -> bool:
     """Check if a tool is read-only (safe to execute)."""
     info = TOOL_REGISTRY.get(tool_name)
     return info is not None and info.category in ("readonly", "staging")
+
+
+def is_batch_tool(tool_name: str) -> bool:
+    """Check if a tool is a batch tool supporting continuation."""
+    return tool_name in BATCH_TOOLS
 
 
 def get_tool_category(tool_name: str) -> str:

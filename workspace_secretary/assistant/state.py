@@ -8,39 +8,36 @@ from typing import Annotated, Any, Optional, TypedDict
 from langgraph.graph.message import add_messages
 
 
+from typing import Literal
+
+BatchStatus = Literal["idle", "running", "awaiting_approval", "complete", "cancelled"]
+
+
 class AssistantState(TypedDict):
-    """State schema for the assistant graph.
+    """State schema for the assistant graph."""
 
-    Attributes:
-        messages: Conversation history with add_messages reducer
-        user_id: Unique user identifier for session isolation
-        user_email: User's email address for identity matching
-        user_name: User's display name
-        timezone: User's timezone (IANA format)
-        working_hours: Working hours configuration dict
-        selected_calendar_ids: List of calendar IDs to query
-        pending_mutation: Tool call awaiting human approval
-        continuation_state: State for batch tool continuation
-        tool_error: Last tool error message if any
-    """
-
-    # Conversation messages with reducer for proper message handling
     messages: Annotated[list, add_messages]
 
-    # User identity
     user_id: str
     user_email: str
     user_name: str
 
-    # Scheduling configuration
     timezone: str
     working_hours: dict[str, Any]
     selected_calendar_ids: list[str]
 
-    # Tool flow state
     pending_mutation: Optional[dict[str, Any]]
     continuation_state: Optional[str]
     tool_error: Optional[str]
+
+    batch_status: BatchStatus
+    batch_tool: Optional[str]
+    batch_args: Optional[dict[str, Any]]
+    batch_continuation_state: Optional[str]
+    batch_items: list[dict[str, Any]]
+    batch_processed_count: int
+    batch_total_estimate: int
+    batch_cancel_requested: bool
 
 
 def create_initial_state(
@@ -75,4 +72,12 @@ def create_initial_state(
         pending_mutation=None,
         continuation_state=None,
         tool_error=None,
+        batch_status="idle",
+        batch_tool=None,
+        batch_args=None,
+        batch_continuation_state=None,
+        batch_items=[],
+        batch_processed_count=0,
+        batch_total_estimate=0,
+        batch_cancel_requested=False,
     )
