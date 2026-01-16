@@ -52,47 +52,51 @@ SYSTEM_PROMPT = """You are an intelligent email secretary for {user_name} ({user
 - Apply labels and organize emails (requires approval)
 - Manage calendar events
 
-## CRITICAL: Tool Chaining Workflows
+## CRITICAL: Batch Tool Workflows
+
+All batch tools return a `uids` array. When user confirms, use those UIDs directly.
+
+### /clean - Inbox Cleanup
+1. Call `quick_clean_inbox()` → returns `uids` array
+2. Tell user: "Found X emails to archive. Proceed?"
+3. On approval: Call `execute_clean_batch(uids=<the uids array>)`
+
+### /priority - Priority Emails  
+1. Call `triage_priority_emails()` → returns `uids` array + action info
+2. Show summary of priority emails needing attention
+3. On approval to label: Call `apply_triage_labels()` with the UIDs
+
+### /remaining - Remaining Emails
+1. Call `triage_remaining_emails()` → returns `uids` array
+2. Show emails needing human decision
+3. On approval: Apply appropriate labels
 
 ### /triage - Smart Inbox Triage
-1. Call `triage_inbox()` to classify emails into categories
-2. Results include:
-   - high_confidence (>90%): Auto-apply labels without asking
-   - needs_review (<90%): Show samples, ask for approval
-3. Categories: action-required, fyi, newsletter, notification, cleanup
-4. After triage, call `apply_triage_labels(classifications_json=...)` with the results
+1. Call `triage_inbox()` to classify all emails
+2. High confidence (>90%): Auto-apply labels
+3. Lower confidence: Show samples, ask approval
+4. On approval: Call `apply_triage_labels()`
 
-### /clean - Inbox Cleanup  
-1. Call `quick_clean_inbox()` to find cleanup candidates
-2. Results include `candidates` array with UIDs
-3. On user approval ("yes", "archive them"), extract UIDs and call:
-   `execute_clean_batch(uids=[list of candidate UIDs])`
-
-### /priority - Priority Emails
-1. Call `triage_inbox()` and filter for `action-required` category
-2. Show only emails needing user response
-3. Offer to draft replies or show full content
+## IMPORTANT: Using Previous Tool Results
+When user says "yes", "do it", "archive them", "proceed":
+- The previous tool result contains `uids` array - USE IT DIRECTLY
+- NEVER ask user for UIDs - you already have them
+- Call the appropriate mutation tool with those exact UIDs
 
 ## Label Structure
 - Secretary/Action-Required: Direct questions needing response
-- Secretary/FYI: CC'd, informational, no action needed
-- Secretary/Newsletter: Marketing, digests (auto: mark read + archive)
-- Secretary/Notification: Zoom, GitHub, etc (auto: mark read)
+- Secretary/FYI: CC'd, informational
+- Secretary/Newsletter: Marketing, digests
+- Secretary/Notification: Zoom, GitHub, etc
 - Secretary/Auto-Cleaned: Archived low-priority
-- Secretary/Waiting: Sent by you, awaiting reply
-- Secretary/Processed: Action taken
 
-## Rules (from AGENTS.md)
+## Rules
 - NEVER send emails without explicit approval
-- High confidence (>90%): Auto-apply labels, report summary only
-- Lower confidence: Show samples, ask before applying actions
 - create_draft_reply is SAFE (creates Gmail draft, doesn't send)
 
 ## User Context
 - Timezone: {timezone}
-- Working Hours: {working_hours}
-
-Be concise. When user says "yes" or "do it", execute the pending action immediately."""
+- Working Hours: {working_hours}"""
 
 
 def create_llm(config: ServerConfig) -> BaseChatModel:
@@ -337,7 +341,27 @@ def batch_runner_node(state: AssistantState, config: RunnableConfig) -> dict[str
         if not has_more or not continuation_state:
             break
 
-    # Return complete results to LLM
+    uids = [item.get("uid") for item in all_items if item.get("uid")]
+
+    tool_actions = {
+        "quick_clean_inbox": {
+            "action": "archive",
+            "target_folder": "Secretary/Auto-Cleaned",
+            "description": "Archive to Secretary/Auto-Cleaned",
+        },
+        "triage_priority_emails": {
+            "action": "label",
+            "label": "Secretary/Action-Required",
+            "description": "Label as Action Required",
+        },
+        "triage_remaining_emails": {
+            "action": "review",
+            "description": "Review and categorize",
+        },
+    }
+
+    action_info = tool_actions.get(tool_name, {"action": "unknown"})
+
     tool_result = ToolMessage(
         content=json.dumps(
             {
@@ -345,7 +369,8 @@ def batch_runner_node(state: AssistantState, config: RunnableConfig) -> dict[str
                 "total_items": len(all_items),
                 "processed_count": total_processed,
                 "iterations": iteration,
-                "items": all_items,
+                "uids": uids,
+                **action_info,
             }
         ),
         tool_call_id=batch_tool_call["id"],

@@ -347,11 +347,15 @@ async function sendMessage(event) {
                             hideBatchProgress();
                             if (event.items && event.items.length > 0) {
                                 showBatchApprovalDialog(event.items);
+                            } else if (event.uids && event.uids.length > 0) {
+                                renderActionButtons(event);
                             } else {
                                 fullContent += '\n✅ Batch scan complete. No items found matching criteria.';
                                 if (!assistantDiv) assistantDiv = addMessage('assistant', '');
                                 assistantDiv.innerHTML = formatMarkdown(fullContent);
                             }
+                        } else if (event.type === 'action_buttons') {
+                            renderActionButtons(event);
                         } else if (typeof event === 'string') {
                             // Fallback for old format (plain string)
                             fullContent += event;
@@ -719,6 +723,112 @@ async function executeApprovedBatch() {
         hideBatchProgress();
         addMessage('assistant', `❌ Error: ${error.message}`);
     }
+}
+
+let pendingActionUids = [];
+let pendingActionInfo = {};
+
+function renderActionButtons(event) {
+    hideEmptyState();
+    
+    const uids = event.uids || [];
+    const action = event.action || 'archive';
+    const target = event.target_folder || event.label || '';
+    const description = event.description || `Process ${uids.length} emails`;
+    const totalItems = event.total_items || uids.length;
+    
+    pendingActionUids = uids;
+    pendingActionInfo = { action, target, folder: 'INBOX' };
+    
+    const div = document.createElement('div');
+    div.className = 'message-assistant';
+    div.id = 'action-buttons-container';
+    
+    const styleClass = {
+        'archive': 'bg-blue-600 hover:bg-blue-700 text-white',
+        'mark_read': 'bg-gray-600 hover:bg-gray-700 text-white',
+        'apply_label': 'bg-purple-600 hover:bg-purple-700 text-white',
+    };
+    
+    const icons = {
+        'archive': '📦',
+        'mark_read': '✓',
+        'apply_label': '🏷️',
+    };
+    
+    div.innerHTML = `
+        <div class="mb-3">
+            <strong>📧 Found ${totalItems} emails</strong>
+            <p class="text-sm text-muted mt-1">${description}</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <button onclick="executeDirectAction('archive', '${escapeHtml(target || 'Secretary/Auto-Cleaned')}')" 
+                class="px-4 py-2 text-sm rounded-lg ${styleClass['archive']}">
+                ${icons['archive']} Archive (${uids.length})
+            </button>
+            <button onclick="executeDirectAction('mark_read', '')" 
+                class="px-4 py-2 text-sm rounded-lg ${styleClass['mark_read']}">
+                ${icons['mark_read']} Mark Read
+            </button>
+            <button onclick="dismissActionButtons()" 
+                class="px-4 py-2 text-sm rounded-lg bg-surface-dim hover:bg-surface-hover border border-border">
+                Skip
+            </button>
+        </div>
+    `;
+    
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+async function executeDirectAction(action, target) {
+    const container = document.getElementById('action-buttons-container');
+    if (!container) return;
+    
+    if (pendingActionUids.length === 0) {
+        container.innerHTML = '<p class="text-muted">No emails to process.</p>';
+        return;
+    }
+    
+    container.innerHTML = `<p class="text-muted">⏳ Processing ${pendingActionUids.length} emails...</p>`;
+    
+    try {
+        const response = await fetch('/api/chat/action', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: action,
+                uids: pendingActionUids,
+                folder: 'INBOX',
+                target: target || 'Secretary/Auto-Cleaned',
+                label: target,
+            }),
+        });
+        
+        const result = await response.json();
+        
+        if (result.error) {
+            container.innerHTML = `<p class="text-error">❌ Error: ${result.error}</p>`;
+        } else {
+            const actionText = action === 'archive' ? 'Archived' : action === 'mark_read' ? 'Marked as read' : 'Processed';
+            container.innerHTML = `<p class="text-success">✅ ${actionText} ${result.success} emails${result.errors > 0 ? ` (${result.errors} errors)` : ''}.</p>`;
+        }
+        
+        pendingActionUids = [];
+        pendingActionInfo = {};
+        
+    } catch (error) {
+        container.innerHTML = `<p class="text-error">❌ Error: ${error.message}</p>`;
+    }
+}
+
+function dismissActionButtons() {
+    const container = document.getElementById('action-buttons-container');
+    if (container) {
+        container.innerHTML = '<p class="text-muted">Skipped. No action taken.</p>';
+    }
+    pendingActionUids = [];
+    pendingActionInfo = {};
 }
 
 const SLASH_COMMANDS = [

@@ -68,6 +68,113 @@ def format_batch_complete_sse(
     return f"data: {json.dumps({'type': 'batch_complete', 'tool': tool_name, 'total_items': total_items, 'processed': processed, 'items': items})}\n\n"
 
 
+def format_action_buttons_sse(
+    buttons: list[dict[str, Any]],
+    context: dict[str, Any] | None = None,
+) -> str:
+    payload = {
+        "type": "action_buttons",
+        "buttons": buttons,
+    }
+    if context:
+        payload["context"] = context
+    return f"data: {json.dumps(payload)}\n\n"
+
+
+def format_triage_actions_sse(
+    triage_result: dict[str, Any],
+) -> str:
+    """Format triage results with actionable buttons.
+
+    Creates buttons for bulk actions on triaged emails based on category.
+
+    Args:
+        triage_result: Dict from triage_inbox with by_category, high_confidence_count, etc.
+
+    Returns:
+        SSE-formatted string with action_buttons event
+    """
+    buttons = []
+    by_category = triage_result.get("by_category", {})
+
+    high_conf_items = []
+    for cat in ["newsletter", "notification", "cleanup"]:
+        items = by_category.get(cat, [])
+        high_conf_items.extend(
+            [item for item in items if item.get("confidence", 0) >= 0.90]
+        )
+
+    if high_conf_items:
+        uids = [item.get("uid") for item in high_conf_items if item.get("uid")]
+        buttons.append(
+            {
+                "id": "apply_high_conf",
+                "label": f"Apply labels & mark read ({len(uids)} emails)",
+                "action": "apply_triage",
+                "args": {"uids": uids, "apply_actions": True},
+                "style": "primary",
+                "icon": "✅",
+            }
+        )
+
+    action_required = by_category.get("action-required", [])
+    if action_required:
+        uids = [item.get("uid") for item in action_required if item.get("uid")]
+        buttons.append(
+            {
+                "id": "label_action_required",
+                "label": f"Label as Action Required ({len(uids)})",
+                "action": "apply_label",
+                "args": {"uids": uids, "label": "Secretary/Action-Required"},
+                "style": "secondary",
+                "icon": "🔴",
+            }
+        )
+
+    fyi_items = by_category.get("fyi", [])
+    if fyi_items:
+        uids = [item.get("uid") for item in fyi_items if item.get("uid")]
+        buttons.append(
+            {
+                "id": "mark_fyi_read",
+                "label": f"Mark FYI as read ({len(uids)})",
+                "action": "mark_read",
+                "args": {"uids": uids, "folder": "INBOX"},
+                "style": "secondary",
+                "icon": "📋",
+            }
+        )
+
+    cleanup_items = by_category.get("cleanup", [])
+    newsletter_items = by_category.get("newsletter", [])
+    archivable = cleanup_items + newsletter_items
+    if archivable:
+        uids = [item.get("uid") for item in archivable if item.get("uid")]
+        buttons.append(
+            {
+                "id": "archive_safe",
+                "label": f"Archive ({len(uids)} newsletters/cleanup)",
+                "action": "archive",
+                "args": {
+                    "uids": uids,
+                    "folder": "INBOX",
+                    "target": "Secretary/Auto-Cleaned",
+                },
+                "style": "secondary",
+                "icon": "📦",
+            }
+        )
+
+    context = {
+        "summary": triage_result.get("summary", {}),
+        "high_confidence_count": triage_result.get("high_confidence_count", 0),
+        "needs_review_count": triage_result.get("needs_review_count", 0),
+        "total_processed": triage_result.get("total_processed", 0),
+    }
+
+    return format_action_buttons_sse(buttons, context)
+
+
 def extract_final_response(state: dict) -> str:
     """Extract the final assistant response from state."""
     messages = state.get("messages", [])

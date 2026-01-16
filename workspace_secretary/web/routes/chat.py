@@ -596,3 +596,80 @@ def group_items_by_confidence(items: list[dict]) -> dict[str, list[dict]]:
         else:
             grouped["medium"].append(item)
     return grouped
+
+
+@router.post("/api/chat/action")
+async def execute_action(
+    request: Request,
+    session: Session = Depends(require_auth),
+):
+    """Execute a direct action from UI button click (bypasses LLM)."""
+    from workspace_secretary.web.routes.analysis import get_config
+    from workspace_secretary.assistant.context import get_context
+    from workspace_secretary.db.queries import emails as email_queries
+
+    config = get_config()
+    if not config:
+        return {"error": "Server configuration not available"}
+
+    _ensure_graph_initialized(config)
+
+    try:
+        body = await request.json()
+    except Exception:
+        form = await request.form()
+        body = {
+            "action": str(form.get("action", "")),
+            "uids": json.loads(str(form.get("uids", "[]"))),
+            "folder": str(form.get("folder", "INBOX")),
+            "label": str(form.get("label", "")),
+            "target": str(form.get("target", "")),
+        }
+
+    action = body.get("action", "")
+    uids = body.get("uids", [])
+    folder = body.get("folder", "INBOX")
+    label = body.get("label", "")
+    target = body.get("target", "Secretary/Auto-Cleaned")
+
+    if not action:
+        return {"error": "No action specified"}
+    if not uids:
+        return {"error": "No UIDs provided"}
+
+    ctx = get_context()
+    results = {"success": 0, "errors": 0, "action": action, "total": len(uids)}
+
+    for uid in uids:
+        try:
+            if action == "archive":
+                ctx.engine.move_email(uid, folder, target)
+                ctx.engine.mark_read(uid, target)
+                email_queries.delete_email(ctx.db, uid, folder)
+                results["success"] += 1
+
+            elif action == "mark_read":
+                ctx.engine.mark_read(uid, folder)
+                email_queries.mark_email_read(ctx.db, uid, folder, is_read=True)
+                results["success"] += 1
+
+            elif action == "apply_label":
+                ctx.engine.modify_labels(uid, folder, [label], action="add")
+                results["success"] += 1
+
+            elif action == "apply_triage":
+                ctx.engine.modify_labels(uid, folder, [label], action="add")
+                if body.get("apply_actions"):
+                    ctx.engine.mark_read(uid, folder)
+                    email_queries.mark_email_read(ctx.db, uid, folder, is_read=True)
+                results["success"] += 1
+
+            else:
+                results["errors"] += 1
+                logger.warning(f"Unknown action: {action}")
+
+        except Exception as e:
+            results["errors"] += 1
+            logger.warning(f"Failed action {action} on UID {uid}: {e}")
+
+    return results
