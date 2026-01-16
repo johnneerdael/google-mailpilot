@@ -223,8 +223,13 @@ def create_calendar_event(
             meeting_type=meeting_type,
         )
 
-        event_id = result.get("event", {}).get("id", "unknown")
-        return f"""✅ Calendar event created!
+        # API returns event_id at top level for queued events, or in event.id for direct creates
+        event_id = result.get("event_id") or result.get("event", {}).get(
+            "id", "unknown"
+        )
+        pending = result.get("pending", False)
+        status_note = " (pending sync)" if pending else ""
+        return f"""✅ Calendar event created{status_note}!
 
 Title: {summary}
 Start: {start_time}
@@ -259,11 +264,25 @@ def respond_to_meeting(
     if response not in valid_responses:
         return f"Invalid response: {response}. Must be one of: {', '.join(valid_responses)}"
 
+    # Check if this is a local/queued event (not yet synced to Google Calendar)
+    if event_id.startswith("local:"):
+        return (
+            f"❌ Cannot respond to event '{event_id}': This event is still pending sync "
+            f"to Google Calendar. Wait for the event to sync (check list_calendar_events "
+            f"for events without 'local:' prefix), or the event may have been created "
+            f"locally and not yet confirmed by Google Calendar."
+        )
+
     try:
         result = ctx.engine.respond_to_meeting(event_id, calendar_id, response)
-        return f"✅ Meeting response recorded: {response}"
+        # API returns {"status": "ok", "event": {...}} on success
+        if result.get("status") == "ok" or result.get("event"):
+            return f"✅ Meeting response recorded: {response}"
+        return (
+            f"❌ Failed to respond to meeting: {result.get('detail', 'Unknown error')}"
+        )
     except Exception as e:
-        return f"Error responding to meeting: {e}"
+        return f"❌ Error responding to meeting: {e}"
 
 
 # =============================================================================

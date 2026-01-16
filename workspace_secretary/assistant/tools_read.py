@@ -392,8 +392,10 @@ def list_calendar_events(
         summary = event.get("summary", "No title")
         location = event.get("location", "")
         location_str = f" @ {location}" if location else ""
+        event_id = event.get("id", "")
+        id_str = f" [ID: {event_id}]" if event_id else ""
 
-        lines.append(f"  • {time_str} - {summary}{location_str}")
+        lines.append(f"  • {time_str} - {summary}{location_str}{id_str}")
 
     return "\n".join(lines)
 
