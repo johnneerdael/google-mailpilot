@@ -10,20 +10,17 @@
             <h1 class="text-lg font-semibold text-default">Piper</h1>
         </div>
         <div class="flex items-center gap-2">
-            <button type="button" onclick="runQuickAction('priority')" class="quick-action-btn group relative" 
-                title="Find urgent emails first - questions, deadlines, VIPs. Run this before Clean!">
-                ⚡ Priority
-                <span class="tooltip">Identify emails needing your attention</span>
-            </button>
             <button type="button" onclick="runQuickAction('clean')" class="quick-action-btn group relative" 
-                title="Archive low-priority emails (newsletters, CCs). Best after running Priority.">
+                title="Archive emails where you're BCC'd or not mentioned. Safe to run first.">
                 🧹 Clean
-                <span class="tooltip">Archive newsletters &amp; noise</span>
             </button>
-            <button type="button" onclick="runQuickAction('briefing')" class="quick-action-btn group relative" 
-                title="Daily summary of unread emails and calendar events.">
-                📬 Briefing
-                <span class="tooltip">Morning email summary</span>
+            <button type="button" onclick="runQuickAction('priority')" class="quick-action-btn group relative" 
+                title="Find emails needing your attention - questions, deadlines, VIPs.">
+                ⚡ Priority
+            </button>
+            <button type="button" onclick="runQuickAction('triage')" class="quick-action-btn group relative" 
+                title="Classify remaining emails into categories with smart labeling.">
+                📊 Triage
             </button>
             <div class="w-px h-6 bg-border mx-1"></div>
             <button 
@@ -46,15 +43,15 @@
                 <ul class="text-sm text-muted space-y-1.5">
                     <li class="flex items-start gap-2">
                         <span class="text-primary">1.</span>
-                        <span><strong>⚡ Priority</strong> first — find urgent emails</span>
+                        <span><strong>🧹 Clean</strong> — archive BCC'd emails & noise</span>
                     </li>
                     <li class="flex items-start gap-2">
                         <span class="text-primary">2.</span>
-                        <span><strong>🧹 Clean</strong> second — archive the noise</span>
+                        <span><strong>⚡ Priority</strong> — find emails needing attention</span>
                     </li>
                     <li class="flex items-start gap-2">
                         <span class="text-primary">3.</span>
-                        <span><strong>📬 Briefing</strong> anytime — daily summary</span>
+                        <span><strong>📊 Triage</strong> — classify the rest</span>
                     </li>
                 </ul>
                 <p class="text-xs text-muted mt-3 pt-3 border-t border-border italic">
