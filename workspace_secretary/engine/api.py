@@ -118,6 +118,7 @@ class CalendarEventRequest(BaseModel):
     location: Optional[str] = None
     calendar_id: str = "primary"
     meeting_type: Optional[str] = None
+    add_meet: bool = False
     attendees: Optional[list[str]] = None
 
 
@@ -1937,13 +1938,23 @@ async def create_calendar_event(req: CalendarEventRequest):
     if req.attendees:
         event_data["attendees"] = [{"email": email} for email in req.attendees]
 
-    if req.meeting_type == "google_meet":
+    meeting_type = req.meeting_type
+    if req.add_meet and not meeting_type:
+        meeting_type = "addOn"
+
+    conference_key_type: Optional[str] = None
+    if meeting_type in ("google_meet", "hangoutsMeet"):
+        conference_key_type = "hangoutsMeet"
+    elif meeting_type in ("zoom", "teams", "addOn"):
+        conference_key_type = "addOn"
+
+    if conference_key_type:
         import uuid as uuid_lib
 
         event_data["conferenceData"] = {
             "createRequest": {
                 "requestId": str(uuid_lib.uuid4()),
-                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                "conferenceSolutionKey": {"type": conference_key_type},
             }
         }
 
@@ -2331,12 +2342,6 @@ async def delete_calendar_event(calendar_id: str, event_id: str):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to queue calendar event deletion",
         )
-
-
-class FreeBusyRequest(BaseModel):
-    time_min: str
-    time_max: str
-    calendar_ids: Optional[list[str]] = None
 
 
 @app.post("/api/calendar/freebusy")

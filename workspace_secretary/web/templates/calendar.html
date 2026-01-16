@@ -150,6 +150,14 @@
                 <span class="text-sm text-body">Highlight working hours (11:00 - 22:00)</span>
             </label>
         </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-border">
+            <button type="button" class="btn-secondary" @click="showSettings = false">Close</button>
+            <button type="button" class="btn-primary" @click="saveCalendarSettings()" :disabled="savingCalendarSettings">
+                <span x-show="!savingCalendarSettings">Save</span>
+                <span x-show="savingCalendarSettings">Saving…</span>
+            </button>
+        </div>
     </div>
 
     {% if view == 'day' %}
@@ -573,6 +581,36 @@
                         </div>
                     </div>
 
+                    <div class="relative" @click.outside="showAttendeeSuggestions = false">
+                        <label class="block text-sm font-medium text-body mb-1">Attendees</label>
+                        <input type="text"
+                               name="attendees"
+                               x-model="newEvent.attendees"
+                               @input="handleAttendeesInput($event)"
+                               @focus="handleAttendeesInput($event)"
+                               @blur="setTimeout(() => showAttendeeSuggestions = false, 200)"
+                               class="input-field w-full"
+                               placeholder="name@company.com, other@company.com">
+
+                        <div x-show="showAttendeeSuggestions && attendeeSuggestions.length > 0"
+                             x-transition
+                             class="absolute top-full left-0 mt-1 bg-surface border border-border rounded-lg shadow-xl z-20 w-full max-h-48 overflow-auto">
+                            <template x-for="contact in attendeeSuggestions" :key="contact.email">
+                                <button type="button"
+                                        @click="selectAttendee(contact)"
+                                        class="w-full text-left px-4 py-2 text-sm text-body hover:bg-surface-subtle transition-colors">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <div class="min-w-0">
+                                            <div class="truncate" x-text="contact.name || contact.email"></div>
+                                            <div class="text-xs text-muted truncate" x-text="contact.email"></div>
+                                        </div>
+                                        <div class="text-xs text-muted" x-text="contact.count ? String(contact.count) : ''"></div>
+                                    </div>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+
                     <div>
                         <label class="block text-sm font-medium text-body mb-1">Location</label>
                         <input type="text" 
@@ -582,11 +620,18 @@
                                placeholder="Meeting room or video call link">
                     </div>
 
-                    <div class="space-y-1">
+                    <div class="space-y-2">
                         <label class="block text-sm font-medium text-body">Add video conferencing</label>
-                        <div class="flex items-center justify-between gap-3">
-                            <div class="text-xs text-muted" x-text="conferenceSolutionsLoaded ? conferenceSolutionLabel : 'Checking availability…'"></div>
-                            <label class="inline-flex items-center gap-2 text-sm text-body">
+                        <div class="grid grid-cols-2 gap-3 items-center">
+                            <select name="meeting_provider"
+                                    x-model="newEvent.meeting_provider"
+                                    :disabled="!newEvent.add_meet"
+                                    class="input-field text-sm">
+                                <option value="zoom">Zoom (default)</option>
+                                <option value="teams">Microsoft Teams</option>
+                                <option value="google_meet">Google Meet</option>
+                            </select>
+                            <label class="inline-flex items-center gap-2 text-sm text-body justify-end">
                                 <input type="checkbox"
                                        name="add_meet"
                                        value="true"
@@ -595,6 +640,7 @@
                                 <span>Attach meeting</span>
                             </label>
                         </div>
+                        <div class="text-xs text-muted" x-text="conferenceSolutionsLoaded ? conferenceSolutionLabel : 'Checking availability…'"></div>
                     </div>
  
                     <div>
@@ -758,8 +804,10 @@ function calendarPage() {
             start_time: "",
             end_date: "",
             end_time: "",
+            attendees: "",
             location: "",
             add_meet: false,
+            meeting_provider: "zoom",
         },
         showSettings: false,
         visibleCalendars: [],
@@ -769,6 +817,9 @@ function calendarPage() {
         conferenceSolutions: [],
         conferenceSolutionsLoaded: false,
         conferenceSolutionLabel: "Video conferencing",
+        attendeeSuggestions: [],
+        showAttendeeSuggestions: false,
+        savingCalendarSettings: false,
         init() {
             this.visibleCalendars = parseCalendarJson(
                 this.$el.dataset.selectedCalendarIds,
@@ -793,6 +844,71 @@ function calendarPage() {
                 .finally(() => {
                     this.conferenceSolutionsLoaded = true;
                 });
+        },
+        handleAttendeesInput(event) {
+            const value = event?.target?.value ?? this.newEvent.attendees ?? "";
+            const parts = String(value).split(",");
+            const query = (parts[parts.length - 1] || "").trim();
+
+            if (query.length <= 2) {
+                this.attendeeSuggestions = [];
+                this.showAttendeeSuggestions = false;
+                return;
+            }
+
+            fetch(`/api/contacts/autocomplete?q=${encodeURIComponent(query)}`)
+                .then((r) => (r.ok ? r.json() : null))
+                .then((data) => {
+                    this.attendeeSuggestions = data?.contacts || [];
+                    this.showAttendeeSuggestions = this.attendeeSuggestions.length > 0;
+                })
+                .catch(() => {
+                    this.attendeeSuggestions = [];
+                    this.showAttendeeSuggestions = false;
+                });
+        },
+        selectAttendee(contact) {
+            const email = contact?.email;
+            if (!email) {
+                return;
+            }
+            const current = this.newEvent.attendees || "";
+            const parts = String(current).split(",");
+            parts[parts.length - 1] = ` ${email}`;
+            const normalized = parts
+                .map((p) => p.trim())
+                .filter((p) => p.length > 0)
+                .join(", ");
+            this.newEvent.attendees = normalized ? `${normalized}, ` : `${email}, `;
+            this.attendeeSuggestions = [];
+            this.showAttendeeSuggestions = false;
+        },
+        async saveCalendarSettings() {
+            if (this.savingCalendarSettings) {
+                return;
+            }
+            this.savingCalendarSettings = true;
+            try {
+                const response = await fetch("/api/settings/calendar", {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        selected_calendar_ids: this.visibleCalendars,
+                    }),
+                });
+                if (!response.ok) {
+                    throw new Error("Failed to save settings");
+                }
+                if (typeof window.showToast === "function") {
+                    window.showToast({ message: "Calendar settings saved", type: "success" });
+                }
+            } catch (error) {
+                if (typeof window.showToast === "function") {
+                    window.showToast({ message: "Failed to save calendar settings", type: "error" });
+                }
+            } finally {
+                this.savingCalendarSettings = false;
+            }
         },
         async openEventDetail(eventPayload) {
             this.selectedEventError = null;

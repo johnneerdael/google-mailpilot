@@ -576,14 +576,26 @@ async def create_event(
     location: Optional[str] = Form(None),
     attendees: Optional[str] = Form(None),
     add_meet: bool = Form(False),
+    meeting_provider: str = Form("zoom"),
     calendar_id: Optional[str] = Form(None),
     session: Session = Depends(require_auth),
 ):
     try:
-        attendee_list = [a.strip() for a in attendees.split(",")] if attendees else None
+        attendee_list = (
+            [a.strip() for a in attendees.split(",") if a.strip()]
+            if attendees
+            else None
+        )
         target_calendar_id = (
             calendar_id or db.get_selected_calendar_ids(session.user_id)[0]
         )
+
+        meeting_type: Optional[str] = None
+        if add_meet:
+            meeting_type = (
+                "google_meet" if meeting_provider == "google_meet" else "addOn"
+            )
+
         result = await engine.create_calendar_event(
             summary=summary,
             start_time=start_time,
@@ -592,6 +604,7 @@ async def create_event(
             location=location or None,
             attendees=attendee_list,
             add_meet=add_meet,
+            meeting_type=meeting_type,
             calendar_id=target_calendar_id,
         )
         return JSONResponse(
@@ -610,12 +623,26 @@ async def create_event_simple(
     end_time: str = Form(...),
     description: Optional[str] = Form(None),
     location: Optional[str] = Form(None),
+    attendees: Optional[str] = Form(None),
     add_meet: bool = Form(False),
+    meeting_provider: str = Form("zoom"),
     session: Session = Depends(require_auth),
 ):
     try:
         start_datetime = f"{start_date}T{start_time}:00"
         end_datetime = f"{end_date}T{end_time}:00"
+
+        attendee_list = (
+            [a.strip() for a in attendees.split(",") if a.strip()]
+            if attendees
+            else None
+        )
+
+        meeting_type: Optional[str] = None
+        if add_meet:
+            meeting_type = (
+                "google_meet" if meeting_provider == "google_meet" else "addOn"
+            )
 
         result = await engine.create_calendar_event(
             summary=summary,
@@ -623,8 +650,9 @@ async def create_event_simple(
             end_time=end_datetime,
             description=description or None,
             location=location or None,
-            attendees=None,
+            attendees=attendee_list,
             add_meet=add_meet,
+            meeting_type=meeting_type,
         )
         return JSONResponse(
             {"success": True, "message": "Event created", "event": result}

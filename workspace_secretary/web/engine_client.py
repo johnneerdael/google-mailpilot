@@ -196,6 +196,7 @@ async def create_calendar_event(
     location: Optional[str] = None,
     attendees: Optional[list[str]] = None,
     add_meet: bool = False,
+    meeting_type: Optional[str] = None,
     calendar_id: str = "primary",
 ) -> dict:
     payload: dict[str, str | bool | list[str]] = {
@@ -205,6 +206,8 @@ async def create_calendar_event(
         "calendar_id": calendar_id,
         "add_meet": add_meet,
     }
+    if meeting_type:
+        payload["meeting_type"] = meeting_type
     if description:
         payload["description"] = description
     if location:

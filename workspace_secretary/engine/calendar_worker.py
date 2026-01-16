@@ -106,8 +106,13 @@ class CalendarWorker:
                         logger.info(
                             f"Creating event (outbox {op_id}) in calendar {calendar_id}"
                         )
+                        conference_data_version = (
+                            1 if "conferenceData" in payload else 0
+                        )
                         created_event = self.calendar_client.create_event(
-                            payload, calendar_id
+                            payload,
+                            calendar_id,
+                            conference_data_version=conference_data_version,
                         )
 
                         real_event_id = created_event["id"]

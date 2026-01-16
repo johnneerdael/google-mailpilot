@@ -4,7 +4,8 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build
+
+import importlib
 from google.auth.transport.requests import Request
 
 from workspace_secretary.config import ServerConfig
@@ -51,7 +52,8 @@ class CalendarClient:
             if not creds:
                 raise ValueError("Could not obtain credentials for Calendar")
 
-            self.service = build("calendar", "v3", credentials=creds)
+            build_fn = importlib.import_module("googleapiclient.discovery").build
+            self.service = build_fn("calendar", "v3", credentials=creds)
             logger.info("Successfully connected to Google Calendar API")
         except Exception as e:
             logger.error(f"Failed to connect to Google Calendar: {e}")
@@ -143,6 +145,41 @@ class CalendarClient:
         service = self._ensure_connected()
 
         return service.calendars().get(calendarId=calendar_id).execute()
+
+    def get_conference_solutions(
+        self, calendar_id: str = "primary"
+    ) -> List[Dict[str, Any]]:
+        calendar = self.get_calendar(calendar_id)
+        conference_properties = calendar.get("conferenceProperties", {})
+        allowed_types = conference_properties.get("allowedConferenceSolutionTypes", [])
+
+        type_mapping = {
+            "eventHangout": {
+                "id": "eventHangout",
+                "name": "Google Meet (Classic)",
+                "description": "Classic Google Meet video conferencing",
+            },
+            "eventNamedHangout": {
+                "id": "eventNamedHangout",
+                "name": "Named Hangout",
+                "description": "Named Google Hangout video conference",
+            },
+            "hangoutsMeet": {
+                "id": "hangoutsMeet",
+                "name": "Google Meet",
+                "description": "Modern Google Meet video conferencing",
+            },
+            "addOn": {
+                "id": "addOn",
+                "name": "Third-party Add-on",
+                "description": "Third-party video conferencing add-on",
+            },
+        }
+
+        return [
+            type_mapping.get(t, {"id": t, "name": t, "description": t})
+            for t in allowed_types
+        ]
 
     def get_event(self, calendar_id: str, event_id: str) -> Dict[str, Any]:
         """Get a single event by ID."""
