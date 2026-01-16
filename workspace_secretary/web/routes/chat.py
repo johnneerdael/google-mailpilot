@@ -175,7 +175,14 @@ async def chat_message_stream(
                 if event_type == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk", {})
                     content = getattr(chunk, "content", "")
-                    if content:
+                    # Handle Gemini format: [{'type': 'text', 'text': '...'}]
+                    if isinstance(content, list):
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                text = part.get("text", "")
+                                if text:
+                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+                    elif content:
                         yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
                 # Tool execution events
@@ -241,7 +248,14 @@ async def approve_mutation(
                 if event_type == "on_chat_model_stream":
                     chunk = event.get("data", {}).get("chunk", {})
                     content = getattr(chunk, "content", "")
-                    if content:
+                    # Handle Gemini format: [{'type': 'text', 'text': '...'}]
+                    if isinstance(content, list):
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                text = part.get("text", "")
+                                if text:
+                                    yield f"data: {json.dumps({'type': 'token', 'content': text})}\n\n"
+                    elif content:
                         yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
 
                 elif event_type == "on_tool_start":
