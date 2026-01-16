@@ -502,6 +502,348 @@ To send this draft, use the send_email tool or review in Gmail Drafts folder."""
 
 
 # =============================================================================
+# Batch Operation Tools (Read-Only - Identify Candidates)
+# =============================================================================
+
+
+@tool
+def quick_clean_inbox(
+    folder: str = "INBOX",
+    limit: int = 50,
+    continuation_state: Optional[str] = None,
+) -> str:
+    """Identify cleanup candidates where user is NOT in To:/CC: and name NOT in body.
+
+    Time-boxed to ~5 seconds. Returns partial results with continuation state
+    if more emails need processing.
+
+    Args:
+        folder: Folder to clean (default: INBOX)
+        limit: Max emails to process per call (default: 50)
+        continuation_state: State from previous call to continue processing
+
+    Returns:
+        JSON with candidates, confidence scores, and continuation state.
+    """
+    import time
+
+    ctx = get_context()
+    start_time = time.time()
+    timeout = 5.0  # 5 second time limit
+
+    # Parse continuation state
+    offset = 0
+    if continuation_state:
+        try:
+            state = json.loads(continuation_state)
+            offset = state.get("offset", 0)
+        except json.JSONDecodeError:
+            pass
+
+    # Get emails from folder
+    emails = email_queries.get_inbox_emails(
+        ctx.db, folder, limit, offset, unread_only=False
+    )
+
+    candidates = []
+    processed_count = 0
+
+    for email in emails:
+        # Check timeout
+        if time.time() - start_time > timeout:
+            break
+
+        processed_count += 1
+
+        # Extract fields
+        to_addr = (email.get("to_addr") or "").lower()
+        cc_addr = (email.get("cc_addr") or "").lower()
+        body = (email.get("preview") or "").lower()
+        from_addr = email.get("from_addr") or ""
+        subject = email.get("subject") or ""
+
+        # Check if user is in To: or CC:
+        user_email_lower = ctx.user_email.lower()
+        if user_email_lower in to_addr or user_email_lower in cc_addr:
+            continue
+
+        # Check if user's name is mentioned in body
+        if ctx.identity.full_name and ctx.identity.matches_name_part(body):
+            continue
+
+        # Calculate confidence
+        confidence = "medium"
+        noreply_patterns = [
+            "noreply",
+            "no-reply",
+            "donotreply",
+            "automated",
+            "notification",
+        ]
+        newsletter_patterns = ["newsletter", "digest", "update", "unsubscribe"]
+
+        if any(pattern in from_addr.lower() for pattern in noreply_patterns):
+            confidence = "high"
+        elif any(
+            pattern in subject.lower() or pattern in body
+            for pattern in newsletter_patterns
+        ):
+            confidence = "high"
+        elif len(to_addr.split(",")) > 10:
+            confidence = "medium"
+        else:
+            confidence = "low"
+
+        # Add candidate
+        candidates.append(
+            {
+                "uid": email["uid"],
+                "from_addr": from_addr,
+                "to_addr": email.get("to_addr", ""),
+                "cc_addr": email.get("cc_addr", ""),
+                "subject": subject,
+                "date": _format_date(email.get("date")),
+                "preview": (email.get("preview") or "")[:300],
+                "confidence": confidence,
+            }
+        )
+
+    # Determine if we have more to process
+    has_more = processed_count >= limit and time.time() - start_time < timeout
+    status = "partial" if has_more else "complete"
+
+    # Build continuation state
+    new_continuation_state = None
+    if has_more:
+        new_continuation_state = json.dumps({"offset": offset + processed_count})
+
+    result = {
+        "status": status,
+        "candidates": candidates,
+        "has_more": has_more,
+        "continuation_state": new_continuation_state,
+        "processed_count": processed_count,
+        "time_limit_reached": time.time() - start_time > timeout,
+    }
+
+    return json.dumps(result, indent=2)
+
+
+@tool
+def triage_priority_emails(
+    folder: str = "INBOX",
+    limit: int = 50,
+    continuation_state: Optional[str] = None,
+) -> str:
+    """Identify high-priority emails: user in To: with <5 recipients OR <15 recipients AND name in body.
+
+    Time-boxed to ~5 seconds. Returns partial results with continuation state.
+
+    Args:
+        folder: Folder to triage (default: INBOX)
+        limit: Max emails to process per call (default: 50)
+        continuation_state: State from previous call to continue processing
+
+    Returns:
+        JSON with priority emails, signals, and continuation state.
+    """
+    import time
+
+    ctx = get_context()
+    start_time = time.time()
+    timeout = 5.0
+
+    # Parse continuation state
+    offset = 0
+    if continuation_state:
+        try:
+            state = json.loads(continuation_state)
+            offset = state.get("offset", 0)
+        except json.JSONDecodeError:
+            pass
+
+    # Get unread emails
+    emails = email_queries.get_inbox_emails(
+        ctx.db, folder, limit, offset, unread_only=True
+    )
+
+    priority_emails = []
+    processed_count = 0
+
+    for email in emails:
+        # Check timeout
+        if time.time() - start_time > timeout:
+            break
+
+        processed_count += 1
+
+        # Get full email for signals
+        full_email = email_queries.get_email(ctx.db, email["uid"], folder)
+        if not full_email:
+            continue
+
+        # Analyze signals
+        signals = _analyze_email_signals(full_email, ctx)
+
+        # Check if addressed to user
+        to_addr = (full_email.get("to_addr") or "").lower()
+        user_email_lower = ctx.user_email.lower()
+
+        if user_email_lower not in to_addr:
+            continue
+
+        # Count recipients
+        recipient_count = len([r.strip() for r in to_addr.split(",") if r.strip()])
+
+        # Priority logic
+        is_priority = False
+        if recipient_count < 5:
+            is_priority = True
+        elif recipient_count < 15 and signals["mentions_my_name"]:
+            is_priority = True
+
+        if not is_priority:
+            continue
+
+        # Add to priority list
+        priority_emails.append(
+            {
+                "uid": full_email["uid"],
+                "from_addr": full_email.get("from_addr", ""),
+                "to_addr": full_email.get("to_addr", ""),
+                "cc_addr": full_email.get("cc_addr", ""),
+                "subject": full_email.get("subject", ""),
+                "date": _format_date(full_email.get("date")),
+                "preview": (full_email.get("body_text") or "")[:300],
+                "signals": {
+                    "is_from_vip": signals["is_from_vip"],
+                    "is_addressed_to_me": signals["is_addressed_to_me"],
+                    "mentions_my_name": signals["mentions_my_name"],
+                    "has_question": signals["has_question"],
+                    "mentions_deadline": signals["mentions_deadline"],
+                    "mentions_meeting": signals["mentions_meeting"],
+                    "has_attachments": signals["has_attachments"],
+                },
+            }
+        )
+
+    # Determine if we have more to process
+    has_more = processed_count >= limit and time.time() - start_time < timeout
+    status = "partial" if has_more else "complete"
+
+    new_continuation_state = None
+    if has_more:
+        new_continuation_state = json.dumps({"offset": offset + processed_count})
+
+    result = {
+        "status": status,
+        "priority_emails": priority_emails,
+        "has_more": has_more,
+        "continuation_state": new_continuation_state,
+        "processed_count": processed_count,
+    }
+
+    return json.dumps(result, indent=2)
+
+
+@tool
+def triage_remaining_emails(
+    folder: str = "INBOX",
+    limit: int = 50,
+    continuation_state: Optional[str] = None,
+) -> str:
+    """Process remaining emails not caught by priority triage with signals for human decision.
+
+    Time-boxed to ~5 seconds. Returns partial results with continuation state.
+
+    Args:
+        folder: Folder to triage (default: INBOX)
+        limit: Max emails to process per call (default: 50)
+        continuation_state: State from previous call to continue processing
+
+    Returns:
+        JSON with remaining emails, signals, and continuation state.
+    """
+    import time
+
+    ctx = get_context()
+    start_time = time.time()
+    timeout = 5.0
+
+    # Parse continuation state
+    offset = 0
+    if continuation_state:
+        try:
+            state = json.loads(continuation_state)
+            offset = state.get("offset", 0)
+        except json.JSONDecodeError:
+            pass
+
+    # Get unread emails
+    emails = email_queries.get_inbox_emails(
+        ctx.db, folder, limit, offset, unread_only=True
+    )
+
+    remaining_emails = []
+    processed_count = 0
+
+    for email in emails:
+        # Check timeout
+        if time.time() - start_time > timeout:
+            break
+
+        processed_count += 1
+
+        # Get full email for signals
+        full_email = email_queries.get_email(ctx.db, email["uid"], folder)
+        if not full_email:
+            continue
+
+        # Analyze signals
+        signals = _analyze_email_signals(full_email, ctx)
+
+        # Add to remaining list
+        remaining_emails.append(
+            {
+                "uid": full_email["uid"],
+                "from_addr": full_email.get("from_addr", ""),
+                "to_addr": full_email.get("to_addr", ""),
+                "cc_addr": full_email.get("cc_addr", ""),
+                "subject": full_email.get("subject", ""),
+                "date": _format_date(full_email.get("date")),
+                "preview": (full_email.get("body_text") or "")[:300],
+                "signals": {
+                    "is_from_vip": signals["is_from_vip"],
+                    "is_addressed_to_me": signals["is_addressed_to_me"],
+                    "mentions_my_name": signals["mentions_my_name"],
+                    "has_question": signals["has_question"],
+                    "mentions_deadline": signals["mentions_deadline"],
+                    "mentions_meeting": signals["mentions_meeting"],
+                    "has_attachments": signals["has_attachments"],
+                },
+            }
+        )
+
+    # Determine if we have more to process
+    has_more = processed_count >= limit and time.time() - start_time < timeout
+    status = "partial" if has_more else "complete"
+
+    new_continuation_state = None
+    if has_more:
+        new_continuation_state = json.dumps({"offset": offset + processed_count})
+
+    result = {
+        "status": status,
+        "remaining_emails": remaining_emails,
+        "has_more": has_more,
+        "continuation_state": new_continuation_state,
+        "processed_count": processed_count,
+    }
+
+    return json.dumps(result, indent=2)
+
+
+# =============================================================================
 # Helper Functions
 # =============================================================================
 
@@ -606,4 +948,7 @@ READ_ONLY_TOOLS = [
     list_calendar_events,
     get_calendar_availability,
     create_draft_reply,
+    quick_clean_inbox,
+    triage_priority_emails,
+    triage_remaining_emails,
 ]

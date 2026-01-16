@@ -327,6 +327,98 @@ def execute_clean_batch(uids: list[int], folder: str = "INBOX") -> str:
     return result
 
 
+@tool
+def process_email(
+    uid: int,
+    folder: str,
+    actions: dict,
+) -> str:
+    """Execute combined actions on an email atomically.
+
+    ⚠️ MUTATION: Requires user confirmation before execution.
+
+    Args:
+        uid: UID of the email to process
+        folder: Folder containing the email
+        actions: Dict with:
+            - mark_read: bool (optional)
+            - labels_add: list[str] (optional)
+            - labels_remove: list[str] (optional)
+            - move_to: str (optional, folder name)
+
+    Returns:
+        Confirmation message with all actions performed.
+    """
+    ctx = get_context()
+
+    # Verify email exists
+    email = email_queries.get_email(ctx.db, uid, folder)
+    if not email:
+        return f"Email UID {uid} not found in {folder}."
+
+    performed_actions = []
+    errors = []
+
+    try:
+        # Mark as read
+        if actions.get("mark_read") is not None:
+            try:
+                if actions["mark_read"]:
+                    ctx.engine.mark_read(uid, folder)
+                    email_queries.mark_email_read(ctx.db, uid, folder, is_read=True)
+                    performed_actions.append("✅ Marked as read")
+                else:
+                    ctx.engine.mark_unread(uid, folder)
+                    email_queries.mark_email_read(ctx.db, uid, folder, is_read=False)
+                    performed_actions.append("✅ Marked as unread")
+            except Exception as e:
+                errors.append(f"Mark read/unread failed: {e}")
+
+        # Add labels
+        if actions.get("labels_add"):
+            try:
+                ctx.engine.modify_labels(uid, folder, actions["labels_add"], "add")
+                label_str = ", ".join(actions["labels_add"])
+                performed_actions.append(f"✅ Added labels: {label_str}")
+            except Exception as e:
+                errors.append(f"Add labels failed: {e}")
+
+        # Remove labels
+        if actions.get("labels_remove"):
+            try:
+                ctx.engine.modify_labels(
+                    uid, folder, actions["labels_remove"], "remove"
+                )
+                label_str = ", ".join(actions["labels_remove"])
+                performed_actions.append(f"✅ Removed labels: {label_str}")
+            except Exception as e:
+                errors.append(f"Remove labels failed: {e}")
+
+        # Move email (must be last, as it changes the folder)
+        if actions.get("move_to"):
+            try:
+                destination = actions["move_to"]
+                ctx.engine.move_email(uid, folder, destination)
+                email_queries.delete_email(ctx.db, uid, folder)
+                performed_actions.append(f"✅ Moved to: {destination}")
+            except Exception as e:
+                errors.append(f"Move failed: {e}")
+
+        # Build result message
+        result_lines = [f"Email processed [UID:{uid}] {email['subject'][:50]}"]
+        result_lines.append("\nActions performed:")
+        result_lines.extend(performed_actions)
+
+        if errors:
+            result_lines.append("\n⚠️ Errors encountered:")
+            result_lines.extend(errors)
+
+        return "\n".join(result_lines)
+
+    except Exception as e:
+        return f"Error processing email: {e}"
+
+
 # =============================================================================
 # Export list
 # =============================================================================
@@ -340,4 +432,5 @@ MUTATION_TOOLS = [
     create_calendar_event,
     respond_to_meeting,
     execute_clean_batch,
+    process_email,
 ]
