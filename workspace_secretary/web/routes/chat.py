@@ -14,7 +14,8 @@ from langchain_core.messages import HumanMessage, AIMessage
 from workspace_secretary.web import templates, get_template_context
 from workspace_secretary.web.auth import require_auth, Session
 from workspace_secretary.web.database import get_db
-from workspace_secretary.engine_client import EngineClient, get_engine_client
+from workspace_secretary.engine_client import EngineClient
+from workspace_secretary.web.engine_client import get_engine_url
 from workspace_secretary.assistant import (
     create_assistant_graph,
     get_graph,
@@ -52,7 +53,7 @@ def _ensure_graph_initialized(config: ServerConfig) -> None:
     if not _graph_initialized:
         context = AssistantContext.from_config(
             db=get_db(),
-            engine=get_engine_client(),
+            engine=EngineClient(api_url=get_engine_url()),
             config=config,
         )
         create_assistant_graph(context)
