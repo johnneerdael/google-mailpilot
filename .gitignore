@@ -92,3 +92,11 @@ email_cache.db
 config/email_cache.db
 config/config.yaml
 token.json
+postgres-data/
+.tmp/
+.opencode/
+design_iterations/
+BACKEND_GAPS.md
+config.sample.yaml
+output.yaml
+test_config.yaml
