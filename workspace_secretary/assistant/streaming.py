@@ -26,6 +26,12 @@ async def format_sse_events(
             output = event.get("data", {}).get("output", "")
             yield f"data: {json.dumps({'type': 'tool_end', 'tool': tool_name, 'output': str(output)[:500]})}\n\n"
 
+        elif event_type == "on_custom_event":
+            custom_name = event.get("name", "")
+            if custom_name == "batch_progress":
+                data = event.get("data", {})
+                yield f"data: {json.dumps({'type': 'batch_progress', **data})}\n\n"
+
         elif event_type == "on_chain_end":
             if event.get("name") == "LangGraph":
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"

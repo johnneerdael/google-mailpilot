@@ -43,37 +43,56 @@ logger = logging.getLogger(__name__)
 _graph = None
 
 # System prompt for the assistant
-SYSTEM_PROMPT = """You are a helpful email and calendar assistant for Gmail.
+SYSTEM_PROMPT = """You are an intelligent email secretary for {user_name} ({user_email}).
 
-Your capabilities:
-- Search and read emails from the user's inbox
-- Get email threads and conversation history
-- Provide daily briefings of important emails
-- Check calendar availability and list events
+## Capabilities
+- Search, read, and analyze emails
+- Triage inbox with smart classification (pattern matching + LLM)
 - Create draft replies (safe, no approval needed)
-- Mark emails as read/unread (requires approval)
-- Move emails to folders (requires approval)
-- Modify Gmail labels (requires approval)
-- Send emails (requires approval)
-- Create calendar events (requires approval)
-- Respond to meeting invites (requires approval)
-- Execute batch cleanup operations (requires approval)
+- Apply labels and organize emails (requires approval)
+- Manage calendar events
 
-IMPORTANT RULES (from AGENTS.md):
-1. NEVER send emails without showing the draft first and getting explicit approval
-2. For mutation operations (mark read, move, label, send, create event, etc.), 
-   always explain what you're about to do and wait for user confirmation
-3. Provide signals and context, let the user make final decisions
-4. Respect the user's timezone and working hours for scheduling
-5. When drafting replies, use create_draft_reply which is safe (creates Gmail draft only)
+## CRITICAL: Tool Chaining Workflows
 
-User Context:
-- Email: {user_email}
-- Name: {user_name}
+### /triage - Smart Inbox Triage
+1. Call `triage_inbox()` to classify emails into categories
+2. Results include:
+   - high_confidence (>90%): Auto-apply labels without asking
+   - needs_review (<90%): Show samples, ask for approval
+3. Categories: action-required, fyi, newsletter, notification, cleanup
+4. After triage, call `apply_triage_labels(classifications_json=...)` with the results
+
+### /clean - Inbox Cleanup  
+1. Call `quick_clean_inbox()` to find cleanup candidates
+2. Results include `candidates` array with UIDs
+3. On user approval ("yes", "archive them"), extract UIDs and call:
+   `execute_clean_batch(uids=[list of candidate UIDs])`
+
+### /priority - Priority Emails
+1. Call `triage_inbox()` and filter for `action-required` category
+2. Show only emails needing user response
+3. Offer to draft replies or show full content
+
+## Label Structure
+- Secretary/Action-Required: Direct questions needing response
+- Secretary/FYI: CC'd, informational, no action needed
+- Secretary/Newsletter: Marketing, digests (auto: mark read + archive)
+- Secretary/Notification: Zoom, GitHub, etc (auto: mark read)
+- Secretary/Auto-Cleaned: Archived low-priority
+- Secretary/Waiting: Sent by you, awaiting reply
+- Secretary/Processed: Action taken
+
+## Rules (from AGENTS.md)
+- NEVER send emails without explicit approval
+- High confidence (>90%): Auto-apply labels, report summary only
+- Lower confidence: Show samples, ask before applying actions
+- create_draft_reply is SAFE (creates Gmail draft, doesn't send)
+
+## User Context
 - Timezone: {timezone}
 - Working Hours: {working_hours}
 
-Be concise, helpful, and always prioritize user safety for destructive operations."""
+Be concise. When user says "yes" or "do it", execute the pending action immediately."""
 
 
 def create_llm(config: ServerConfig) -> BaseChatModel:
@@ -183,9 +202,14 @@ def route_after_llm(
 def batch_runner_node(state: AssistantState, config: RunnableConfig) -> dict[str, Any]:
     """Execute batch tools with continuation support.
 
-    Runs ONE iteration of a batch tool, aggregates results, and tracks continuation state.
-    The graph will loop back to this node if has_more=true.
+    Runs the ENTIRE batch operation to completion, aggregating all results.
+    This avoids graph recursion by looping internally until done.
+    Supports up to 2000+ emails by continuing until has_more=false.
+    Emits progress events for UI updates.
     """
+    from langgraph.types import Command
+    from langchain_core.callbacks import dispatch_custom_event
+
     last_message = state["messages"][-1]
 
     if not isinstance(last_message, AIMessage) or not last_message.tool_calls:
@@ -201,12 +225,8 @@ def batch_runner_node(state: AssistantState, config: RunnableConfig) -> dict[str
         return {"batch_status": "complete"}
 
     tool_name = batch_tool_call["name"]
-    tool_args = batch_tool_call["args"].copy()
+    base_args = batch_tool_call["args"].copy()
 
-    if state.get("batch_continuation_state"):
-        tool_args["continuation_state"] = state["batch_continuation_state"]
-
-    tool_fn = None
     from workspace_secretary.assistant.tools_read import (
         quick_clean_inbox,
         triage_priority_emails,
@@ -227,52 +247,105 @@ def batch_runner_node(state: AssistantState, config: RunnableConfig) -> dict[str
         )
         return {"messages": [error_msg], "batch_status": "complete"}
 
-    try:
-        result_str = tool_fn.invoke(tool_args)
-        result = (
-            json.loads(result_str)
-            if result_str.startswith("{")
-            else {"raw": result_str}
-        )
-    except Exception as e:
-        error_msg = ToolMessage(
-            content=f"Batch tool error: {e}",
-            tool_call_id=batch_tool_call["id"],
-        )
-        return {"messages": [error_msg], "batch_status": "complete"}
+    # Run the entire batch operation to completion
+    all_items = []
+    total_processed = 0
+    continuation_state = None
+    iteration = 0
+    max_iterations = 500  # Safety limit for 2000+ emails
+    total_estimate = 0
 
-    current_items = list(state.get("batch_items", []))
-    new_items = result.get("candidates", result.get("emails", []))
-    current_items.extend(new_items)
-
-    processed = state.get("batch_processed_count", 0) + result.get(
-        "processed_count", len(new_items)
+    # Emit start event
+    dispatch_custom_event(
+        "batch_progress",
+        {
+            "tool": tool_name,
+            "status": "starting",
+            "processed": 0,
+            "total_estimate": 0,
+            "items_found": 0,
+            "iteration": 0,
+        },
+        config=config,
     )
-    has_more = result.get("has_more", False)
-    continuation_state = result.get("continuation_state")
 
-    if state.get("batch_cancel_requested"):
-        has_more = False
+    while iteration < max_iterations:
+        iteration += 1
+        tool_args = base_args.copy()
+        if continuation_state:
+            tool_args["continuation_state"] = continuation_state
 
-    if has_more and continuation_state:
-        return {
-            "batch_status": "running",
-            "batch_tool": tool_name,
-            "batch_args": batch_tool_call["args"],
-            "batch_continuation_state": continuation_state,
-            "batch_items": current_items,
-            "batch_processed_count": processed,
-            "batch_total_estimate": result.get("total_available", processed),
-        }
+        try:
+            result_str = tool_fn.invoke(tool_args)
+            result = (
+                json.loads(result_str)
+                if result_str.startswith("{")
+                else {"raw": result_str}
+            )
+        except Exception as e:
+            logger.error(f"Batch tool error on iteration {iteration}: {e}")
+            dispatch_custom_event(
+                "batch_progress",
+                {
+                    "tool": tool_name,
+                    "status": "error",
+                    "error": str(e),
+                    "processed": total_processed,
+                    "items_found": len(all_items),
+                    "iteration": iteration,
+                },
+                config=config,
+            )
+            error_msg = ToolMessage(
+                content=f"Batch tool error: {e}",
+                tool_call_id=batch_tool_call["id"],
+            )
+            return {"messages": [error_msg], "batch_status": "complete"}
 
-    summary = f"Batch operation complete. Found {len(current_items)} items after processing {processed} emails."
+        # Aggregate results - check all possible keys from different tools
+        new_items = result.get(
+            "candidates", result.get("priority_emails", result.get("emails", []))
+        )
+        all_items.extend(new_items)
+        total_processed += result.get("processed_count", len(new_items))
+        total_estimate = (
+            result.get("total_available", total_estimate) or total_processed
+        )
+
+        has_more = result.get("has_more", False)
+        continuation_state = result.get("continuation_state")
+
+        # Emit progress event
+        dispatch_custom_event(
+            "batch_progress",
+            {
+                "tool": tool_name,
+                "status": "running" if has_more else "complete",
+                "processed": total_processed,
+                "total_estimate": total_estimate,
+                "items_found": len(all_items),
+                "has_more": has_more,
+                "iteration": iteration,
+            },
+            config=config,
+        )
+
+        logger.info(
+            f"Batch iteration {iteration}: +{len(new_items)} items, total={len(all_items)}, has_more={has_more}"
+        )
+
+        if not has_more or not continuation_state:
+            break
+
+    # Return complete results to LLM
     tool_result = ToolMessage(
         content=json.dumps(
             {
                 "status": "complete",
-                "total_items": len(current_items),
-                "processed_count": processed,
-                "items": current_items,
+                "total_items": len(all_items),
+                "processed_count": total_processed,
+                "iterations": iteration,
+                "items": all_items,
             }
         ),
         tool_call_id=batch_tool_call["id"],
@@ -290,9 +363,7 @@ def batch_runner_node(state: AssistantState, config: RunnableConfig) -> dict[str
 
 
 def route_after_batch(state: AssistantState) -> str:
-    """Route after batch runner - continue looping or return to LLM."""
-    if state.get("batch_status") == "running":
-        return "batch_runner"
+    """Route after batch runner - always return to LLM with complete results."""
     return "llm"
 
 
@@ -346,7 +417,6 @@ def create_assistant_graph(
         "batch_runner",
         route_after_batch,
         {
-            "batch_runner": "batch_runner",
             "llm": "llm",
         },
     )
@@ -403,7 +473,8 @@ async def invoke_graph(
         "configurable": {
             "thread_id": thread_id,
             "llm": graph.llm,
-        }
+        },
+        "recursion_limit": 2000,  # Allow many iterations for batch operations (2000+ emails)
     }
 
     if resume:
@@ -437,7 +508,8 @@ async def stream_graph(
         "configurable": {
             "thread_id": thread_id,
             "llm": graph.llm,
-        }
+        },
+        "recursion_limit": 500,  # Allow many iterations for batch operations (1000+ emails)
     }
 
     input_state = None if resume else state

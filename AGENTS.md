@@ -168,7 +168,7 @@ This system is designed for **Gmail via IMAP/SMTP + Google Calendar API**.
 - IMAP for email reading/sync (RFC-compliant with CONDSTORE, IDLE)
 - SMTP for email sending
 - Google Calendar API for scheduling (`get_calendar_availability`, `create_calendar_event`)
-- Smart Labels: `Secretary/Priority`, `Secretary/Action-Required`, `Secretary/Processed`, `Secretary/Calendar`, `Secretary/Newsletter`, `Secretary/Waiting`
+- Smart Labels: `Secretary/Action-Required`, `Secretary/FYI`, `Secretary/Newsletter`, `Secretary/Notification`, `Secretary/Waiting`, `Secretary/Auto-Cleaned`, `Secretary/Processed`
 
 ### Not Supported
 - Non-Gmail providers (Outlook, Yahoo, etc.)
@@ -234,13 +234,35 @@ AI: ✅ Reverts to standard Draft-Review-Send pattern (shows draft first)
 3. Emails are moved to `Secretary/Auto-Cleaned` (recoverable, not deleted)
 4. Time-boxed (5s default) prevents MCP timeout
 
-### Triage Tools (Time-Boxed with Continuation) 🔵
-- `triage_priority_emails` - Identifies high-priority emails, moves to `Secretary/Priority`
-- `triage_remaining_emails` - Processes remaining emails, moves to `Secretary/Waiting`
+### Triage Tools (Smart Classification) 🔵
+- `triage_inbox` - Smart triage with pattern matching + LLM classification
+- `apply_triage_labels` - Apply labels from triage results (mutation)
+- `get_triage_summary` - Format triage results for display
 
-**Priority Criteria** (for `triage_priority_emails`):
-1. User in To: field with <5 total recipients, OR
-2. User in To: field with <15 recipients AND first/last name mentioned in body
+**Smart Triage Pipeline:**
+1. Stage 1 (Fast): Pattern matching for newsletters/notifications (>90% confidence)
+2. Stage 2 (Signals): Analyze is_from_vip, has_question, is_addressed_to_me
+3. Stage 3 (LLM): Batch unclear emails to LLM for classification
+
+**Categories:**
+| Category | Label | Auto-Actions |
+|----------|-------|--------------|
+| action-required | Secretary/Action-Required | None (keep unread) |
+| fyi | Secretary/FYI | Mark read |
+| newsletter | Secretary/Newsletter | Mark read + archive |
+| notification | Secretary/Notification | Mark read |
+| cleanup | Secretary/Auto-Cleaned | Mark read + archive |
+
+**Confidence-Based Approval:**
+| Confidence | Behavior |
+|------------|----------|
+| >90% | Auto-apply labels + actions, show summary only |
+| 50-90% | Apply label, show samples for action approval |
+| <50% | Show with preview, ask for classification |
+
+**Legacy Triage Tools:**
+- `triage_priority_emails` - (deprecated) Use `triage_inbox` instead
+- `triage_remaining_emails` - (deprecated) Use `triage_inbox` instead
 
 **Time-Boxed Continuation Pattern:**
 All batch tools use the same continuation pattern to avoid MCP timeouts:

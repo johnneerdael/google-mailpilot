@@ -39,6 +39,20 @@ class ConversationStarter:
 # Default conversation starters
 CONVERSATION_STARTERS = [
     ConversationStarter(
+        id="triage_inbox",
+        label="/triage",
+        prompt="Triage my inbox - classify all unread emails into categories (action-required, fyi, newsletter, notification) and apply appropriate labels. Auto-apply for high confidence, ask me about the rest.",
+        icon="tag",
+        description="Smart triage with auto-labeling",
+    ),
+    ConversationStarter(
+        id="action_required",
+        label="/action",
+        prompt="Show me emails that need my response or action. Filter for action-required category only.",
+        icon="alert-circle",
+        description="Emails requiring your response",
+    ),
+    ConversationStarter(
         id="morning_brief",
         label="Morning Brief",
         prompt="Give me my morning briefing for today. Show me high-priority unread emails and my calendar for the day.",
@@ -47,15 +61,15 @@ CONVERSATION_STARTERS = [
     ),
     ConversationStarter(
         id="cleanup_inbox",
-        label="Cleanup Inbox",
-        prompt="Help me clean up my inbox. Find newsletters, automated notifications, and low-priority emails that I can archive.",
+        label="/clean",
+        prompt="Clean my inbox - identify emails I can safely archive using quick_clean_inbox, then archive them with execute_clean_batch.",
         icon="trash",
-        description="Find emails safe to archive or delete",
+        description="Find and archive low-priority emails",
     ),
     ConversationStarter(
         id="prioritize_mailbox",
-        label="Prioritize Mailbox",
-        prompt="Identify high-priority unread emails that need my attention. Look for emails where I'm directly addressed, from VIP senders, or with urgent deadlines.",
+        label="/priority",
+        prompt="Identify high-priority unread emails that need my attention using triage_inbox. Focus on action-required category.",
         icon="flag",
         description="Find emails requiring immediate attention",
     ),

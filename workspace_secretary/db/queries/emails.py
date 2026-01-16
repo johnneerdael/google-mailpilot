@@ -445,7 +445,7 @@ def get_inbox_emails(
     where_clause = " AND ".join(filters)
 
     sql = f"""
-        SELECT uid, folder, from_addr, subject, 
+        SELECT uid, folder, from_addr, to_addr, cc_addr, subject, 
                LEFT(body_text, 200) as preview, date, is_unread, has_attachments,
                gmail_labels
         FROM emails 

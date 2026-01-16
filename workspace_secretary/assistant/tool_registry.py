@@ -7,6 +7,7 @@ from typing import Callable, Literal, NamedTuple
 
 from workspace_secretary.assistant.tools_read import READ_ONLY_TOOLS
 from workspace_secretary.assistant.tools_mutation import MUTATION_TOOLS
+from workspace_secretary.assistant.tools_triage import TRIAGE_TOOLS
 
 
 class ToolInfo(NamedTuple):
@@ -17,7 +18,12 @@ class ToolInfo(NamedTuple):
     description: str
 
 
-BATCH_TOOLS = {"quick_clean_inbox", "triage_priority_emails", "triage_remaining_emails"}
+BATCH_TOOLS = {
+    "quick_clean_inbox",
+    "triage_priority_emails",
+    "triage_remaining_emails",
+    "triage_inbox",
+}
 
 TOOL_REGISTRY: dict[str, ToolInfo] = {
     "list_folders": ToolInfo("list_folders", "readonly", "List email folders"),
@@ -51,6 +57,15 @@ TOOL_REGISTRY: dict[str, ToolInfo] = {
     ),
     "triage_remaining_emails": ToolInfo(
         "triage_remaining_emails", "batch", "Process remaining emails"
+    ),
+    "triage_inbox": ToolInfo(
+        "triage_inbox", "batch", "Smart inbox triage with LLM classification"
+    ),
+    "apply_triage_labels": ToolInfo(
+        "apply_triage_labels", "mutation", "Apply labels from triage results"
+    ),
+    "get_triage_summary": ToolInfo(
+        "get_triage_summary", "readonly", "Format triage results for display"
     ),
     "check_emails_needing_response": ToolInfo(
         "check_emails_needing_response", "readonly", "Find emails needing response"
@@ -100,19 +115,24 @@ def get_tool_category(tool_name: str) -> str:
     return info.category if info else "unknown"
 
 
-def get_all_tools() -> list[Callable]:
+def get_all_tools() -> list:
     """Get all available tools."""
-    return READ_ONLY_TOOLS + MUTATION_TOOLS
+    return READ_ONLY_TOOLS + MUTATION_TOOLS + TRIAGE_TOOLS
 
 
-def get_readonly_tools() -> list[Callable]:
+def get_readonly_tools() -> list:
     """Get read-only tools only."""
     return READ_ONLY_TOOLS
 
 
-def get_mutation_tools() -> list[Callable]:
+def get_mutation_tools() -> list:
     """Get mutation tools only."""
     return MUTATION_TOOLS
+
+
+def get_triage_tools() -> list:
+    """Get triage tools."""
+    return TRIAGE_TOOLS
 
 
 def get_tool_names_by_category(category: str) -> list[str]:

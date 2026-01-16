@@ -10,17 +10,17 @@
             <h1 class="text-lg font-semibold text-default">Piper</h1>
         </div>
         <div class="flex items-center gap-2">
-            <button onclick="runQuickAction('priority')" class="quick-action-btn group relative" 
+            <button type="button" onclick="runQuickAction('priority')" class="quick-action-btn group relative" 
                 title="Find urgent emails first - questions, deadlines, VIPs. Run this before Clean!">
                 ⚡ Priority
                 <span class="tooltip">Identify emails needing your attention</span>
             </button>
-            <button onclick="runQuickAction('clean')" class="quick-action-btn group relative" 
+            <button type="button" onclick="runQuickAction('clean')" class="quick-action-btn group relative" 
                 title="Archive low-priority emails (newsletters, CCs). Best after running Priority.">
                 🧹 Clean
                 <span class="tooltip">Archive newsletters &amp; noise</span>
             </button>
-            <button onclick="runQuickAction('briefing')" class="quick-action-btn group relative" 
+            <button type="button" onclick="runQuickAction('briefing')" class="quick-action-btn group relative" 
                 title="Daily summary of unread emails and calendar events.">
                 📬 Briefing
                 <span class="tooltip">Morning email summary</span>
@@ -63,16 +63,16 @@
             </div>
             
             <div class="mt-6 flex flex-wrap justify-center gap-2">
-                <button onclick="sendSuggestion('What are my unread emails?')" class="suggestion-btn">
+                <button type="button" onclick="sendSuggestion('What are my unread emails?')" class="suggestion-btn">
                     📬 Unread emails
                 </button>
-                <button onclick="sendSuggestion('Summarize my inbox from today')" class="suggestion-btn">
+                <button type="button" onclick="sendSuggestion('Summarize my inbox from today')" class="suggestion-btn">
                     📋 Summarize today
                 </button>
-                <button onclick="sendSuggestion('What meetings do I have this week?')" class="suggestion-btn">
+                <button type="button" onclick="sendSuggestion('What meetings do I have this week?')" class="suggestion-btn">
                     📅 This week's meetings
                 </button>
-                <button onclick="sendSuggestion('Are there any urgent emails I should respond to?')" class="suggestion-btn">
+                <button type="button" onclick="sendSuggestion('Are there any urgent emails I should respond to?')" class="suggestion-btn">
                     🚨 Urgent emails
                 </button>
             </div>
@@ -261,7 +261,10 @@ function setLoading(loading) {
 }
 
 async function sendMessage(event) {
-    event.preventDefault();
+    // Only call preventDefault on real form submit events
+    if (event && event.preventDefault) {
+        event.preventDefault();
+    }
     
     const message = messageInput.value.trim();
     if (!message) return;
@@ -387,8 +390,8 @@ async function sendMessage(event) {
 
 function sendSuggestion(text) {
     messageInput.value = text;
-    // Call sendMessage directly - dispatchEvent('submit') is deprecated
-    sendMessage(new Event('submit'));
+    // Call sendMessage directly without event (no form submission to prevent)
+    sendMessage();
 }
 
 function showApprovalDialog(tool, args) {
@@ -541,8 +544,8 @@ function runQuickAction(action) {
     const prompt = prompts[action];
     if (prompt) {
         messageInput.value = prompt;
-        // Call sendMessage directly - dispatchEvent('submit') is deprecated
-        sendMessage(new Event('submit'));
+        // Call sendMessage directly without event (no form submission to prevent)
+        sendMessage();
     }
 }
 
@@ -805,7 +808,8 @@ function executeSlashCommand(action) {
     const prompt = commands[action];
     if (prompt) {
         messageInput.value = prompt;
-        chatForm.dispatchEvent(new Event('submit'));
+        // Call sendMessage directly without event (no form submission to prevent)
+        sendMessage();
     }
 }
 
