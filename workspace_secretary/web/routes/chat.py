@@ -413,6 +413,77 @@ async def get_conversation_starters(
     return {"starters": get_starters()}
 
 
+@router.get("/api/chat/greeting")
+async def get_dynamic_greeting(
+    request: Request,
+    session: Session = Depends(require_auth),
+):
+    """Generate a dynamic, personalized greeting using the configured LLM."""
+    from workspace_secretary.web.routes.analysis import get_config
+    from workspace_secretary.web.llm_client import get_llm_client
+    import hashlib
+    from datetime import datetime
+    import random
+
+    session_id = request.query_params.get("session_id", "")
+    config = get_config()
+
+    hour = datetime.now().hour
+    time_of_day = "morning" if hour < 12 else "afternoon" if hour < 17 else "evening"
+
+    user_name = "there"
+    if config and config.identity:
+        user_name = (
+            config.identity.full_name or config.identity.email.split("@")[0] or "there"
+        )
+        first_name = user_name.split()[0] if user_name else "there"
+    else:
+        first_name = "there"
+
+    fallback_greetings = [
+        f"Hey {first_name}, ready to tackle your inbox together!",
+        f"Good {time_of_day} {first_name}! Your email co-pilot is standing by.",
+        f"Hi {first_name}! Let's see what's waiting in your inbox.",
+        f"Welcome back {first_name}! Ready to sort through those emails?",
+        f"{first_name}, your inbox awaits! Where shall we start?",
+        f"Good {time_of_day}! Let me help you stay on top of your emails.",
+    ]
+
+    if not config:
+        return {"greeting": random.choice(fallback_greetings)}
+
+    try:
+        client = get_llm_client()
+        if not client or not client.is_configured:
+            return {"greeting": random.choice(fallback_greetings)}
+
+        session_seed = hashlib.md5(session_id.encode()).hexdigest()[:8]
+
+        prompt = f"""Generate ONE friendly greeting (8-15 words) from Piper (an email assistant) to {first_name} this {time_of_day}.
+
+Style: warm, helpful, slightly playful. Mention inbox or emails.
+Seed for variety: {session_seed}
+
+Examples:
+- "Hey {first_name}, ready to sort through your inbox together?"
+- "Good {time_of_day} {first_name}! Your emails await, let's dive in!"
+
+Output ONLY the greeting text, no quotes, no explanation."""
+
+        greeting = await client.generate_simple(prompt, max_tokens=50)
+
+        if greeting and len(greeting.strip()) > 25:
+            greeting = greeting.strip().strip('"').strip("'")
+            if len(greeting) > 80:
+                greeting = greeting[:80].rsplit(" ", 1)[0] + "..."
+            return {"greeting": greeting}
+
+    except Exception as e:
+        logger.warning(f"Greeting generation failed: {e}")
+
+    return {"greeting": random.choice(fallback_greetings)}
+
+
 @router.post("/api/chat/batch/cancel")
 async def cancel_batch(
     request: Request,

@@ -52,6 +52,9 @@ TOOL_REGISTRY: dict[str, ToolInfo] = {
     "triage_remaining_emails": ToolInfo(
         "triage_remaining_emails", "batch", "Process remaining emails"
     ),
+    "check_emails_needing_response": ToolInfo(
+        "check_emails_needing_response", "readonly", "Find emails needing response"
+    ),
     "mark_as_read": ToolInfo("mark_as_read", "mutation", "Mark email as read"),
     "mark_as_unread": ToolInfo("mark_as_unread", "mutation", "Mark email as unread"),
     "move_email": ToolInfo("move_email", "mutation", "Move email to folder"),

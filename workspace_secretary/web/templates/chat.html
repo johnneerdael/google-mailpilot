@@ -1,23 +1,29 @@
 {% extends "base.html" %}
 
-{% block title %}AI Assistant - Secretary{% endblock %}
+{% block title %}Piper - Email Assistant{% endblock %}
 
 {% block content %}
 <div class="flex flex-col h-[calc(100vh-4rem)]">
     <div class="flex items-center justify-between px-6 py-3 border-b border-border">
         <div class="flex items-center gap-3">
-            <span class="text-2xl">🤖</span>
-            <h1 class="text-lg font-semibold text-default">AI Assistant</h1>
+            <span class="text-2xl">🐦</span>
+            <h1 class="text-lg font-semibold text-default">Piper</h1>
         </div>
         <div class="flex items-center gap-2">
-            <button onclick="runQuickAction('clean')" class="quick-action-btn" title="Clean inbox">
-                🧹 Clean
-            </button>
-            <button onclick="runQuickAction('priority')" class="quick-action-btn" title="Triage priority">
+            <button onclick="runQuickAction('priority')" class="quick-action-btn group relative" 
+                title="Find urgent emails first - questions, deadlines, VIPs. Run this before Clean!">
                 ⚡ Priority
+                <span class="tooltip">Identify emails needing your attention</span>
             </button>
-            <button onclick="runQuickAction('briefing')" class="quick-action-btn" title="Morning briefing">
+            <button onclick="runQuickAction('clean')" class="quick-action-btn group relative" 
+                title="Archive low-priority emails (newsletters, CCs). Best after running Priority.">
+                🧹 Clean
+                <span class="tooltip">Archive newsletters &amp; noise</span>
+            </button>
+            <button onclick="runQuickAction('briefing')" class="quick-action-btn group relative" 
+                title="Daily summary of unread emails and calendar events.">
                 📬 Briefing
+                <span class="tooltip">Morning email summary</span>
             </button>
             <div class="w-px h-6 bg-border mx-1"></div>
             <button 
@@ -29,11 +35,32 @@
         </div>
     </div>
 
-    <div id="chat-messages" class="flex-1 overflow-y-auto px-6 py-4 space-y-4 bg-canvas">
-        <div class="text-center text-muted py-8" id="empty-state">
-            <div class="text-4xl mb-3">💬</div>
-            <p class="text-lg">How can I help you today?</p>
-            <p class="text-sm mt-2">Ask me about your emails, calendar, or let me help draft replies.</p>
+    <div id="chat-messages" class="flex-1 overflow-y-auto px-6 py-4 pb-24 space-y-4 bg-canvas">
+        <div class="text-center py-8" id="empty-state">
+            <div class="text-5xl mb-3">🐦</div>
+            <h2 class="text-xl font-semibold text-default" id="greeting-name">Hey, I'm Piper!</h2>
+            <p class="text-muted mt-1" id="greeting-text">Your email co-pilot, ready to help.</p>
+            
+            <div class="mt-6 bg-surface-dim rounded-xl p-4 text-left max-w-md mx-auto border border-border">
+                <h3 class="font-medium text-default mb-2 text-sm">📚 Quick Start Guide</h3>
+                <ul class="text-sm text-muted space-y-1.5">
+                    <li class="flex items-start gap-2">
+                        <span class="text-primary">1.</span>
+                        <span><strong>⚡ Priority</strong> first — find urgent emails</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-primary">2.</span>
+                        <span><strong>🧹 Clean</strong> second — archive the noise</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-primary">3.</span>
+                        <span><strong>📬 Briefing</strong> anytime — daily summary</span>
+                    </li>
+                </ul>
+                <p class="text-xs text-muted mt-3 pt-3 border-t border-border italic">
+                    💡 Type <code class="bg-surface px-1 rounded">/</code> for commands
+                </p>
+            </div>
             
             <div class="mt-6 flex flex-wrap justify-center gap-2">
                 <button onclick="sendSuggestion('What are my unread emails?')" class="suggestion-btn">
@@ -48,7 +75,27 @@
                 <button onclick="sendSuggestion('Are there any urgent emails I should respond to?')" class="suggestion-btn">
                     🚨 Urgent emails
                 </button>
+            </div>
         </div>
+    </div>
+    
+    <!-- Chat Input Form -->
+    <div class="fixed bottom-0 left-0 right-0 bg-surface border-t border-border px-6 py-4">
+        <form id="chat-form" onsubmit="sendMessage(event)" class="flex gap-3 max-w-4xl mx-auto">
+            <div class="flex-1 relative">
+                <input 
+                    type="text" 
+                    id="message-input" 
+                    placeholder="Ask about your emails, or type / for commands..."
+                    class="w-full px-4 py-3 bg-canvas border border-border rounded-xl focus:outline-none focus:ring-2 focus:ring-primary focus:border-primary text-default placeholder-muted"
+                    autocomplete="off"
+                >
+                <div id="slash-menu" class="hidden absolute bottom-full left-0 right-0 mb-2 bg-surface border border-border rounded-lg shadow-lg max-h-64 overflow-y-auto"></div>
+            </div>
+            <button type="submit" id="send-btn" class="px-6 py-3 bg-primary text-primary-foreground rounded-xl hover:bg-primary/90 transition-colors font-medium">
+                Send
+            </button>
+        </form>
     </div>
 </div>
 
@@ -83,7 +130,15 @@
 
 <style>
 .quick-action-btn {
-    @apply px-3 py-1.5 text-sm bg-surface-dim hover:bg-primary hover:text-primary-foreground rounded-lg transition-colors border border-border;
+    @apply px-3 py-1.5 text-sm bg-surface-dim hover:bg-primary hover:text-primary-foreground rounded-lg transition-colors border border-border relative;
+}
+
+.quick-action-btn .tooltip {
+    @apply invisible opacity-0 absolute left-1/2 -translate-x-1/2 top-full mt-2 px-3 py-2 text-xs bg-surface border border-border rounded-lg shadow-lg whitespace-nowrap transition-all z-50;
+}
+
+.quick-action-btn:hover .tooltip {
+    @apply visible opacity-100;
 }
 
 .suggestion-btn {
@@ -465,11 +520,6 @@ async function loadHistory() {
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    loadHistory();
-    messageInput.focus();
-});
-
 document.addEventListener('keydown', (e) => {
     if (e.key === '/' && document.activeElement !== messageInput) {
         e.preventDefault();
@@ -665,5 +715,155 @@ async function executeApprovedBatch() {
         addMessage('assistant', `❌ Error: ${error.message}`);
     }
 }
+
+const SLASH_COMMANDS = [
+    { cmd: '/priority', desc: 'Find urgent emails needing attention', prereq: null, action: 'priority' },
+    { cmd: '/clean', desc: 'Archive newsletters & low-priority emails', prereq: '/priority', action: 'clean' },
+    { cmd: '/briefing', desc: 'Daily summary of emails & calendar', prereq: null, action: 'briefing' },
+    { cmd: '/remaining', desc: 'Process emails needing human decision', prereq: '/priority', action: 'remaining' },
+    { cmd: '/drafts', desc: 'Check emails that need a reply', prereq: null, action: 'drafts' },
+    { cmd: '/unread', desc: 'Show all unread emails', prereq: null, action: 'unread' },
+];
+
+const slashMenu = document.getElementById('slash-menu');
+
+function showSlashMenu(filter) {
+    const filtered = SLASH_COMMANDS.filter(c => c.cmd.slice(1).startsWith(filter.toLowerCase()));
+    
+    if (filtered.length === 0) {
+        hideSlashMenu();
+        return;
+    }
+    
+    slashMenu.innerHTML = filtered.map((c, i) => `
+        <div class="slash-item px-4 py-2 hover:bg-surface-hover cursor-pointer ${i === 0 ? 'bg-surface-hover' : ''}" 
+             data-cmd="${c.cmd}" data-action="${c.action}" data-prereq="${c.prereq || ''}">
+            <div class="flex items-center justify-between">
+                <span class="font-mono text-sm text-primary">${c.cmd}</span>
+                ${c.prereq ? '<span class="text-xs text-warning">⚠️ Run ' + c.prereq + ' first</span>' : ''}
+            </div>
+            <p class="text-xs text-muted">${c.desc}</p>
+        </div>
+    `).join('');
+    
+    slashMenu.classList.remove('hidden');
+    
+    slashMenu.querySelectorAll('.slash-item').forEach(item => {
+        item.addEventListener('click', () => selectSlashCommand(item.dataset.cmd, item.dataset.action, item.dataset.prereq));
+    });
+}
+
+function hideSlashMenu() {
+    slashMenu.classList.add('hidden');
+}
+
+function selectSlashCommand(cmd, action, prereq) {
+    hideSlashMenu();
+    
+    if (prereq && prereq !== 'null') {
+        showPrereqPrompt(cmd, action, prereq);
+    } else {
+        executeSlashCommand(action);
+    }
+}
+
+function showPrereqPrompt(cmd, action, prereq) {
+    hideEmptyState();
+    
+    const div = document.createElement('div');
+    div.className = 'message-assistant';
+    div.innerHTML = `
+        <div class="mb-3">
+            <strong>⚠️ Recommended Order</strong>
+            <p class="text-sm text-muted mt-1">For best results, run <code class="bg-surface px-1 rounded">${prereq}</code> before <code class="bg-surface px-1 rounded">${cmd}</code>.</p>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="executeSlashCommand('${prereq.slice(1)}'); this.closest('.message-assistant').remove();" class="btn-primary px-4 py-2 text-sm">
+                Run ${prereq} first
+            </button>
+            <button onclick="executeSlashCommand('${action}'); this.closest('.message-assistant').remove();" class="px-4 py-2 text-sm bg-surface-dim hover:bg-surface-hover rounded-lg border border-border">
+                Continue with ${cmd}
+            </button>
+        </div>
+    `;
+    messagesContainer.appendChild(div);
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function executeSlashCommand(action) {
+    const commands = {
+        'priority': 'Triage my inbox and identify priority emails using triage_priority_emails',
+        'clean': 'Clean my inbox - identify emails I can safely archive using quick_clean_inbox',
+        'briefing': 'Give me my morning briefing with unread emails and today\'s calendar',
+        'remaining': 'Process remaining emails that need my decision using triage_remaining_emails',
+        'drafts': 'Check for emails that need a response using check_emails_needing_response',
+        'unread': 'What are my unread emails?',
+    };
+    
+    const prompt = commands[action];
+    if (prompt) {
+        messageInput.value = prompt;
+        chatForm.dispatchEvent(new Event('submit'));
+    }
+}
+
+messageInput.addEventListener('input', (e) => {
+    const val = e.target.value;
+    if (val.startsWith('/')) {
+        showSlashMenu(val.slice(1));
+    } else {
+        hideSlashMenu();
+    }
+});
+
+messageInput.addEventListener('keydown', (e) => {
+    if (!slashMenu.classList.contains('hidden')) {
+        const items = slashMenu.querySelectorAll('.slash-item');
+        const current = slashMenu.querySelector('.slash-item.bg-surface-hover');
+        const currentIdx = Array.from(items).indexOf(current);
+        
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            current?.classList.remove('bg-surface-hover');
+            items[(currentIdx + 1) % items.length]?.classList.add('bg-surface-hover');
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            current?.classList.remove('bg-surface-hover');
+            items[(currentIdx - 1 + items.length) % items.length]?.classList.add('bg-surface-hover');
+        } else if (e.key === 'Enter' && current) {
+            e.preventDefault();
+            selectSlashCommand(current.dataset.cmd, current.dataset.action, current.dataset.prereq);
+        } else if (e.key === 'Escape') {
+            hideSlashMenu();
+        }
+    }
+});
+
+const SESSION_KEY = 'piper_session_id';
+let piperSessionId = localStorage.getItem(SESSION_KEY);
+if (!piperSessionId) {
+    piperSessionId = 'piper-' + Date.now() + '-' + Math.random().toString(36).slice(2, 9);
+    localStorage.setItem(SESSION_KEY, piperSessionId);
+}
+
+async function loadDynamicGreeting() {
+    try {
+        const response = await fetch('/api/chat/greeting?session_id=' + encodeURIComponent(piperSessionId));
+        if (response.ok) {
+            const data = await response.json();
+            if (data.greeting) {
+                document.getElementById('greeting-text').textContent = data.greeting;
+            }
+        }
+    } catch (e) {
+        console.log('Using default greeting');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadHistory();
+    loadDynamicGreeting();
+    if (messageInput) messageInput.focus();
+});
 </script>
 {% endblock %}

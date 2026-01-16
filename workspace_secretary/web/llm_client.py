@@ -1028,6 +1028,36 @@ Subject: Re: {subject}
 
         yield "\n\nReached maximum tool execution rounds."
 
+    async def generate_simple(self, prompt: str, max_tokens: int = 1000) -> str | None:
+        """Generate a simple text response without tool calls or conversation history."""
+        if not self.is_configured or not self.config:
+            return None
+
+        try:
+            if self.config.api_format == WebApiFormat.GEMINI:
+                if not self._gemini_client:
+                    return None
+
+                from google.genai import types as gt
+
+                response = await self._gemini_client.aio.models.generate_content(
+                    model=self.config.model,
+                    contents=[prompt],
+                    config=gt.GenerateContentConfig(
+                        temperature=0.9,
+                        max_output_tokens=max_tokens,
+                    ),
+                )
+
+                if response.text:
+                    return response.text.strip()
+
+            return None
+
+        except Exception as e:
+            logger.warning(f"Simple generation failed: {e}")
+            return None
+
     async def chat(self, session: ChatSession, user_message: str) -> str:
         if not self.is_configured:
             return (

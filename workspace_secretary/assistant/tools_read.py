@@ -8,13 +8,18 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
 
 from workspace_secretary.assistant.context import get_context
 from workspace_secretary.db.queries import emails as email_queries
+from workspace_secretary.signals import analyze_signals as shared_analyze_signals
+from workspace_secretary.signals import compute_priority, format_signals_display
+
+if TYPE_CHECKING:
+    from workspace_secretary.assistant.context import AssistantContext
 
 logger = logging.getLogger(__name__)
 
@@ -865,50 +870,17 @@ def _format_date(date_val: Any) -> str:
 def _analyze_email_signals(
     email: dict[str, Any], ctx: "AssistantContext"
 ) -> dict[str, Any]:
-    """Analyze email for actionable signals."""
-    from_addr = (email.get("from_addr") or "").lower()
-    to_addr = (email.get("to_addr") or "").lower()
-    cc_addr = (email.get("cc_addr") or "").lower()
-    body = email.get("body_text") or ""
-    subject = email.get("subject") or ""
+    """Analyze email for actionable signals using shared signal module.
 
-    # Check VIP status
-    is_from_vip = any(vip.lower() in from_addr for vip in ctx.vip_senders)
-
-    # Check if directly addressed
-    is_addressed_to_me = ctx.user_email.lower() in to_addr
-
-    # Check if name mentioned in body
-    mentions_my_name = False
-    if ctx.identity.full_name:
-        mentions_my_name = ctx.identity.matches_name_part(body)
-
-    # Check for questions
-    has_question = bool(
-        re.search(r"\?|can you|could you|would you|please|do you|are you", body.lower())
+    This is a thin wrapper that calls the shared analyze_signals function
+    with the context's user info and VIP list.
+    """
+    return shared_analyze_signals(
+        email=email,
+        user_email=ctx.user_email,
+        identity=ctx.identity,
+        vip_senders=ctx.vip_senders,
     )
-
-    # Check for deadlines
-    deadline_patterns = r"asap|urgent|eod|end of day|by (monday|tuesday|wednesday|thursday|friday|tomorrow|today)|deadline"
-    mentions_deadline = bool(
-        re.search(deadline_patterns, body.lower() + subject.lower())
-    )
-
-    # Check for meeting mentions
-    meeting_patterns = r"meet|calendar|schedule|invite|call|zoom|teams|video"
-    mentions_meeting = bool(re.search(meeting_patterns, body.lower() + subject.lower()))
-
-    return {
-        "is_from_vip": is_from_vip,
-        "is_addressed_to_me": is_addressed_to_me,
-        "mentions_my_name": mentions_my_name,
-        "has_question": has_question,
-        "mentions_deadline": mentions_deadline,
-        "mentions_meeting": mentions_meeting,
-        "is_unread": email.get("is_unread", False),
-        "is_important": email.get("is_important", False),
-        "has_attachments": email.get("has_attachments", False),
-    }
 
 
 def _format_signals(signals: dict[str, Any]) -> str:
@@ -938,6 +910,99 @@ def _format_signals(signals: dict[str, Any]) -> str:
 # Export list
 # =============================================================================
 
+
+@tool
+def check_emails_needing_response(
+    folder: str = "INBOX",
+    limit: int = 20,
+) -> str:
+    """Check for unread emails that may need a response.
+
+    Identifies emails where:
+    - Email is unread
+    - User is directly in To: field
+    - Email contains a question
+
+    Per AGENTS.md auto-draft rules, these are candidates for draft creation.
+    Returns structured JSON with email details for the LLM to act on.
+
+    Args:
+        folder: Email folder to search (default: INBOX)
+        limit: Maximum emails to check (default: 20)
+
+    Returns:
+        JSON with emails needing response and their signals
+    """
+    ctx = get_context()
+
+    try:
+        # Use query functions directly with db connection (same pattern as search_emails tool)
+        emails = email_queries.search_emails(
+            ctx.db,
+            folder=folder,
+            is_unread=True,
+            limit=limit,
+        )
+    except Exception as e:
+        return json.dumps(
+            {
+                "status": "error",
+                "error": str(e),
+                "emails_needing_response": [],
+            }
+        )
+
+    emails_needing_response = []
+
+    for email in emails:
+        signals = _analyze_email_signals(email, ctx)
+
+        # Per AGENTS.md: auto-draft when has_question AND user in To:
+        if signals["is_addressed_to_me"] and signals["has_question"]:
+            # Calculate priority for sorting
+            priority, priority_reason = compute_priority(signals)
+
+            emails_needing_response.append(
+                {
+                    "uid": email.get("uid"),
+                    "folder": folder,
+                    "from_addr": email.get("from_addr"),
+                    "to_addr": email.get("to_addr"),
+                    "subject": email.get("subject"),
+                    "date": _format_date(email.get("date")),
+                    "preview": (email.get("body_text") or "")[:300],
+                    "priority": priority,
+                    "priority_reason": priority_reason,
+                    "signals": {
+                        "is_from_vip": signals["is_from_vip"],
+                        "mentions_deadline": signals["mentions_deadline"],
+                        "mentions_meeting": signals["mentions_meeting"],
+                        "has_attachments": signals["has_attachments"],
+                    },
+                }
+            )
+
+    # Sort by priority (high first)
+    priority_order = {"high": 0, "medium": 1, "low": 2}
+    emails_needing_response.sort(key=lambda e: priority_order.get(e["priority"], 2))
+
+    return json.dumps(
+        {
+            "status": "complete",
+            "emails_checked": len(emails),
+            "emails_needing_response": emails_needing_response,
+            "count": len(emails_needing_response),
+            "instruction": (
+                "Per AGENTS.md: Use create_draft_reply to auto-draft responses. "
+                "Show user each draft for approval before sending."
+            )
+            if emails_needing_response
+            else "No emails currently need a response.",
+        },
+        indent=2,
+    )
+
+
 READ_ONLY_TOOLS = [
     list_folders,
     search_emails,
@@ -951,4 +1016,5 @@ READ_ONLY_TOOLS = [
     quick_clean_inbox,
     triage_priority_emails,
     triage_remaining_emails,
+    check_emails_needing_response,
 ]
